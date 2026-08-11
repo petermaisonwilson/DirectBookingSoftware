@@ -1,0 +1,92 @@
+name: Direct Booking Software Build 001
+
+on:
+  push:
+    branches:
+      - main
+  workflow_dispatch:
+
+jobs:
+  build-windows:
+    runs-on: windows-latest
+    timeout-minutes: 30
+
+    env:
+      PYTHONPATH: ${{ github.workspace }}\src
+
+    steps:
+      - name: Checkout source
+        uses: actions/checkout@v4
+
+      - name: Set up Python 3.11
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+
+      - name: Verify required Build 001 files
+        shell: pwsh
+        run: |
+          $required = @(
+            "src/directbooking/__init__.py",
+            "src/directbooking/app.py",
+            "src/directbooking/database.py",
+            "src/directbooking/main_window.py",
+            "run_direct_booking.py",
+            "DirectBookingSoftware.spec",
+            "requirements.txt",
+            "tests/smoke_test.py"
+          )
+          foreach ($file in $required) {
+            if (-not (Test-Path $file)) { throw "Missing Build 001 file: $file" }
+          }
+
+      - name: Install dependencies
+        shell: pwsh
+        run: |
+          python -m pip install --upgrade pip wheel
+          if ($LASTEXITCODE -ne 0) { throw "pip/wheel installation failed" }
+          python -m pip install -r requirements.txt
+          if ($LASTEXITCODE -ne 0) { throw "runtime dependency installation failed" }
+          python -m pip install pyinstaller==6.14.2
+          if ($LASTEXITCODE -ne 0) { throw "PyInstaller installation failed" }
+
+      - name: Verify imports
+        shell: pwsh
+        run: |
+          python -c "from directbooking.database import Database; from directbooking.main_window import MainWindow; from directbooking.app import main; assert Database and MainWindow and main; print('Build 001 imports: passed')"
+          if ($LASTEXITCODE -ne 0) { throw "Application import verification failed" }
+
+      - name: Run source smoke test
+        shell: pwsh
+        run: |
+          python tests/smoke_test.py
+          if ($LASTEXITCODE -ne 0) { throw "Source smoke test failed" }
+
+      - name: Build Windows EXE
+        shell: pwsh
+        run: |
+          python -m PyInstaller --clean --noconfirm DirectBookingSoftware.spec
+          if ($LASTEXITCODE -ne 0) { throw "PyInstaller build failed" }
+          if (-not (Test-Path "dist/DirectBookingSoftware.exe")) { throw "DirectBookingSoftware.exe was not created" }
+
+      - name: Launch packaged EXE self-test
+        shell: pwsh
+        run: |
+          $process = Start-Process -FilePath "dist/DirectBookingSoftware.exe" -ArgumentList "--self-test" -PassThru -Wait
+          if ($process.ExitCode -ne 0) { throw "Packaged EXE self-test failed with exit code $($process.ExitCode)" }
+          Write-Host "Packaged DirectBookingSoftware.exe self-test passed"
+
+      - name: Stage artifact
+        shell: pwsh
+        run: |
+          New-Item -ItemType Directory -Force "artifact" | Out-Null
+          Copy-Item "dist/DirectBookingSoftware.exe" "artifact/DirectBookingSoftware.exe" -Force
+          Copy-Item "ACCEPTANCE_TEST.md" "artifact/ACCEPTANCE_TEST.md" -Force
+
+      - name: Upload Build 001 artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: DirectBookingSoftware-Build001
+          path: artifact/
+          if-no-files-found: error
+          retention-days: 30
