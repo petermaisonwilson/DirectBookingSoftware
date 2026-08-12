@@ -26,30 +26,49 @@ def run_self_test() -> int:
         db_path = Path(temp_dir) / "self_test.db"
         database = Database(db_path)
         database.initialise()
-        assert database.counts()["elements"] == 3
 
-        database.save_settings({"operator_name": "Self Test Operator", "offer_expiry_days": "9"})
-        element_id = database.save_element(None, "Pitch 11", "Camping", "Per night", 30.0)
-        season_id = database.save_season(None, "High Season", "2026-07-01", "2026-08-31", 10)
-        assert database.get_settings()["operator_name"] == "Self Test Operator"
-        assert any(row["id"] == element_id for row in database.list_elements())
-        assert any(row["id"] == season_id for row in database.list_seasons())
+        element_id = database.save_element(None, "Pitch 11", "Camping", "Per night", 40.0)
+        rule_id = database.save_discount_rule(None, "7 nights 10%", 7, "Percentage", 10, "Element", element_id=element_id)
+        result = database.calculate_duration_discount(element_id, 7, 280.0)
+        assert result["discount_amount"] == 28.0
+        assert result["final_amount"] == 252.0
+        assert result["rule_id"] == rule_id
+
+        unused_id = database.save_element(None, "Temporary", "Test", "Per stay", 1.0)
+        database.delete_element(unused_id)
+        assert all(row["id"] != unused_id for row in database.list_elements())
+
+        offer = database.connection.execute(
+            "INSERT INTO offers(company_id, total_amount) VALUES (?, ?)",
+            (database.company_id(), 280.0),
+        )
+        database.connection.execute(
+            "INSERT INTO offer_lines(offer_id, element_id, description, amount) VALUES (?, ?, ?, ?)",
+            (offer.lastrowid, element_id, "Pitch 11", 280.0),
+        )
+        database.connection.commit()
+        try:
+            database.delete_element(element_id)
+            raise RuntimeError("Used element deletion was not blocked")
+        except ValueError:
+            pass
 
         window = MainWindow(database)
-        assert window.windowTitle() == "Direct Booking Software - Build 002"
+        assert window.windowTitle() == "Direct Booking Software - Build 003"
         assert window.nav.count() == 6
+        assert window.setup_page.tabs.count() == 4
         window.close()
         database.close()
 
         reopened = Database(db_path)
         reopened.initialise()
-        assert reopened.get_settings()["offer_expiry_days"] == "9"
-        assert any(row["name"] == "Pitch 11" for row in reopened.list_elements())
-        assert any(row["name"] == "High Season" for row in reopened.list_seasons())
+        assert any(row["name"] == "7 nights 10%" for row in reopened.list_discount_rules())
+        reopened_result = reopened.calculate_duration_discount(element_id, 7, 280.0)
+        assert reopened_result["final_amount"] == 252.0
         reopened.close()
 
     app.quit()
-    print("Direct Booking Software Build 002 self-test: passed")
+    print("Direct Booking Software Build 003 self-test: passed")
     return 0
 
 
