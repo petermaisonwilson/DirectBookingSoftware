@@ -41,7 +41,7 @@ class MainWindow(QMainWindow):
     def __init__(self, database: Database):
         super().__init__()
         self.database = database
-        self.setWindowTitle("Direct Booking Software - Build 002")
+        self.setWindowTitle("Direct Booking Software - Build 003")
         self.resize(1280, 800)
         self.setMinimumSize(1000, 650)
 
@@ -76,7 +76,7 @@ class MainWindow(QMainWindow):
         title_box.addWidget(subtitle)
         header.addLayout(title_box)
         header.addStretch()
-        build = QLabel("Build 002")
+        build = QLabel("Build 003")
         build.setObjectName("buildBadge")
         header.addWidget(build)
         content_layout.addLayout(header)
@@ -107,7 +107,7 @@ class MainWindow(QMainWindow):
         heading.setObjectName("pageTitle")
         layout.addWidget(heading)
 
-        intro = QLabel("Build 002 adds persistent operator settings, seasons and bookable elements while preserving the Windows desktop foundation.")
+        intro = QLabel("Build 003 adds safe element deletion and persistent automatic duration-discount rules on top of the Build 002 setup foundation.")
         intro.setWordWrap(True)
         intro.setObjectName("bodyText")
         layout.addWidget(intro)
@@ -128,16 +128,16 @@ class MainWindow(QMainWindow):
         panel = QFrame()
         panel.setObjectName("panel")
         panel_layout = QVBoxLayout(panel)
-        panel_title = QLabel("Build 002 setup foundation")
+        panel_title = QLabel("Build 003 pricing foundation")
         panel_title.setObjectName("sectionTitle")
         panel_layout.addWidget(panel_title)
         for line in [
-            "Persistent operator and reminder settings",
-            "Global deposit-policy settings",
-            "Add, edit, activate and inactivate elements",
-            "Add, edit, activate and inactivate seasons",
-            "UK date display with popup calendars",
-            "Existing Build 001 database retained and upgraded in place",
+            "Unused elements can be permanently deleted",
+            "Elements already used in offers/bookings are protected and must be inactivated",
+            "Duration discounts can be percentage, fixed amount or free nights",
+            "Discount rules may target all elements, one group or one element",
+            "When several discounts qualify, the single best customer discount is selected",
+            "Build 002 operator, season and element data remains persistent",
         ]:
             label = QLabel(f"✓  {line}")
             label.setObjectName("bodyText")
