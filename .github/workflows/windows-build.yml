@@ -1,4 +1,4 @@
-name: Direct Booking Software Build 001
+name: Direct Booking Software Build 002
 
 on:
   push:
@@ -23,7 +23,7 @@ jobs:
         with:
           python-version: "3.11"
 
-      - name: Verify required Build 001 files
+      - name: Verify required Build 002 files
         shell: pwsh
         run: |
           $required = @(
@@ -31,13 +31,14 @@ jobs:
             "src/directbooking/app.py",
             "src/directbooking/database.py",
             "src/directbooking/main_window.py",
+            "src/directbooking/setup_page.py",
             "run_direct_booking.py",
             "DirectBookingSoftware.spec",
             "requirements.txt",
             "tests/smoke_test.py"
           )
           foreach ($file in $required) {
-            if (-not (Test-Path $file)) { throw "Missing Build 001 file: $file" }
+            if (-not (Test-Path $file)) { throw "Missing Build 002 file: $file" }
           }
 
       - name: Install dependencies
@@ -53,7 +54,7 @@ jobs:
       - name: Verify imports
         shell: pwsh
         run: |
-          python -c "from directbooking.database import Database; from directbooking.main_window import MainWindow; from directbooking.app import main; assert Database and MainWindow and main; print('Build 001 imports: passed')"
+          python -c "from directbooking.database import Database; from directbooking.main_window import MainWindow; from directbooking.setup_page import SetupPage; from directbooking.app import main; assert Database and MainWindow and SetupPage and main; print('Build 002 imports: passed')"
           if ($LASTEXITCODE -ne 0) { throw "Application import verification failed" }
 
       - name: Run source smoke test
@@ -74,7 +75,7 @@ jobs:
         run: |
           $process = Start-Process -FilePath "dist/DirectBookingSoftware.exe" -ArgumentList "--self-test" -PassThru -Wait
           if ($process.ExitCode -ne 0) { throw "Packaged EXE self-test failed with exit code $($process.ExitCode)" }
-          Write-Host "Packaged DirectBookingSoftware.exe self-test passed"
+          Write-Host "Packaged DirectBookingSoftware.exe Build 002 self-test passed"
 
       - name: Stage artifact
         shell: pwsh
@@ -83,10 +84,10 @@ jobs:
           Copy-Item "dist/DirectBookingSoftware.exe" "artifact/DirectBookingSoftware.exe" -Force
           Copy-Item "ACCEPTANCE_TEST.md" "artifact/ACCEPTANCE_TEST.md" -Force
 
-      - name: Upload Build 001 artifact
+      - name: Upload Build 002 artifact
         uses: actions/upload-artifact@v4
         with:
-          name: DirectBookingSoftware-Build001
+          name: DirectBookingSoftware-Build002
           path: artifact/
           if-no-files-found: error
           retention-days: 30
