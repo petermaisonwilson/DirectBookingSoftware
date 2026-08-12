@@ -9,13 +9,13 @@ from PySide6.QtWidgets import (
     QListWidget,
     QListWidgetItem,
     QMainWindow,
-    QPushButton,
     QStackedWidget,
     QVBoxLayout,
     QWidget,
 )
 
 from .database import Database
+from .setup_page import SetupPage
 
 
 NAV_ITEMS = ["Dashboard", "Enquiries", "Availability", "Bookings", "Finance", "Setup"]
@@ -28,17 +28,20 @@ class MetricCard(QFrame):
         layout = QVBoxLayout(self)
         title_label = QLabel(title)
         title_label.setObjectName("metricTitle")
-        value_label = QLabel(value)
-        value_label.setObjectName("metricValue")
+        self.value_label = QLabel(value)
+        self.value_label.setObjectName("metricValue")
         layout.addWidget(title_label)
-        layout.addWidget(value_label)
+        layout.addWidget(self.value_label)
+
+    def set_value(self, value: int) -> None:
+        self.value_label.setText(str(value))
 
 
 class MainWindow(QMainWindow):
     def __init__(self, database: Database):
         super().__init__()
         self.database = database
-        self.setWindowTitle("Direct Booking Software - Build 001")
+        self.setWindowTitle("Direct Booking Software - Build 002")
         self.resize(1280, 800)
         self.setMinimumSize(1000, 650)
 
@@ -73,18 +76,20 @@ class MainWindow(QMainWindow):
         title_box.addWidget(subtitle)
         header.addLayout(title_box)
         header.addStretch()
-        build = QLabel("Build 001")
+        build = QLabel("Build 002")
         build.setObjectName("buildBadge")
         header.addWidget(build)
         content_layout.addLayout(header)
 
         self.stack = QStackedWidget()
         self.stack.addWidget(self._dashboard_page())
-        self.stack.addWidget(self._placeholder_page("Enquiries", "Enquiry intake and offer preparation will be migrated here in the next application builds."))
-        self.stack.addWidget(self._placeholder_page("Availability", "The large element-by-date availability board will live here."))
-        self.stack.addWidget(self._placeholder_page("Bookings", "Confirmed bookings, amendments, payments and booking audit logs will live here."))
-        self.stack.addWidget(self._placeholder_page("Finance", "The booking ledger and global transaction view will live here."))
-        self.stack.addWidget(self._setup_page())
+        self.stack.addWidget(self._placeholder_page("Enquiries", "Enquiry intake and offer preparation will be added in a later build."))
+        self.stack.addWidget(self._placeholder_page("Availability", "The large element-by-date availability board will be added in a later build."))
+        self.stack.addWidget(self._placeholder_page("Bookings", "Confirmed bookings, amendments, payments and booking audit logs will be added in later builds."))
+        self.stack.addWidget(self._placeholder_page("Finance", "The booking ledger and global transaction view will be added in a later build."))
+        self.setup_page = SetupPage(database)
+        self.setup_page.data_changed.connect(self.refresh_dashboard)
+        self.stack.addWidget(self.setup_page)
         content_layout.addWidget(self.stack, 1)
         root_layout.addWidget(content, 1)
 
@@ -102,7 +107,7 @@ class MainWindow(QMainWindow):
         heading.setObjectName("pageTitle")
         layout.addWidget(heading)
 
-        intro = QLabel("Build 001 confirms the Windows desktop shell, persistent SQLite database and core application structure.")
+        intro = QLabel("Build 002 adds persistent operator settings, seasons and bookable elements while preserving the Windows desktop foundation.")
         intro.setWordWrap(True)
         intro.setObjectName("bodyText")
         layout.addWidget(intro)
@@ -110,24 +115,29 @@ class MainWindow(QMainWindow):
         counts = self.database.counts()
         cards = QHBoxLayout()
         cards.setSpacing(14)
-        cards.addWidget(MetricCard("Enquiries", str(counts["enquiries"])))
-        cards.addWidget(MetricCard("Bookings", str(counts["bookings"])))
-        cards.addWidget(MetricCard("Elements", str(counts["elements"])))
-        cards.addWidget(MetricCard("Transactions", str(counts["transactions"])))
+        self.metric_cards = {
+            "enquiries": MetricCard("Enquiries", str(counts["enquiries"])),
+            "bookings": MetricCard("Bookings", str(counts["bookings"])),
+            "elements": MetricCard("Active elements", str(counts["elements"])),
+            "transactions": MetricCard("Transactions", str(counts["transactions"])),
+        }
+        for card in self.metric_cards.values():
+            cards.addWidget(card)
         layout.addLayout(cards)
 
         panel = QFrame()
         panel.setObjectName("panel")
         panel_layout = QVBoxLayout(panel)
-        panel_title = QLabel("Build 001 foundation")
+        panel_title = QLabel("Build 002 setup foundation")
         panel_title.setObjectName("sectionTitle")
         panel_layout.addWidget(panel_title)
         for line in [
-            "Windows-native PySide6 interface",
-            "Persistent SQLite development database",
-            "Database tables prepared for staff users and operator audit trails",
-            "Data layer separated so a future central API/PostgreSQL service can replace local storage",
-            "GitHub Actions Windows packaging pipeline",
+            "Persistent operator and reminder settings",
+            "Global deposit-policy settings",
+            "Add, edit, activate and inactivate elements",
+            "Add, edit, activate and inactivate seasons",
+            "UK date display with popup calendars",
+            "Existing Build 001 database retained and upgraded in place",
         ]:
             label = QLabel(f"✓  {line}")
             label.setObjectName("bodyText")
@@ -135,6 +145,11 @@ class MainWindow(QMainWindow):
         panel_layout.addStretch()
         layout.addWidget(panel, 1)
         return page
+
+    def refresh_dashboard(self) -> None:
+        counts = self.database.counts()
+        for key, card in self.metric_cards.items():
+            card.set_value(counts[key])
 
     def _placeholder_page(self, title: str, description: str) -> QWidget:
         page = QWidget()
@@ -150,33 +165,6 @@ class MainWindow(QMainWindow):
         text.setWordWrap(True)
         text.setObjectName("bodyText")
         panel_layout.addWidget(text)
-        panel_layout.addStretch()
-        layout.addWidget(panel, 1)
-        return page
-
-    def _setup_page(self) -> QWidget:
-        page = QWidget()
-        layout = QVBoxLayout(page)
-        layout.setContentsMargins(0, 8, 0, 0)
-        heading = QLabel("Setup")
-        heading.setObjectName("pageTitle")
-        layout.addWidget(heading)
-
-        panel = QFrame()
-        panel.setObjectName("panel")
-        panel_layout = QVBoxLayout(panel)
-        title = QLabel("Development database")
-        title.setObjectName("sectionTitle")
-        panel_layout.addWidget(title)
-        path_label = QLabel(str(self.database.path))
-        path_label.setTextInteractionFlags(Qt.TextSelectableByMouse)
-        path_label.setWordWrap(True)
-        path_label.setObjectName("bodyText")
-        panel_layout.addWidget(path_label)
-        note = QLabel("The production design will keep operator data behind a secure service layer so this local database can later be replaced by a central hosted database without rebuilding the desktop interface.")
-        note.setWordWrap(True)
-        note.setObjectName("bodyText")
-        panel_layout.addWidget(note)
         panel_layout.addStretch()
         layout.addWidget(panel, 1)
         return page
@@ -201,5 +189,13 @@ class MainWindow(QMainWindow):
             QLabel#metricTitle { color: #6b7280; }
             QLabel#metricValue { font-size: 26px; font-weight: 700; }
             QPushButton { background: #172033; color: white; border: none; border-radius: 7px; padding: 9px 14px; }
+            QPushButton:hover { background: #24314a; }
+            QLineEdit, QTextEdit, QComboBox, QSpinBox, QDoubleSpinBox, QDateEdit, QTableWidget, QTabWidget::pane {
+                background: white; border: 1px solid #d1d5db; border-radius: 6px; padding: 5px;
+            }
+            QHeaderView::section { background: #eef2f7; padding: 7px; border: none; border-bottom: 1px solid #d1d5db; font-weight: 600; }
+            QTableWidget { gridline-color: #e5e7eb; }
+            QTabBar::tab { padding: 9px 15px; margin-right: 3px; }
+            QTabBar::tab:selected { background: white; font-weight: 600; }
             """
         )
