@@ -23,18 +23,33 @@ def run_self_test() -> int:
     os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
     app = QApplication.instance() or QApplication([])
     with tempfile.TemporaryDirectory() as temp_dir:
-        database = Database(Path(temp_dir) / "self_test.db")
+        db_path = Path(temp_dir) / "self_test.db"
+        database = Database(db_path)
         database.initialise()
-        counts = database.counts()
-        if counts["elements"] != 3:
-            raise RuntimeError("Database seed self-test failed")
+        assert database.counts()["elements"] == 3
+
+        database.save_settings({"operator_name": "Self Test Operator", "offer_expiry_days": "9"})
+        element_id = database.save_element(None, "Pitch 11", "Camping", "Per night", 30.0)
+        season_id = database.save_season(None, "High Season", "2026-07-01", "2026-08-31", 10)
+        assert database.get_settings()["operator_name"] == "Self Test Operator"
+        assert any(row["id"] == element_id for row in database.list_elements())
+        assert any(row["id"] == season_id for row in database.list_seasons())
+
         window = MainWindow(database)
-        if window.nav.count() != 6:
-            raise RuntimeError("Navigation self-test failed")
+        assert window.windowTitle() == "Direct Booking Software - Build 002"
+        assert window.nav.count() == 6
         window.close()
         database.close()
+
+        reopened = Database(db_path)
+        reopened.initialise()
+        assert reopened.get_settings()["offer_expiry_days"] == "9"
+        assert any(row["name"] == "Pitch 11" for row in reopened.list_elements())
+        assert any(row["name"] == "High Season" for row in reopened.list_seasons())
+        reopened.close()
+
     app.quit()
-    print("Direct Booking Software Build 001 self-test: passed")
+    print("Direct Booking Software Build 002 self-test: passed")
     return 0
 
 
