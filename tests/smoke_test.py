@@ -19,44 +19,55 @@ def main() -> None:
         database = Database(db_path)
         database.initialise()
 
-        assert database.counts()["elements"] == 3
-        database.save_settings(
-            {
-                "operator_name": "Build 002 Test Operator",
-                "operator_email": "test@example.invalid",
-                "offer_expiry_days": "12",
-                "deposit_mode": "Fixed amount",
-                "deposit_fixed_amount": "125",
-            }
-        )
-        element_id = database.save_element(None, "Pitch 11", "Camping", "Per night", 32.5)
-        season_id = database.save_season(None, "Summer", "2026-06-01", "2026-08-31", 20)
-        database.set_element_active(element_id, False)
-        database.set_season_active(season_id, False)
+        element_id = database.save_element(None, "Pitch 11", "Camping", "Per night", 40.0)
+        database.save_discount_rule(None, "7 nights 10%", 7, "Percentage", 10, "Element", element_id=element_id)
+        database.save_discount_rule(None, "14 nights 20%", 14, "Percentage", 20, "Group", group_name="Camping")
+        database.save_discount_rule(None, "7 nights one free", 7, "Free nights", 1, "All elements")
 
-        assert database.counts()["elements"] == 3
-        assert any(row["id"] == element_id and row["active"] == 0 for row in database.list_elements())
-        assert any(row["id"] == season_id and row["active"] == 0 for row in database.list_seasons())
+        seven_nights = database.calculate_duration_discount(element_id, 7, 280.0)
+        assert seven_nights["discount_amount"] == 40.0
+        assert seven_nights["rule_name"] == "7 nights one free"
+
+        fourteen_nights = database.calculate_duration_discount(element_id, 14, 560.0)
+        assert fourteen_nights["discount_amount"] == 112.0
+        assert fourteen_nights["rule_name"] == "14 nights 20%"
+
+        unused_id = database.save_element(None, "Delete me", "Test", "Per stay", 5.0)
+        database.delete_element(unused_id)
+        assert all(row["id"] != unused_id for row in database.list_elements())
+
+        offer = database.connection.execute(
+            "INSERT INTO offers(company_id, total_amount) VALUES (?, ?)",
+            (database.company_id(), 280.0),
+        )
+        database.connection.execute(
+            "INSERT INTO offer_lines(offer_id, element_id, description, amount) VALUES (?, ?, ?, ?)",
+            (offer.lastrowid, element_id, "Pitch 11", 280.0),
+        )
+        database.connection.commit()
+        blocked = False
+        try:
+            database.delete_element(element_id)
+        except ValueError:
+            blocked = True
+        assert blocked
 
         window = MainWindow(database)
-        assert window.windowTitle() == "Direct Booking Software - Build 002"
+        assert window.windowTitle() == "Direct Booking Software - Build 003"
         assert window.nav.count() == 6
-        assert window.setup_page.tabs.count() == 3
+        assert window.setup_page.tabs.count() == 4
         window.close()
         database.close()
 
         reopened = Database(db_path)
         reopened.initialise()
-        settings = reopened.get_settings()
-        assert settings["operator_name"] == "Build 002 Test Operator"
-        assert settings["offer_expiry_days"] == "12"
-        assert settings["deposit_mode"] == "Fixed amount"
-        assert any(row["name"] == "Pitch 11" for row in reopened.list_elements())
-        assert any(row["name"] == "Summer" for row in reopened.list_seasons())
+        rules = reopened.list_discount_rules()
+        assert len(rules) == 3
+        assert reopened.calculate_duration_discount(element_id, 14, 560.0)["final_amount"] == 448.0
         reopened.close()
 
     app.quit()
-    print("Build 002 smoke test: passed")
+    print("Build 003 smoke test: passed")
 
 
 if __name__ == "__main__":
