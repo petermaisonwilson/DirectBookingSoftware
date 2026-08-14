@@ -1,4 +1,4 @@
-name: Direct Booking Software Build 003
+name: Direct Booking Software Build 004
 
 on:
   push:
@@ -23,7 +23,7 @@ jobs:
         with:
           python-version: "3.11"
 
-      - name: Verify required Build 003 files
+      - name: Verify required Build 004 files
         shell: pwsh
         run: |
           $required = @(
@@ -32,13 +32,15 @@ jobs:
             "src/directbooking/database.py",
             "src/directbooking/main_window.py",
             "src/directbooking/setup_page.py",
+            "src/directbooking/pricing.py",
+            "src/directbooking/pricing_test_dialog.py",
             "run_direct_booking.py",
             "DirectBookingSoftware.spec",
             "requirements.txt",
             "tests/smoke_test.py"
           )
           foreach ($file in $required) {
-            if (-not (Test-Path $file)) { throw "Missing Build 003 file: $file" }
+            if (-not (Test-Path $file)) { throw "Missing Build 004 file: $file" }
           }
 
       - name: Install dependencies
@@ -54,7 +56,7 @@ jobs:
       - name: Verify imports
         shell: pwsh
         run: |
-          python -c "from directbooking.database import Database; from directbooking.main_window import MainWindow; from directbooking.setup_page import SetupPage, DiscountRuleDialog; from directbooking.app import main; assert Database and MainWindow and SetupPage and DiscountRuleDialog and main; print('Build 003 imports: passed')"
+          python -c "from directbooking.database import Database; from directbooking.main_window import MainWindow; from directbooking.setup_page import SetupPage, DiscountRuleDialog; from directbooking.pricing import calculate_price; from directbooking.pricing_test_dialog import PricingTestDialog; from directbooking.app import main; assert Database and MainWindow and SetupPage and DiscountRuleDialog and calculate_price and PricingTestDialog and main; print('Build 004 imports: passed')"
           if ($LASTEXITCODE -ne 0) { throw "Application import verification failed" }
 
       - name: Run source smoke test
@@ -75,7 +77,7 @@ jobs:
         run: |
           $process = Start-Process -FilePath "dist/DirectBookingSoftware.exe" -ArgumentList "--self-test" -PassThru -Wait
           if ($process.ExitCode -ne 0) { throw "Packaged EXE self-test failed with exit code $($process.ExitCode)" }
-          Write-Host "Packaged DirectBookingSoftware.exe Build 003 self-test passed"
+          Write-Host "Packaged DirectBookingSoftware.exe Build 004 self-test passed"
 
       - name: Stage artifact
         shell: pwsh
@@ -84,10 +86,10 @@ jobs:
           Copy-Item "dist/DirectBookingSoftware.exe" "artifact/DirectBookingSoftware.exe" -Force
           Copy-Item "ACCEPTANCE_TEST.md" "artifact/ACCEPTANCE_TEST.md" -Force
 
-      - name: Upload Build 003 artifact
+      - name: Upload Build 004 artifact
         uses: actions/upload-artifact@v4
         with:
-          name: DirectBookingSoftware-Build003
+          name: DirectBookingSoftware-Build004
           path: artifact/
           if-no-files-found: error
           retention-days: 30
