@@ -168,6 +168,37 @@ CREATE TABLE IF NOT EXISTS discount_rules (
     FOREIGN KEY(company_id) REFERENCES companies(id),
     FOREIGN KEY(element_id) REFERENCES elements(id)
 );
+
+CREATE TABLE IF NOT EXISTS person_types (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    company_id INTEGER NOT NULL,
+    name TEXT NOT NULL COLLATE NOCASE,
+    short_label TEXT NOT NULL COLLATE NOCASE,
+    active INTEGER NOT NULL DEFAULT 1,
+    created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    UNIQUE(company_id, name),
+    UNIQUE(company_id, short_label),
+    FOREIGN KEY(company_id) REFERENCES companies(id)
+);
+
+CREATE TABLE IF NOT EXISTS element_capacity (
+    element_id INTEGER PRIMARY KEY,
+    company_id INTEGER NOT NULL,
+    max_total INTEGER NOT NULL DEFAULT 0,
+    FOREIGN KEY(company_id) REFERENCES companies(id),
+    FOREIGN KEY(element_id) REFERENCES elements(id)
+);
+
+CREATE TABLE IF NOT EXISTS element_person_limits (
+    element_id INTEGER NOT NULL,
+    person_type_id INTEGER NOT NULL,
+    company_id INTEGER NOT NULL,
+    max_count INTEGER NOT NULL,
+    PRIMARY KEY(element_id, person_type_id),
+    FOREIGN KEY(company_id) REFERENCES companies(id),
+    FOREIGN KEY(element_id) REFERENCES elements(id),
+    FOREIGN KEY(person_type_id) REFERENCES person_types(id)
+);
 """
 
 
@@ -318,6 +349,8 @@ class Database:
                 "Make it inactive instead so historical records remain intact."
             )
         self.connection.execute("DELETE FROM discount_rules WHERE company_id = ? AND element_id = ?", (self.company_id(), element_id))
+        self.connection.execute("DELETE FROM element_person_limits WHERE company_id = ? AND element_id = ?", (self.company_id(), element_id))
+        self.connection.execute("DELETE FROM element_capacity WHERE company_id = ? AND element_id = ?", (self.company_id(), element_id))
         self.connection.execute("DELETE FROM elements WHERE id = ? AND company_id = ?", (element_id, self.company_id()))
         self.connection.commit()
 
@@ -498,6 +531,138 @@ class Database:
             "rule_id": int(best_rule["id"]) if best_rule else None,
             "rule_name": best_rule["name"] if best_rule else "",
         }
+
+    def list_person_types(self, include_inactive: bool = True) -> list[sqlite3.Row]:
+        sql = "SELECT * FROM person_types WHERE company_id = ?"
+        params: list[object] = [self.company_id()]
+        if not include_inactive:
+            sql += " AND active = 1"
+        sql += " ORDER BY active DESC, name COLLATE NOCASE"
+        return self.connection.execute(sql, params).fetchall()
+
+    def save_person_type(self, person_type_id: int | None, name: str, short_label: str, active: bool = True) -> int:
+        name = name.strip()
+        short_label = short_label.strip()
+        if not name:
+            raise ValueError("Person type name is required")
+        if not short_label:
+            raise ValueError("Short label is required")
+        if len(short_label) > 12:
+            raise ValueError("Short label must be 12 characters or fewer")
+        try:
+            if person_type_id is None:
+                cursor = self.connection.execute(
+                    "INSERT INTO person_types(company_id, name, short_label, active) VALUES (?, ?, ?, ?)",
+                    (self.company_id(), name, short_label, int(active)),
+                )
+                person_type_id = int(cursor.lastrowid)
+            else:
+                self.connection.execute(
+                    "UPDATE person_types SET name = ?, short_label = ?, active = ? WHERE id = ? AND company_id = ?",
+                    (name, short_label, int(active), person_type_id, self.company_id()),
+                )
+            self.connection.commit()
+        except sqlite3.IntegrityError as exc:
+            self.connection.rollback()
+            raise ValueError("Person type name and short label must each be unique") from exc
+        return person_type_id
+
+    def set_person_type_active(self, person_type_id: int, active: bool) -> None:
+        self.connection.execute(
+            "UPDATE person_types SET active = ? WHERE id = ? AND company_id = ?",
+            (int(active), person_type_id, self.company_id()),
+        )
+        self.connection.commit()
+
+    def get_element_capacity(self, element_id: int) -> dict[str, object]:
+        element = self.connection.execute(
+            "SELECT id FROM elements WHERE id = ? AND company_id = ?",
+            (element_id, self.company_id()),
+        ).fetchone()
+        if element is None:
+            raise ValueError("Element does not exist")
+        capacity = self.connection.execute(
+            "SELECT max_total FROM element_capacity WHERE element_id = ? AND company_id = ?",
+            (element_id, self.company_id()),
+        ).fetchone()
+        limit_rows = self.connection.execute(
+            """
+            SELECT epl.person_type_id, epl.max_count, pt.name, pt.short_label, pt.active
+            FROM element_person_limits epl
+            JOIN person_types pt ON pt.id = epl.person_type_id
+            WHERE epl.element_id = ? AND epl.company_id = ?
+            ORDER BY pt.name COLLATE NOCASE
+            """,
+            (element_id, self.company_id()),
+        ).fetchall()
+        return {
+            "max_total": int(capacity["max_total"]) if capacity else 0,
+            "limits": {int(row["person_type_id"]): int(row["max_count"]) for row in limit_rows},
+            "limit_rows": limit_rows,
+        }
+
+    def save_element_capacity(self, element_id: int, max_total: int, limits: dict[int, int | None]) -> None:
+        element = self.connection.execute(
+            "SELECT id FROM elements WHERE id = ? AND company_id = ?",
+            (element_id, self.company_id()),
+        ).fetchone()
+        if element is None:
+            raise ValueError("Element does not exist")
+        if int(max_total) < 0:
+            raise ValueError("Maximum total persons cannot be negative")
+        self.connection.execute(
+            """
+            INSERT INTO element_capacity(element_id, company_id, max_total)
+            VALUES (?, ?, ?)
+            ON CONFLICT(element_id) DO UPDATE SET max_total = excluded.max_total, company_id = excluded.company_id
+            """,
+            (element_id, self.company_id(), int(max_total)),
+        )
+        self.connection.execute(
+            "DELETE FROM element_person_limits WHERE element_id = ? AND company_id = ?",
+            (element_id, self.company_id()),
+        )
+        for person_type_id, max_count in limits.items():
+            if max_count is None:
+                continue
+            max_count = int(max_count)
+            if max_count < 0:
+                continue
+            person_type = self.connection.execute(
+                "SELECT id FROM person_types WHERE id = ? AND company_id = ?",
+                (int(person_type_id), self.company_id()),
+            ).fetchone()
+            if person_type is None:
+                raise ValueError("A selected person type no longer exists")
+            self.connection.execute(
+                "INSERT INTO element_person_limits(element_id, person_type_id, company_id, max_count) VALUES (?, ?, ?, ?)",
+                (element_id, int(person_type_id), self.company_id(), max_count),
+            )
+        self.connection.commit()
+
+    def validate_occupancy(self, element_id: int, person_counts: dict[int, int]) -> list[str]:
+        capacity = self.get_element_capacity(element_id)
+        errors: list[str] = []
+        total = 0
+        known_types = {int(row["id"]): row for row in self.list_person_types(True)}
+        for person_type_id, count in person_counts.items():
+            count = int(count)
+            if count < 0:
+                raise ValueError("Person counts cannot be negative")
+            if count == 0:
+                continue
+            person_type_id = int(person_type_id)
+            if person_type_id not in known_types:
+                raise ValueError("Unknown person type")
+            total += count
+            limit = capacity["limits"].get(person_type_id)
+            if limit is not None and count > int(limit):
+                label = known_types[person_type_id]["name"]
+                errors.append(f"{label}: maximum {limit}")
+        max_total = int(capacity["max_total"])
+        if max_total > 0 and total > max_total:
+            errors.append(f"Total persons: maximum {max_total}")
+        return errors
 
     def counts(self) -> dict[str, int]:
         return {
