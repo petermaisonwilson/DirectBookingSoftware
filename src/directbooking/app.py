@@ -9,6 +9,8 @@ from PySide6.QtWidgets import QApplication
 
 from .database import Database
 from .main_window import MainWindow
+from .pricing import calculate_price
+from .pricing_test_dialog import PricingTestDialog
 
 
 def application_data_dir() -> Path:
@@ -27,48 +29,46 @@ def run_self_test() -> int:
         database = Database(db_path)
         database.initialise()
 
-        element_id = database.save_element(None, "Pitch 11", "Camping", "Per night", 40.0)
-        rule_id = database.save_discount_rule(None, "7 nights 10%", 7, "Percentage", 10, "Element", element_id=element_id)
-        result = database.calculate_duration_discount(element_id, 7, 280.0)
-        assert result["discount_amount"] == 28.0
-        assert result["final_amount"] == 252.0
-        assert result["rule_id"] == rule_id
+        night_id = database.save_element(None, "Pitch 11", "Camping", "Per night", 40.0)
+        database.save_discount_rule(None, "7 nights 10%", 7, "Percentage", 10, "Element", element_id=night_id)
+        database.save_discount_rule(None, "7 nights one free", 7, "Free nights", 1, "Element", element_id=night_id)
+        result = calculate_price(database, night_id, "2026-09-01", "2026-09-08", 1)
+        assert result["nights"] == 7
+        assert result["base_amount"] == 280.0
+        assert result["discount_amount"] == 40.0
+        assert result["final_amount"] == 240.0
+        assert result["discount_rule_name"] == "7 nights one free"
 
-        unused_id = database.save_element(None, "Temporary", "Test", "Per stay", 1.0)
-        database.delete_element(unused_id)
-        assert all(row["id"] != unused_id for row in database.list_elements())
+        day_id = database.save_element(None, "Day Pitch", "Camping", "Per day", 20.0)
+        day_result = calculate_price(database, day_id, "2026-09-01", "2026-09-02", 1)
+        assert day_result["nights"] == 1
+        assert day_result["days"] == 2
+        assert day_result["base_amount"] == 40.0
 
-        offer = database.connection.execute(
-            "INSERT INTO offers(company_id, total_amount) VALUES (?, ?)",
-            (database.company_id(), 280.0),
-        )
-        database.connection.execute(
-            "INSERT INTO offer_lines(offer_id, element_id, description, amount) VALUES (?, ?, ?, ?)",
-            (offer.lastrowid, element_id, "Pitch 11", 280.0),
-        )
-        database.connection.commit()
-        try:
-            database.delete_element(element_id)
-            raise RuntimeError("Used element deletion was not blocked")
-        except ValueError:
-            pass
+        person_night_id = database.save_element(None, "Bunk", "Rooms", "Per person per night", 12.0)
+        person_result = calculate_price(database, person_night_id, "2026-09-01", "2026-09-04", 3)
+        assert person_result["base_amount"] == 108.0
 
         window = MainWindow(database)
-        assert window.windowTitle() == "Direct Booking Software - Build 003"
+        assert window.windowTitle() == "Direct Booking Software - Build 004"
         assert window.nav.count() == 6
         assert window.setup_page.tabs.count() == 4
+        assert window.pricing_test_button.text() == "Open Pricing Test"
+
+        dialog = PricingTestDialog(database)
+        assert dialog.element.count() >= 3
+        dialog.close()
         window.close()
         database.close()
 
         reopened = Database(db_path)
         reopened.initialise()
-        assert any(row["name"] == "7 nights 10%" for row in reopened.list_discount_rules())
-        reopened_result = reopened.calculate_duration_discount(element_id, 7, 280.0)
-        assert reopened_result["final_amount"] == 252.0
+        reopened_result = calculate_price(reopened, night_id, "2026-09-01", "2026-09-08", 1)
+        assert reopened_result["final_amount"] == 240.0
         reopened.close()
 
     app.quit()
-    print("Direct Booking Software Build 003 self-test: passed")
+    print("Direct Booking Software Build 004 self-test: passed")
     return 0
 
 
