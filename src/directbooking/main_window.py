@@ -9,12 +9,14 @@ from PySide6.QtWidgets import (
     QListWidget,
     QListWidgetItem,
     QMainWindow,
+    QPushButton,
     QStackedWidget,
     QVBoxLayout,
     QWidget,
 )
 
 from .database import Database
+from .pricing_test_dialog import PricingTestDialog
 from .setup_page import SetupPage
 
 
@@ -41,7 +43,7 @@ class MainWindow(QMainWindow):
     def __init__(self, database: Database):
         super().__init__()
         self.database = database
-        self.setWindowTitle("Direct Booking Software - Build 003")
+        self.setWindowTitle("Direct Booking Software - Build 004")
         self.resize(1280, 800)
         self.setMinimumSize(1000, 650)
 
@@ -76,7 +78,7 @@ class MainWindow(QMainWindow):
         title_box.addWidget(subtitle)
         header.addLayout(title_box)
         header.addStretch()
-        build = QLabel("Build 003")
+        build = QLabel("Build 004")
         build.setObjectName("buildBadge")
         header.addWidget(build)
         content_layout.addLayout(header)
@@ -107,7 +109,7 @@ class MainWindow(QMainWindow):
         heading.setObjectName("pageTitle")
         layout.addWidget(heading)
 
-        intro = QLabel("Build 003 adds safe element deletion and persistent automatic duration-discount rules on top of the Build 002 setup foundation.")
+        intro = QLabel("Build 004 adds the first complete stay-price calculator so configured pricing types and duration discounts can be proved before booking workflow is connected.")
         intro.setWordWrap(True)
         intro.setObjectName("bodyText")
         layout.addWidget(intro)
@@ -128,23 +130,34 @@ class MainWindow(QMainWindow):
         panel = QFrame()
         panel.setObjectName("panel")
         panel_layout = QVBoxLayout(panel)
-        panel_title = QLabel("Build 003 pricing foundation")
+        panel_title = QLabel("Build 004 pricing calculation")
         panel_title.setObjectName("sectionTitle")
         panel_layout.addWidget(panel_title)
         for line in [
-            "Unused elements can be permanently deleted",
-            "Elements already used in offers/bookings are protected and must be inactivated",
-            "Duration discounts can be percentage, fixed amount or free nights",
-            "Discount rules may target all elements, one group or one element",
-            "When several discounts qualify, the single best customer discount is selected",
-            "Build 002 operator, season and element data remains persistent",
+            "Arrival/departure dates calculate nights correctly",
+            "Per-day charging includes both arrival and departure dates",
+            "Per night, per day, per stay, per person, per person per night and per package are calculated",
+            "The best qualifying duration discount is applied automatically",
+            "A clear calculation breakdown is shown before any booking is created",
+            "Build 003 setup and discount data remains unchanged",
         ]:
             label = QLabel(f"✓  {line}")
             label.setObjectName("bodyText")
             panel_layout.addWidget(label)
+
+        test_row = QHBoxLayout()
+        self.pricing_test_button = QPushButton("Open Pricing Test")
+        self.pricing_test_button.clicked.connect(self.open_pricing_test)
+        test_row.addWidget(self.pricing_test_button)
+        test_row.addStretch()
+        panel_layout.addLayout(test_row)
         panel_layout.addStretch()
         layout.addWidget(panel, 1)
         return page
+
+    def open_pricing_test(self) -> None:
+        dialog = PricingTestDialog(self.database, self)
+        dialog.exec()
 
     def refresh_dashboard(self) -> None:
         counts = self.database.counts()
