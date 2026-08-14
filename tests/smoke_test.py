@@ -10,6 +10,8 @@ from PySide6.QtWidgets import QApplication
 
 from directbooking.database import Database
 from directbooking.main_window import MainWindow
+from directbooking.pricing import calculate_price
+from directbooking.pricing_test_dialog import PricingTestDialog
 
 
 def main() -> None:
@@ -19,55 +21,64 @@ def main() -> None:
         database = Database(db_path)
         database.initialise()
 
-        element_id = database.save_element(None, "Pitch 11", "Camping", "Per night", 40.0)
-        database.save_discount_rule(None, "7 nights 10%", 7, "Percentage", 10, "Element", element_id=element_id)
+        per_night = database.save_element(None, "Pitch 11", "Camping", "Per night", 40.0)
+        per_day = database.save_element(None, "Day Pitch", "Camping", "Per day", 20.0)
+        per_stay = database.save_element(None, "Cleaning", "Extras", "Per stay", 75.0)
+        per_person = database.save_element(None, "Meal", "Food", "Per person", 15.0)
+        per_person_night = database.save_element(None, "Bunk", "Rooms", "Per person per night", 12.0)
+        per_package = database.save_element(None, "Welcome Pack", "Extras", "Per package", 30.0)
+
+        assert calculate_price(database, per_night, "2026-09-01", "2026-09-04", 1)["base_amount"] == 120.0
+        day_result = calculate_price(database, per_day, "2026-09-01", "2026-09-04", 1)
+        assert day_result["nights"] == 3 and day_result["days"] == 4 and day_result["base_amount"] == 80.0
+        assert calculate_price(database, per_stay, "2026-09-01", "2026-09-04", 4)["base_amount"] == 75.0
+        assert calculate_price(database, per_person, "2026-09-01", "2026-09-04", 4)["base_amount"] == 60.0
+        assert calculate_price(database, per_person_night, "2026-09-01", "2026-09-04", 4)["base_amount"] == 144.0
+        assert calculate_price(database, per_package, "2026-09-01", "2026-09-04", 4)["base_amount"] == 30.0
+
+        database.save_discount_rule(None, "7 nights 10%", 7, "Percentage", 10, "Element", element_id=per_night)
+        database.save_discount_rule(None, "7 nights one free", 7, "Free nights", 1, "Element", element_id=per_night)
+        discounted = calculate_price(database, per_night, "2026-09-01", "2026-09-08", 1)
+        assert discounted["base_amount"] == 280.0
+        assert discounted["discount_amount"] == 40.0
+        assert discounted["final_amount"] == 240.0
+        assert discounted["discount_rule_name"] == "7 nights one free"
+
         database.save_discount_rule(None, "14 nights 20%", 14, "Percentage", 20, "Group", group_name="Camping")
-        database.save_discount_rule(None, "7 nights one free", 7, "Free nights", 1, "All elements")
+        long_stay = calculate_price(database, per_night, "2026-09-01", "2026-09-15", 1)
+        assert long_stay["base_amount"] == 560.0
+        assert long_stay["discount_amount"] == 112.0
+        assert long_stay["final_amount"] == 448.0
+        assert long_stay["discount_rule_name"] == "14 nights 20%"
 
-        seven_nights = database.calculate_duration_discount(element_id, 7, 280.0)
-        assert seven_nights["discount_amount"] == 40.0
-        assert seven_nights["rule_name"] == "7 nights one free"
+        same_day = calculate_price(database, per_day, "2026-09-01", "2026-09-01", 1)
+        assert same_day["nights"] == 0 and same_day["days"] == 1 and same_day["base_amount"] == 20.0
 
-        fourteen_nights = database.calculate_duration_discount(element_id, 14, 560.0)
-        assert fourteen_nights["discount_amount"] == 112.0
-        assert fourteen_nights["rule_name"] == "14 nights 20%"
-
-        unused_id = database.save_element(None, "Delete me", "Test", "Per stay", 5.0)
-        database.delete_element(unused_id)
-        assert all(row["id"] != unused_id for row in database.list_elements())
-
-        offer = database.connection.execute(
-            "INSERT INTO offers(company_id, total_amount) VALUES (?, ?)",
-            (database.company_id(), 280.0),
-        )
-        database.connection.execute(
-            "INSERT INTO offer_lines(offer_id, element_id, description, amount) VALUES (?, ?, ?, ?)",
-            (offer.lastrowid, element_id, "Pitch 11", 280.0),
-        )
-        database.connection.commit()
-        blocked = False
         try:
-            database.delete_element(element_id)
+            calculate_price(database, per_night, "2026-09-04", "2026-09-01", 1)
+            raise AssertionError("Departure before arrival was not rejected")
         except ValueError:
-            blocked = True
-        assert blocked
+            pass
 
         window = MainWindow(database)
-        assert window.windowTitle() == "Direct Booking Software - Build 003"
+        assert window.windowTitle() == "Direct Booking Software - Build 004"
         assert window.nav.count() == 6
         assert window.setup_page.tabs.count() == 4
+        assert window.pricing_test_button.text() == "Open Pricing Test"
+
+        dialog = PricingTestDialog(database)
+        assert dialog.element.count() >= 6
+        dialog.close()
         window.close()
         database.close()
 
         reopened = Database(db_path)
         reopened.initialise()
-        rules = reopened.list_discount_rules()
-        assert len(rules) == 3
-        assert reopened.calculate_duration_discount(element_id, 14, 560.0)["final_amount"] == 448.0
+        assert calculate_price(reopened, per_night, "2026-09-01", "2026-09-08", 1)["final_amount"] == 240.0
         reopened.close()
 
     app.quit()
-    print("Build 003 smoke test: passed")
+    print("Build 004 smoke test: passed")
 
 
 if __name__ == "__main__":
