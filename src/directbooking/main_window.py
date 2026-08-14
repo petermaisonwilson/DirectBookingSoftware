@@ -16,6 +16,7 @@ from PySide6.QtWidgets import (
 )
 
 from .database import Database
+from .people_setup import OccupancyTab, PersonTypesTab
 from .pricing_test_dialog import PricingTestDialog
 from .setup_page import SetupPage
 
@@ -43,7 +44,7 @@ class MainWindow(QMainWindow):
     def __init__(self, database: Database):
         super().__init__()
         self.database = database
-        self.setWindowTitle("Direct Booking Software - Build 004")
+        self.setWindowTitle("Direct Booking Software - Build 005")
         self.resize(1280, 800)
         self.setMinimumSize(1000, 650)
 
@@ -78,7 +79,7 @@ class MainWindow(QMainWindow):
         title_box.addWidget(subtitle)
         header.addLayout(title_box)
         header.addStretch()
-        build = QLabel("Build 004")
+        build = QLabel("Build 005")
         build.setObjectName("buildBadge")
         header.addWidget(build)
         content_layout.addLayout(header)
@@ -90,6 +91,12 @@ class MainWindow(QMainWindow):
         self.stack.addWidget(self._placeholder_page("Bookings", "Confirmed bookings, amendments, payments and booking audit logs will be added in later builds."))
         self.stack.addWidget(self._placeholder_page("Finance", "The booking ledger and global transaction view will be added in a later build."))
         self.setup_page = SetupPage(database)
+        self.person_types_tab = PersonTypesTab(database)
+        self.occupancy_tab = OccupancyTab(database)
+        self.setup_page.tabs.addTab(self.person_types_tab, "Person types")
+        self.setup_page.tabs.addTab(self.occupancy_tab, "Occupancy")
+        self.person_types_tab.changed.connect(self.occupancy_tab.refresh_person_types)
+        self.setup_page.data_changed.connect(self.occupancy_tab.refresh_elements)
         self.setup_page.data_changed.connect(self.refresh_dashboard)
         self.stack.addWidget(self.setup_page)
         content_layout.addWidget(self.stack, 1)
@@ -109,7 +116,7 @@ class MainWindow(QMainWindow):
         heading.setObjectName("pageTitle")
         layout.addWidget(heading)
 
-        intro = QLabel("Build 004 adds the first complete stay-price calculator so configured pricing types and duration discounts can be proved before booking workflow is connected.")
+        intro = QLabel("Build 005 adds operator-defined person types and per-element occupancy limits, ready for person-aware pricing in Build 006.")
         intro.setWordWrap(True)
         intro.setObjectName("bodyText")
         layout.addWidget(intro)
@@ -130,16 +137,17 @@ class MainWindow(QMainWindow):
         panel = QFrame()
         panel.setObjectName("panel")
         panel_layout = QVBoxLayout(panel)
-        panel_title = QLabel("Build 004 pricing calculation")
+        panel_title = QLabel("Build 005 persons and occupancy")
         panel_title.setObjectName("sectionTitle")
         panel_layout.addWidget(panel_title)
         for line in [
-            "Arrival/departure dates calculate nights correctly",
-            "Per-day charging includes both arrival and departure dates",
-            "Per night, per day, per stay, per person, per person per night and per package are calculated",
-            "The best qualifying duration discount is applied automatically",
-            "A clear calculation breakdown is shown before any booking is created",
-            "Build 003 setup and discount data remains unchanged",
+            "Unlimited operator-defined person types with name and short label",
+            "Person types can be edited, activated and inactivated",
+            "Each element can have an overall maximum-person capacity",
+            "Each element can also limit each individual person type",
+            "A per-type limit of 0 means that person type is not allowed",
+            "No limit can be used where only the overall element capacity should control occupancy",
+            "Existing Build 004 setup, discounts and pricing test data remain intact",
         ]:
             label = QLabel(f"✓  {line}")
             label.setObjectName("bodyText")
@@ -151,6 +159,10 @@ class MainWindow(QMainWindow):
         test_row.addWidget(self.pricing_test_button)
         test_row.addStretch()
         panel_layout.addLayout(test_row)
+        pricing_note = QLabel("Build 004 Pricing Test still uses a single guest count. Build 006 will replace that with person-type quantities and enforce these occupancy limits during pricing.")
+        pricing_note.setWordWrap(True)
+        pricing_note.setObjectName("bodyText")
+        panel_layout.addWidget(pricing_note)
         panel_layout.addStretch()
         layout.addWidget(panel, 1)
         return page
