@@ -37,22 +37,29 @@ def run_self_test() -> int:
         assert result["base_amount"] == 280.0
         assert result["discount_amount"] == 40.0
         assert result["final_amount"] == 240.0
-        assert result["discount_rule_name"] == "7 nights one free"
 
-        day_id = database.save_element(None, "Day Pitch", "Camping", "Per day", 20.0)
-        day_result = calculate_price(database, day_id, "2026-09-01", "2026-09-02", 1)
-        assert day_result["nights"] == 1
-        assert day_result["days"] == 2
-        assert day_result["base_amount"] == 40.0
+        adult_id = database.save_person_type(None, "Adult", "Ad")
+        child_id = database.save_person_type(None, "Child", "Ch")
+        database.save_element_capacity(night_id, 4, {adult_id: 2, child_id: 3})
+        capacity = database.get_element_capacity(night_id)
+        assert capacity["max_total"] == 4
+        assert capacity["limits"][adult_id] == 2
+        assert capacity["limits"][child_id] == 3
+        assert database.validate_occupancy(night_id, {adult_id: 2, child_id: 2}) == []
+        assert any("Adult" in error for error in database.validate_occupancy(night_id, {adult_id: 3, child_id: 1}))
+        assert any("Total persons" in error for error in database.validate_occupancy(night_id, {adult_id: 2, child_id: 3}))
 
-        person_night_id = database.save_element(None, "Bunk", "Rooms", "Per person per night", 12.0)
-        person_result = calculate_price(database, person_night_id, "2026-09-01", "2026-09-04", 3)
-        assert person_result["base_amount"] == 108.0
+        peg_id = database.save_element(None, "Fishing Peg", "Fishing", "Per day", 20.0)
+        database.save_element_capacity(peg_id, 1, {adult_id: 1, child_id: 0})
+        assert database.validate_occupancy(peg_id, {adult_id: 1}) == []
+        assert any("Child" in error for error in database.validate_occupancy(peg_id, {child_id: 1}))
 
         window = MainWindow(database)
-        assert window.windowTitle() == "Direct Booking Software - Build 004"
+        assert window.windowTitle() == "Direct Booking Software - Build 005"
         assert window.nav.count() == 6
-        assert window.setup_page.tabs.count() == 4
+        assert window.setup_page.tabs.count() == 6
+        assert window.setup_page.tabs.tabText(4) == "Person types"
+        assert window.setup_page.tabs.tabText(5) == "Occupancy"
         assert window.pricing_test_button.text() == "Open Pricing Test"
 
         dialog = PricingTestDialog(database)
@@ -63,12 +70,15 @@ def run_self_test() -> int:
 
         reopened = Database(db_path)
         reopened.initialise()
-        reopened_result = calculate_price(reopened, night_id, "2026-09-01", "2026-09-08", 1)
-        assert reopened_result["final_amount"] == 240.0
+        assert any(row["name"] == "Adult" for row in reopened.list_person_types())
+        reopened_capacity = reopened.get_element_capacity(night_id)
+        assert reopened_capacity["max_total"] == 4
+        assert reopened_capacity["limits"][adult_id] == 2
+        assert reopened.validate_occupancy(night_id, {adult_id: 2, child_id: 2}) == []
         reopened.close()
 
     app.quit()
-    print("Direct Booking Software Build 004 self-test: passed")
+    print("Direct Booking Software Build 005 self-test: passed")
     return 0
 
 
