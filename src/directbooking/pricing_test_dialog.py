@@ -22,13 +22,13 @@ from .pricing import calculate_price
 
 
 class PricingTestDialog(QDialog):
-    """Build 008 calculator for annual/seasonal combined element pricing."""
+    """Build 009 calculator for annual/seasonal combined element pricing."""
 
     def __init__(self, database: Database, parent: QWidget | None = None):
         super().__init__(parent)
         self.database = database
         self.person_controls: dict[int, QSpinBox] = {}
-        self.setWindowTitle("Pricing Test - Build 008")
+        self.setWindowTitle("Pricing Test - Build 009")
         self.setMinimumWidth(760)
 
         layout = QVBoxLayout(self)
@@ -39,7 +39,7 @@ class PricingTestDialog(QDialog):
 
         note = QLabel(
             "This calculates one complete element price only; it does not create an enquiry, offer or booking. "
-            "Build 008 uses the annual grids for the selected dates and blocks the calculation if required annual data is missing."
+            "Build 009 uses the annual grids for the selected dates and blocks the calculation if required annual data is missing."
         )
         note.setWordWrap(True)
         note.setObjectName("bodyText")
