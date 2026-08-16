@@ -1,4 +1,4 @@
-name: Direct Booking Software Build 006
+name: Direct Booking Software Build 007
 
 on:
   push:
@@ -23,7 +23,7 @@ jobs:
         with:
           python-version: "3.11"
 
-      - name: Verify required Build 006 files
+      - name: Verify required Build 007 files
         shell: pwsh
         run: |
           $required = @(
@@ -42,7 +42,7 @@ jobs:
             "tests/smoke_test.py"
           )
           foreach ($file in $required) {
-            if (-not (Test-Path $file)) { throw "Missing Build 006 file: $file" }
+            if (-not (Test-Path $file)) { throw "Missing Build 007 file: $file" }
           }
 
       - name: Install dependencies
@@ -58,7 +58,7 @@ jobs:
       - name: Verify imports
         shell: pwsh
         run: |
-          python -c "from directbooking.database import Database; from directbooking.main_window import MainWindow; from directbooking.people_setup import PersonTypesTab, OccupancyTab; from directbooking.person_pricing import PersonPricingTab, get_element_person_rates, save_element_person_rates; from directbooking.pricing import calculate_price; from directbooking.pricing_test_dialog import PricingTestDialog; from directbooking.app import main; assert Database and MainWindow and PersonTypesTab and OccupancyTab and PersonPricingTab and get_element_person_rates and save_element_person_rates and calculate_price and PricingTestDialog and main; print('Build 006 imports: passed')"
+          python -c "from directbooking.database import Database; from directbooking.main_window import MainWindow; from directbooking.people_setup import PersonTypesTab, OccupancyTab; from directbooking.person_pricing import PersonPricingTab, get_element_person_rates, save_element_person_rates; from directbooking.pricing import calculate_price; from directbooking.pricing_test_dialog import PricingTestDialog; from directbooking.app import main; assert Database and MainWindow and PersonTypesTab and OccupancyTab and PersonPricingTab and get_element_person_rates and save_element_person_rates and calculate_price and PricingTestDialog and main; print('Build 007 imports: passed')"
           if ($LASTEXITCODE -ne 0) { throw "Application import verification failed" }
 
       - name: Run source smoke test
@@ -79,7 +79,7 @@ jobs:
         run: |
           $process = Start-Process -FilePath "dist/DirectBookingSoftware.exe" -ArgumentList "--self-test" -PassThru -Wait
           if ($process.ExitCode -ne 0) { throw "Packaged EXE self-test failed with exit code $($process.ExitCode)" }
-          Write-Host "Packaged DirectBookingSoftware.exe Build 006 self-test passed"
+          Write-Host "Packaged DirectBookingSoftware.exe Build 007 self-test passed"
 
       - name: Stage artifact
         shell: pwsh
@@ -88,10 +88,10 @@ jobs:
           Copy-Item "dist/DirectBookingSoftware.exe" "artifact/DirectBookingSoftware.exe" -Force
           Copy-Item "ACCEPTANCE_TEST.md" "artifact/ACCEPTANCE_TEST.md" -Force
 
-      - name: Upload Build 006 artifact
+      - name: Upload Build 007 artifact
         uses: actions/upload-artifact@v4
         with:
-          name: DirectBookingSoftware-Build006
+          name: DirectBookingSoftware-Build007
           path: artifact/
           if-no-files-found: error
           retention-days: 30
