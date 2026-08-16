@@ -4,7 +4,6 @@ import os
 import tempfile
 from datetime import date
 from pathlib import Path
-from unittest.mock import patch
 
 os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
 
@@ -16,7 +15,7 @@ from directbooking.addon_inheritance import (
     validate_group_addon_year,
 )
 from directbooking.addon_model import addon_amount, list_addons, save_addon, save_addon_rule
-from directbooking.addon_rules011 import MISSING_BG, ZERO_BG
+from directbooking.addon_rules011 import ZERO_BG
 from directbooking.annual_config import copy_previous_year, list_years, migrate_legacy_current_year, validate_year
 from directbooking.annual_config_repair import delete_pricing_year
 from directbooking.annual_grid_safety import (
@@ -90,37 +89,26 @@ def main() -> None:
             landing_net = save_addon(database, None, "Landing Net hire", "Fixed once")
             assert len(list_addons(database, False)) == 3
 
-            # Normal rules are configured once per Element Type.
             for group_name in ("Camping", "Gites", "Fishing"):
                 for addon_id in (dog, ehu, landing_net):
                     save_group_addon_rule(database, current_year, group_name, addon_id, False)
             save_group_addon_rule(database, current_year, "Camping", dog, True, 0, 2, 3.0)
             save_group_addon_rule(database, current_year, "Camping", ehu, True, 0, 1, 4.0)
             save_group_addon_rule(database, current_year, "Fishing", landing_net, True, 0, 2, 0.0)
-
-            # Pitch 7 is the exception: no Dogs even though Camping normally allows them.
             save_addon_rule(database, current_year, pitch7, dog, False)
             database.connection.commit()
             assert validate_group_addon_year(database, current_year) == {"unreviewed": 0, "incomplete": 0}
 
             pitch1_dog = resolve_addon_rule(database, current_year, pitch1, dog)
-            assert pitch1_dog["allowed"] is True
-            assert pitch1_dog["max_qty"] == 2
-            assert pitch1_dog["rate"] == 3.0
+            assert pitch1_dog["allowed"] is True and pitch1_dog["max_qty"] == 2 and pitch1_dog["rate"] == 3.0
             assert pitch1_dog["source"] == "Element Type: Camping"
-
             pitch7_dog = resolve_addon_rule(database, current_year, pitch7, dog)
-            assert pitch7_dog["allowed"] is False
-            assert pitch7_dog["source"] == "Element override"
-
+            assert pitch7_dog["allowed"] is False and pitch7_dog["source"] == "Element override"
             gite_dog = resolve_addon_rule(database, current_year, gite, dog)
-            assert gite_dog["allowed"] is False
-            assert gite_dog["source"] == "Element Type: Gites"
-
+            assert gite_dog["allowed"] is False and gite_dog["source"] == "Element Type: Gites"
             peg_net = resolve_addon_rule(database, current_year, peg, landing_net)
             assert peg_net["allowed"] is True and float(peg_net["rate"]) == 0.0
 
-            # Add-ons inherit parent Element dates; pricing method determines the charge.
             assert addon_amount("Per quantity per night", 3.0, 2, 7, 8) == 42.0
             assert addon_amount("Per night", 4.0, 1, 7, 8) == 28.0
             assert addon_amount("Fixed once", 10.0, 1, 3, 4) == 10.0
@@ -150,19 +138,18 @@ def main() -> None:
             assert _group_rows(database, delete_test_year) == []
             assert _override_rows(database, delete_test_year) == []
 
-            # A new Add-on creates one unreviewed default per Element Type, not one per individual Element.
-            extra_car = save_addon(database, None, "Extra Car", "Fixed once")
-            missing = validate_group_addon_year(database, next_year)
-            assert missing["unreviewed"] == 3
+            # A new Add-on has no stored Type default until Save, but Build 012 presents it
+            # as a simple unticked N rather than an editable/blank Yes-No cell.
+            save_addon(database, None, "Extra Car", "Fixed once")
+            assert validate_group_addon_year(database, next_year)["unreviewed"] == 3
 
-            # A new Element in an existing type automatically inherits the type rule.
             new_pitch = database.save_element(None, "Pitch 9", "Camping", "Per night", 25.0)
             inherited_new_pitch = resolve_addon_rule(database, next_year, new_pitch, dog)
             assert inherited_new_pitch["allowed"] is True and inherited_new_pitch["source"] == "Element Type: Camping"
             assert validate_year(database, next_year)["rates"] > 0
 
             window = MainWindow(database)
-            assert window.windowTitle() == "Direct Booking Software - Build 011"
+            assert window.windowTitle() == "Direct Booking Software - Build 012"
             assert window.nav.count() == 6
             assert window.setup_page.tabs.count() == 8
             assert window.setup_page.tabs.tabText(4) == "Add-ons"
@@ -174,30 +161,48 @@ def main() -> None:
             assert rules_tab.pages.count() == 2
             assert rules_tab.pages.tabText(0) == "Element Type defaults"
             assert rules_tab.pages.tabText(1) == "Element overrides"
+            assert rules_tab.type_table.horizontalHeaderItem(3).text() == "Y / N"
+            assert rules_tab.override_table.horizontalHeaderItem(4).text() == "I / Y / N"
             rules_tab.refresh_years(next_year)
 
-            # The new Extra Car default is blank/highlighted and blocks type-default save.
             extra_row = next(
                 r for r in range(rules_tab.type_table.rowCount())
                 if rules_tab.type_table.item(r, 0).text() == "Camping"
                 and rules_tab.type_table.item(r, 1).text() == "Extra Car"
             )
-            available_item = rules_tab.type_table.item(extra_row, 3)
-            assert available_item.text() == ""
-            rules_tab._style_type_rows()
-            assert available_item.background().color() == MISSING_BG
-            with patch("directbooking.addon_rules011.QMessageBox.warning") as warning:
-                rules_tab.save_type_defaults()
-                assert warning.called
-
-            # Explicit Yes with a zero price is valid and receives the gentle zero highlight.
-            available_item.setText("Yes")
+            type_wrapper = rules_tab.type_table.cellWidget(extra_row, 3)
+            check = type_wrapper._availability_check
+            assert check.isChecked() is False
+            check.setChecked(True)
             rules_tab.type_table.item(extra_row, 4).setText("0")
             rules_tab.type_table.item(extra_row, 5).setText("1")
             zero_price = rules_tab.type_table.item(extra_row, 6)
             zero_price.setText("0.00")
             rules_tab._style_type_rows()
             assert zero_price.background().color() == ZERO_BG
+            assert rules_tab._scan_type_defaults() == []
+
+            pitch1_dog_row = next(
+                r for r in range(rules_tab.override_table.rowCount())
+                if rules_tab.override_table.item(r, 0).text() == "Pitch 1"
+                and rules_tab.override_table.item(r, 2).text() == "Dog"
+            )
+            pitch7_dog_row = next(
+                r for r in range(rules_tab.override_table.rowCount())
+                if rules_tab.override_table.item(r, 0).text() == "Pitch 7"
+                and rules_tab.override_table.item(r, 2).text() == "Dog"
+            )
+            pitch1_buttons = rules_tab.override_table.cellWidget(pitch1_dog_row, 4)._override_buttons
+            pitch7_buttons = rules_tab.override_table.cellWidget(pitch7_dog_row, 4)._override_buttons
+            assert pitch1_buttons["I"].isChecked()
+            assert pitch7_buttons["N"].isChecked()
+            pitch1_buttons["Y"].setChecked(True)
+            rules_tab.override_table.item(pitch1_dog_row, 5).setText("0")
+            rules_tab.override_table.item(pitch1_dog_row, 6).setText("3")
+            rules_tab.override_table.item(pitch1_dog_row, 7).setText("5.00")
+            assert rules_tab._scan_overrides() == []
+            pitch1_buttons["I"].setChecked(True)
+            assert pitch1_buttons["I"].isChecked()
 
             # Existing Build 009 blank-vs-zero annual-grid safety remains intact.
             annual_tab = window.annual_config_tab
@@ -221,7 +226,7 @@ def main() -> None:
             assert test_item.background().color() == ZERO_COLOUR
 
             dialog = PricingTestDialog(database)
-            assert dialog.windowTitle() == "Pricing Test - Build 011"
+            assert dialog.windowTitle() == "Pricing Test - Build 012"
             dialog.close()
             window.close()
 
@@ -245,7 +250,7 @@ def main() -> None:
             reopened.close()
 
     app.quit()
-    print("Build 011 smoke test: passed")
+    print("Build 012 smoke test: passed")
 
 
 if __name__ == "__main__":
