@@ -35,6 +35,7 @@ jobs:
             "src/directbooking/people_setup.py",
             "src/directbooking/person_pricing.py",
             "src/directbooking/annual_config.py",
+            "src/directbooking/annual_config_repair.py",
             "src/directbooking/record_foundation.py",
             "src/directbooking/pricing.py",
             "src/directbooking/pricing_test_dialog.py",
@@ -60,7 +61,7 @@ jobs:
       - name: Verify imports
         shell: pwsh
         run: |
-          python -c "from directbooking.database import Database; from directbooking.main_window import MainWindow; from directbooking.annual_config import AnnualConfigurationTab, copy_previous_year, validate_year; from directbooking.record_foundation import ensure_record_foundation; from directbooking.pricing import calculate_price; from directbooking.pricing_test_dialog import PricingTestDialog; from directbooking.app import main; assert Database and MainWindow and AnnualConfigurationTab and copy_previous_year and validate_year and ensure_record_foundation and calculate_price and PricingTestDialog and main; print('Build 008 imports: passed')"
+          python -c "from directbooking.database import Database; from directbooking.main_window import MainWindow; from directbooking.annual_config import AnnualConfigurationTab, copy_previous_year, validate_year; from directbooking.annual_config_repair import copy_previous_year_verified, delete_pricing_year; from directbooking.record_foundation import ensure_record_foundation; from directbooking.pricing import calculate_price; from directbooking.pricing_test_dialog import PricingTestDialog; from directbooking.app import main; assert Database and MainWindow and AnnualConfigurationTab and copy_previous_year and copy_previous_year_verified and delete_pricing_year and validate_year and ensure_record_foundation and calculate_price and PricingTestDialog and main; print('Build 008 imports: passed')"
           if ($LASTEXITCODE -ne 0) { throw "Application import verification failed" }
 
       - name: Run source smoke test
