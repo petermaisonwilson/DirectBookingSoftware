@@ -11,3 +11,9 @@ apply_annual_config_repair()
 from .annual_grid_safety import apply_annual_grid_safety
 
 apply_annual_grid_safety()
+
+# Build 010 Add-on integration: copy/delete annual Element/Add-on rules alongside
+# the established annual pricing, person-pricing and occupancy grids.
+from .addon_integration import apply_addon_year_integration
+
+apply_addon_year_integration()
