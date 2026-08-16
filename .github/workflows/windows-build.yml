@@ -1,4 +1,4 @@
-name: Direct Booking Software Build 010
+name: Direct Booking Software Build 011
 
 on:
   push:
@@ -23,7 +23,7 @@ jobs:
         with:
           python-version: "3.11"
 
-      - name: Verify required Build 010 files
+      - name: Verify required Build 011 files
         shell: pwsh
         run: |
           $required = @(
@@ -39,8 +39,11 @@ jobs:
             "src/directbooking/annual_grid_safety.py",
             "src/directbooking/addon_model.py",
             "src/directbooking/addon_setup.py",
+            "src/directbooking/addon_inheritance.py",
+            "src/directbooking/addon_rules011.py",
             "src/directbooking/addon_integration.py",
             "src/directbooking/build010_ui.py",
+            "src/directbooking/build011_ui.py",
             "src/directbooking/record_foundation.py",
             "src/directbooking/pricing.py",
             "src/directbooking/pricing_test_dialog.py",
@@ -50,7 +53,7 @@ jobs:
             "tests/smoke_test.py"
           )
           foreach ($file in $required) {
-            if (-not (Test-Path $file)) { throw "Missing Build 010 file: $file" }
+            if (-not (Test-Path $file)) { throw "Missing Build 011 file: $file" }
           }
 
       - name: Install dependencies
@@ -66,7 +69,7 @@ jobs:
       - name: Verify imports
         shell: pwsh
         run: |
-          python -c "from directbooking.database import Database; from directbooking.main_window import MainWindow; from directbooking.annual_config import AnnualConfigurationTab, copy_previous_year, validate_year; from directbooking.annual_config_repair import delete_pricing_year; from directbooking.annual_grid_safety import apply_annual_grid_safety, missing_counts_from_tables; from directbooking.addon_model import save_addon, save_addon_rule, validate_addon_year, addon_amount; from directbooking.addon_setup import AddonsTab, ElementAddonRulesTab; from directbooking.record_foundation import ensure_record_foundation; from directbooking.pricing import calculate_price; from directbooking.pricing_test_dialog import PricingTestDialog; from directbooking.app import main; assert Database and MainWindow and AnnualConfigurationTab and copy_previous_year and delete_pricing_year and apply_annual_grid_safety and missing_counts_from_tables and save_addon and save_addon_rule and validate_addon_year and addon_amount and AddonsTab and ElementAddonRulesTab and validate_year and ensure_record_foundation and calculate_price and PricingTestDialog and main; print('Build 010 imports: passed')"
+          python -c "from directbooking.database import Database; from directbooking.main_window import MainWindow; from directbooking.annual_config import AnnualConfigurationTab, copy_previous_year, validate_year; from directbooking.annual_config_repair import delete_pricing_year; from directbooking.annual_grid_safety import apply_annual_grid_safety, missing_counts_from_tables; from directbooking.addon_model import save_addon, save_addon_rule, addon_amount; from directbooking.addon_inheritance import save_group_addon_rule, resolve_addon_rule, validate_group_addon_year; from directbooking.addon_setup import AddonsTab; from directbooking.addon_rules011 import ElementAddonRules011Tab; from directbooking.record_foundation import ensure_record_foundation; from directbooking.pricing import calculate_price; from directbooking.pricing_test_dialog import PricingTestDialog; from directbooking.app import main; assert Database and MainWindow and AnnualConfigurationTab and copy_previous_year and delete_pricing_year and apply_annual_grid_safety and missing_counts_from_tables and save_addon and save_addon_rule and addon_amount and save_group_addon_rule and resolve_addon_rule and validate_group_addon_year and AddonsTab and ElementAddonRules011Tab and validate_year and ensure_record_foundation and calculate_price and PricingTestDialog and main; print('Build 011 imports: passed')"
           if ($LASTEXITCODE -ne 0) { throw "Application import verification failed" }
 
       - name: Run source smoke test
@@ -87,7 +90,7 @@ jobs:
         run: |
           $process = Start-Process -FilePath "dist/DirectBookingSoftware.exe" -ArgumentList "--self-test" -PassThru -Wait
           if ($process.ExitCode -ne 0) { throw "Packaged EXE self-test failed with exit code $($process.ExitCode)" }
-          Write-Host "Packaged DirectBookingSoftware.exe Build 010 self-test passed"
+          Write-Host "Packaged DirectBookingSoftware.exe Build 011 self-test passed"
 
       - name: Stage artifact
         shell: pwsh
@@ -96,10 +99,10 @@ jobs:
           Copy-Item "dist/DirectBookingSoftware.exe" "artifact/DirectBookingSoftware.exe" -Force
           Copy-Item "ACCEPTANCE_TEST.md" "artifact/ACCEPTANCE_TEST.md" -Force
 
-      - name: Upload Build 010 artifact
+      - name: Upload Build 011 artifact
         uses: actions/upload-artifact@v4
         with:
-          name: DirectBookingSoftware-Build010
+          name: DirectBookingSoftware-Build011
           path: artifact/
           if-no-files-found: error
           retention-days: 30
