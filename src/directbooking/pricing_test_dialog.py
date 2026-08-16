@@ -22,24 +22,24 @@ from .pricing import calculate_price
 
 
 class PricingTestDialog(QDialog):
-    """Build 007 calculator for combined element base and person supplements."""
+    """Build 008 calculator for annual/seasonal combined element pricing."""
 
     def __init__(self, database: Database, parent: QWidget | None = None):
         super().__init__(parent)
         self.database = database
         self.person_controls: dict[int, QSpinBox] = {}
-        self.setWindowTitle("Pricing Test - Build 007")
+        self.setWindowTitle("Pricing Test - Build 008")
         self.setMinimumWidth(760)
 
         layout = QVBoxLayout(self)
 
-        heading = QLabel("Combined element pricing test")
+        heading = QLabel("Annual combined pricing test")
         heading.setObjectName("pageTitle")
         layout.addWidget(heading)
 
         note = QLabel(
             "This calculates one complete element price only; it does not create an enquiry, offer or booking. "
-            "The element base charge, any person supplements, occupancy limits and duration discount are all combined here."
+            "Build 008 uses the annual grids for the selected dates and blocks the calculation if required annual data is missing."
         )
         note.setWordWrap(True)
         note.setObjectName("bodyText")
@@ -49,7 +49,7 @@ class PricingTestDialog(QDialog):
         self.element = QComboBox()
         for row in database.list_elements(include_inactive=False):
             self.element.addItem(
-                f"{row['name']} — {row['pricing_type']} — €{float(row['base_price']):.2f}",
+                f"{row['name']} — {row['pricing_type']} — Base €{float(row['base_price']):.2f}",
                 int(row["id"]),
             )
 
