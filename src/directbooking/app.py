@@ -126,16 +126,23 @@ def run_self_test() -> int:
             assert _group_rows(database, delete_test_year) == []
 
             window = MainWindow(database)
-            assert window.windowTitle() == "Direct Booking Software - Build 011"
+            assert window.windowTitle() == "Direct Booking Software - Build 012"
             assert window.setup_page.tabs.count() == 8
             assert window.setup_page.tabs.tabText(4) == "Add-ons"
             assert window.setup_page.tabs.tabText(5) == "Add-on rules"
-            assert window.setup_page.addon_rules_tab.pages.count() == 2
-            assert window.setup_page.addon_rules_tab.pages.tabText(0) == "Element Type defaults"
-            assert window.setup_page.addon_rules_tab.pages.tabText(1) == "Element overrides"
+            rules = window.setup_page.addon_rules_tab
+            assert rules.pages.count() == 2
+            assert rules.pages.tabText(0) == "Element Type defaults"
+            assert rules.pages.tabText(1) == "Element overrides"
+            assert rules.type_table.horizontalHeaderItem(3).text() == "Y / N"
+            assert rules.override_table.horizontalHeaderItem(4).text() == "I / Y / N"
+            type_control = rules.type_table.cellWidget(0, 3)
+            assert type_control is not None and hasattr(type_control, "_availability_check")
+            override_control = rules.override_table.cellWidget(0, 4)
+            assert override_control is not None and set(override_control._override_buttons) == {"I", "Y", "N"}
             dialog = PricingTestDialog(database)
             assert len(dialog.person_controls) == 2
-            assert dialog.windowTitle() == "Pricing Test - Build 011"
+            assert dialog.windowTitle() == "Pricing Test - Build 012"
             dialog.close()
             window.close()
 
@@ -150,7 +157,7 @@ def run_self_test() -> int:
             database.close()
 
     app.quit()
-    print("Direct Booking Software Build 011 self-test: passed")
+    print("Direct Booking Software Build 012 self-test: passed")
     return 0
 
 
