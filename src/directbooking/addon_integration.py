@@ -1,8 +1,12 @@
 from __future__ import annotations
 
+from PySide6.QtWidgets import QWidget
+
 from . import annual_config as annual
 from . import annual_config_repair as repair
+from . import setup_page as setup
 from .addon_model import copy_addon_year, delete_addon_year, ensure_addon_schema
+from .addon_setup import AddonsTab, ElementAddonRulesTab
 from .database import Database
 
 
@@ -61,4 +65,23 @@ def apply_addon_year_integration() -> None:
     annual.copy_previous_year = copy_with_addons
     repair.copy_previous_year_verified = copy_with_addons
     repair.delete_pricing_year = delete_with_addons
+
+    original_setup_init = setup.SetupPage.__init__
+
+    def setup_init_with_addons(self, database: Database):
+        original_setup_init(self, database)
+        self.addons_tab = AddonsTab(database)
+        self.addon_rules_tab = ElementAddonRulesTab(database)
+        self.tabs.insertTab(4, self.addons_tab, "Add-ons")
+        self.tabs.insertTab(5, self.addon_rules_tab, "Add-on rules")
+        self.addons_tab.changed.connect(self.addon_rules_tab.refresh)
+        self.data_changed.connect(self.addon_rules_tab.refresh)
+
+    setup.SetupPage.__init__ = setup_init_with_addons
+
+    def rules_show_event(self, event):
+        self.refresh_years(self.current_year())
+        QWidget.showEvent(self, event)
+
+    ElementAddonRulesTab.showEvent = rules_show_event
     annual._addon_year_integration_applied = True
