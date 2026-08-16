@@ -22,23 +22,24 @@ from .pricing import calculate_price
 
 
 class PricingTestDialog(QDialog):
-    """Manual Build 004 calculator for validating configured pricing rules."""
+    """Build 006 calculator for validating person-aware pricing and occupancy."""
 
     def __init__(self, database: Database, parent: QWidget | None = None):
         super().__init__(parent)
         self.database = database
-        self.setWindowTitle("Pricing Test - Build 004")
-        self.setMinimumWidth(650)
+        self.person_controls: dict[int, QSpinBox] = {}
+        self.setWindowTitle("Pricing Test - Build 006")
+        self.setMinimumWidth(700)
 
         layout = QVBoxLayout(self)
 
-        heading = QLabel("Pricing calculation test")
+        heading = QLabel("Person-aware pricing test")
         heading.setObjectName("pageTitle")
         layout.addWidget(heading)
 
         note = QLabel(
-            "This test calculates a price only. It does not create an enquiry, offer or booking. "
-            "Use it to prove pricing types and duration discounts before they are connected to live booking workflow."
+            "This still calculates a price only; it does not create an enquiry, offer or booking. "
+            "Choose the actual mix of person types. Element occupancy limits are checked before the price is accepted."
         )
         note.setWordWrap(True)
         note.setObjectName("bodyText")
@@ -61,19 +62,30 @@ class PricingTestDialog(QDialog):
         self.arrival.setDate(today)
         self.departure.setDate(today.addDays(1))
 
-        self.guests = QSpinBox()
-        self.guests.setRange(1, 999)
-        self.guests.setValue(1)
-
         form.addRow("Element", self.element)
         form.addRow("Arrival", self.arrival)
         form.addRow("Departure", self.departure)
-        form.addRow("Guests", self.guests)
         layout.addLayout(form)
+
+        people_heading = QLabel("People")
+        people_heading.setObjectName("sectionTitle")
+        layout.addWidget(people_heading)
+        self.people_form = QFormLayout()
+        active_types = database.list_person_types(False)
+        for index, row in enumerate(active_types):
+            control = QSpinBox()
+            control.setRange(0, 999)
+            control.setValue(1 if index == 0 else 0)
+            self.people_form.addRow(f"{row['name']} ({row['short_label']})", control)
+            self.person_controls[int(row["id"])] = control
+        if not active_types:
+            self.people_form.addRow(QLabel("No active person types. Add one in Setup → Person types."))
+        layout.addLayout(self.people_form)
 
         actions = QHBoxLayout()
         self.calculate_button = QPushButton("Calculate price")
         self.calculate_button.clicked.connect(self.calculate)
+        self.calculate_button.setEnabled(bool(active_types) and self.element.count() > 0)
         actions.addWidget(self.calculate_button)
         actions.addStretch()
         layout.addLayout(actions)
@@ -83,8 +95,10 @@ class PricingTestDialog(QDialog):
         result_layout = QFormLayout(self.result_panel)
         self.result_element = QLabel("—")
         self.result_duration = QLabel("—")
+        self.result_people = QLabel("—")
         self.result_pricing_type = QLabel("—")
         self.result_calculation = QLabel("—")
+        self.result_calculation.setWordWrap(True)
         self.result_base = QLabel("—")
         self.result_rule = QLabel("—")
         self.result_discount = QLabel("—")
@@ -92,6 +106,7 @@ class PricingTestDialog(QDialog):
         self.result_final.setObjectName("sectionTitle")
         result_layout.addRow("Element", self.result_element)
         result_layout.addRow("Duration", self.result_duration)
+        result_layout.addRow("People", self.result_people)
         result_layout.addRow("Pricing type", self.result_pricing_type)
         result_layout.addRow("Base calculation", self.result_calculation)
         result_layout.addRow("Base amount", self.result_base)
@@ -105,7 +120,6 @@ class PricingTestDialog(QDialog):
         layout.addWidget(buttons)
 
         if self.element.count() == 0:
-            self.calculate_button.setEnabled(False)
             self.result_element.setText("No active elements are configured")
 
     def calculate(self) -> None:
@@ -114,13 +128,14 @@ class PricingTestDialog(QDialog):
             QMessageBox.information(self, "No element", "There are no active elements to price.")
             return
 
+        person_counts = {person_type_id: control.value() for person_type_id, control in self.person_controls.items()}
         try:
             result = calculate_price(
                 self.database,
                 int(element_id),
                 self.arrival.date().toString("yyyy-MM-dd"),
                 self.departure.date().toString("yyyy-MM-dd"),
-                self.guests.value(),
+                person_counts=person_counts,
             )
         except ValueError as exc:
             QMessageBox.warning(self, "Cannot calculate price", str(exc))
@@ -129,9 +144,9 @@ class PricingTestDialog(QDialog):
         self.result_element.setText(str(result["element_name"]))
         self.result_duration.setText(
             f"{result['nights']} night{'s' if result['nights'] != 1 else ''}; "
-            f"{result['days']} chargeable day{'s' if result['days'] != 1 else ''}; "
-            f"{result['guests']} guest{'s' if result['guests'] != 1 else ''}"
+            f"{result['days']} chargeable day{'s' if result['days'] != 1 else ''}"
         )
+        self.result_people.setText(str(result["people_summary"]))
         self.result_pricing_type.setText(str(result["pricing_type"]))
         self.result_calculation.setText(str(result["calculation"]))
         self.result_base.setText(f"€ {float(result['base_amount']):.2f}")
