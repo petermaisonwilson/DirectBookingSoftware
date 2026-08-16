@@ -36,3 +36,7 @@ apply_build010_labels()
 from .build011_ui import apply_build011_labels
 
 apply_build011_labels()
+
+from .build012_ui import apply_build012_labels
+
+apply_build012_labels()
