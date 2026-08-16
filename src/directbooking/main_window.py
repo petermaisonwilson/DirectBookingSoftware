@@ -45,7 +45,7 @@ class MainWindow(QMainWindow):
     def __init__(self, database: Database):
         super().__init__()
         self.database = database
-        self.setWindowTitle("Direct Booking Software - Build 008")
+        self.setWindowTitle("Direct Booking Software - Build 009")
         self.resize(1280, 800)
         self.setMinimumSize(1000, 650)
 
@@ -80,7 +80,7 @@ class MainWindow(QMainWindow):
         title_box.addWidget(subtitle)
         header.addLayout(title_box)
         header.addStretch()
-        build = QLabel("Build 008")
+        build = QLabel("Build 009")
         build.setObjectName("buildBadge")
         header.addWidget(build)
         content_layout.addLayout(header)
@@ -120,7 +120,7 @@ class MainWindow(QMainWindow):
         layout.addWidget(heading)
 
         intro = QLabel(
-            "Build 008 introduces year-by-year pricing and configuration grids, completeness warnings, and copy-forward setup while retaining historical annual data."
+            "Build 009 finishes annual-grid safety: required blanks are highlighted and block saving, while explicit zero values remain valid but are highlighted for review."
         )
         intro.setWordWrap(True)
         intro.setObjectName("bodyText")
@@ -142,19 +142,18 @@ class MainWindow(QMainWindow):
         panel = QFrame()
         panel.setObjectName("panel")
         panel_layout = QVBoxLayout(panel)
-        panel_title = QLabel("Build 008 annual configuration")
+        panel_title = QLabel("Build 009 annual grid safety")
         panel_title.setObjectName("sectionTitle")
         panel_layout.addWidget(panel_title)
         for line in [
-            "All active Elements are visible together in annual grids",
-            "Seasonal element prices are entered directly in a grid",
-            "Person rates / supplements are entered directly in a grid; 0.00 explicitly means no supplement",
-            "Occupancy limits are visible and editable for all Elements in one grid",
-            "Each grid warns when required data is missing",
-            "A new year can be blank or copied from the previous year",
-            "New Elements or Person Types not present in the copied year appear as missing cells",
-            "Pricing uses the correct annual/seasonal data and blocks incomplete required setup",
-            "Previous annual grids are retained for reference and future booking audit",
+            "Required blank annual-grid cells are clearly highlighted",
+            "Annual grids cannot be saved while any required cell is blank",
+            "0 / 0.00 is valid but gently highlighted so accidental zeroes are easy to notice",
+            "Zero values do not create warning counts or pop-ups",
+            "Each grid includes a legend explaining blank, zero and configured values",
+            "Missing-data warnings continue to identify the incomplete grid",
+            "Copy previous year and Delete year remain available from Build 008",
+            "Pricing continues to use annual/seasonal data and blocks incomplete required setup",
         ]:
             label = QLabel(f"✓  {line}")
             label.setObjectName("bodyText")
