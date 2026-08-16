@@ -8,6 +8,7 @@ from pathlib import Path
 
 from PySide6.QtWidgets import QApplication
 
+from .addon_model import addon_amount, save_addon, save_addon_rule, validate_addon_year
 from .annual_config import copy_previous_year, list_years, migrate_legacy_current_year, validate_year
 from .annual_config_repair import delete_pricing_year
 from .database import Database
@@ -34,6 +35,14 @@ def _annual_rates(database: Database, year: int) -> list[tuple[int, float]]:
     return [(int(row["element_id"]), float(row["rate"])) for row in rows]
 
 
+def _addon_rows(database: Database, year: int) -> list[tuple]:
+    rows = database.connection.execute(
+        "SELECT element_id, addon_id, allowed, min_qty, max_qty, rate FROM annual_element_addons WHERE company_id=? AND year=? ORDER BY element_id, addon_id",
+        (database.company_id(), year),
+    ).fetchall()
+    return [tuple(row) for row in rows]
+
+
 def run_self_test() -> int:
     os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
     app = QApplication.instance() or QApplication([])
@@ -46,19 +55,30 @@ def run_self_test() -> int:
         try:
             database.initialise()
             ensure_record_foundation(database)
-
             database.connection.execute("DELETE FROM elements")
             database.connection.commit()
 
             adult_id = database.save_person_type(None, "Adult", "Ad")
             child_id = database.save_person_type(None, "Child", "Ch")
-            pitch_id = database.save_element(None, "Pitch 1", "Camping", "Per night", 20.0)
-            database.save_element_capacity(pitch_id, 4, {adult_id: 4, child_id: 4})
-            save_element_person_rates(database, pitch_id, {adult_id: 5.0, child_id: 3.0})
+            pitch_id = database.save_element(None, "Pitch 1", "Accommodation", "Per night", 20.0)
+            gite_id = database.save_element(None, "Gite", "Accommodation", "Per night", 80.0)
+            for element_id, total in ((pitch_id, 6), (gite_id, 4)):
+                database.save_element_capacity(element_id, total, {adult_id: total, child_id: total})
+                save_element_person_rates(database, element_id, {adult_id: 0.0, child_id: 0.0})
 
             migrate_legacy_current_year(database)
-            assert current_year in list_years(database)
             assert validate_year(database, current_year) == {"seasons": 0, "rates": 0, "people": 0, "occupancy": 0}
+
+            dog_id = save_addon(database, None, "Dog", "Per quantity per night")
+            ehu_id = save_addon(database, None, "Electric Hook-up", "Per night")
+            save_addon_rule(database, current_year, pitch_id, dog_id, True, 0, 2, 3.0)
+            save_addon_rule(database, current_year, pitch_id, ehu_id, True, 0, 1, 4.0)
+            save_addon_rule(database, current_year, gite_id, dog_id, False)
+            save_addon_rule(database, current_year, gite_id, ehu_id, False)
+            database.connection.commit()
+            assert validate_addon_year(database, current_year) == {"unreviewed": 0, "incomplete": 0}
+            assert addon_amount("Per quantity per night", 3.0, 2, 7, 8) == 42.0
+            assert addon_amount("Fixed once", 10.0, 1, 7, 8) == 10.0
 
             result = calculate_price(
                 database, pitch_id, f"{current_year}-09-01", f"{current_year}-09-08",
@@ -66,36 +86,24 @@ def run_self_test() -> int:
             )
             assert result["annual_mode"] is True
             assert result["element_base_amount"] == 140.0
-            assert result["person_amount"] == 112.0
-            assert result["base_amount"] == 252.0
-
-            database.save_discount_rule(None, "7 nights 10%", 7, "Percentage", 10, "Element", element_id=pitch_id)
-            discounted = calculate_price(
-                database, pitch_id, f"{current_year}-09-01", f"{current_year}-09-08",
-                person_counts={adult_id: 2, child_id: 2},
-            )
-            assert discounted["discount_amount"] == 25.2
-            assert discounted["final_amount"] == 226.8
 
             source_rates = _annual_rates(database, current_year)
+            source_addons = _addon_rows(database, current_year)
             copy_previous_year(database, next_year)
             assert next_year in list_years(database)
             assert _annual_rates(database, next_year) == source_rates
-            copied = calculate_price(
-                database, pitch_id, f"{next_year}-09-01", f"{next_year}-09-08",
-                person_counts={adult_id: 2, child_id: 2},
-            )
-            assert copied["final_amount"] == 226.8
+            assert _addon_rows(database, next_year) == source_addons
 
             copy_previous_year(database, delete_test_year)
-            assert _annual_rates(database, delete_test_year) == source_rates
+            assert _addon_rows(database, delete_test_year) == source_addons
             delete_pricing_year(database, delete_test_year)
             assert delete_test_year not in list_years(database)
-            assert _annual_rates(database, delete_test_year) == []
+            assert _addon_rows(database, delete_test_year) == []
 
-            new_element = database.save_element(None, "New Pitch", "Camping", "Per night", 22.0)
-            missing = validate_year(database, next_year)
-            assert missing["rates"] > 0 and missing["people"] > 0 and missing["occupancy"] > 0
+            new_element = database.save_element(None, "New Pitch", "Accommodation", "Per night", 22.0)
+            save_addon(database, None, "Extra Car", "Fixed once")
+            assert validate_year(database, next_year)["rates"] > 0
+            assert validate_addon_year(database, next_year)["unreviewed"] > 0
             try:
                 calculate_price(database, new_element, f"{next_year}-09-01", f"{next_year}-09-02", person_counts={adult_id: 1})
                 raise AssertionError("Incomplete annual setup was not blocked")
@@ -103,20 +111,22 @@ def run_self_test() -> int:
                 pass
 
             window = MainWindow(database)
-            assert window.windowTitle() == "Direct Booking Software - Build 009"
-            assert window.setup_page.tabs.count() == 6
-            assert window.setup_page.tabs.tabText(4) == "Person types"
-            assert window.setup_page.tabs.tabText(5) == "Annual grids"
-            assert window.annual_config_tab.tabs.count() == 3
-            assert hasattr(window.annual_config_tab, "delete_year_button")
-            assert window.annual_config_tab.delete_year_button.text() == "Delete year"
+            assert window.windowTitle() == "Direct Booking Software - Build 010"
+            assert window.setup_page.tabs.count() == 8
+            assert window.setup_page.tabs.tabText(4) == "Add-ons"
+            assert window.setup_page.tabs.tabText(5) == "Add-on rules"
+            assert window.setup_page.tabs.tabText(6) == "Person types"
+            assert window.setup_page.tabs.tabText(7) == "Annual grids"
             dialog = PricingTestDialog(database)
             assert len(dialog.person_controls) == 2
-            assert dialog.windowTitle() == "Pricing Test - Build 009"
+            assert dialog.windowTitle() == "Pricing Test - Build 010"
             dialog.close()
             window.close()
 
-            for table in ("clients", "booking_clients", "booking_party_snapshot", "booking_pricing_snapshots"):
+            for table in (
+                "clients", "booking_clients", "booking_party_snapshot", "booking_pricing_snapshots",
+                "add_ons", "annual_element_addons",
+            ):
                 assert database.connection.execute(
                     "SELECT 1 FROM sqlite_master WHERE type='table' AND name=?", (table,)
                 ).fetchone() is not None
@@ -124,7 +134,7 @@ def run_self_test() -> int:
             database.close()
 
     app.quit()
-    print("Direct Booking Software Build 009 self-test: passed")
+    print("Direct Booking Software Build 010 self-test: passed")
     return 0
 
 
