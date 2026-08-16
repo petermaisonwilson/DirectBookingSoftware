@@ -45,7 +45,7 @@ class MainWindow(QMainWindow):
     def __init__(self, database: Database):
         super().__init__()
         self.database = database
-        self.setWindowTitle("Direct Booking Software - Build 006")
+        self.setWindowTitle("Direct Booking Software - Build 007")
         self.resize(1280, 800)
         self.setMinimumSize(1000, 650)
 
@@ -80,7 +80,7 @@ class MainWindow(QMainWindow):
         title_box.addWidget(subtitle)
         header.addLayout(title_box)
         header.addStretch()
-        build = QLabel("Build 006")
+        build = QLabel("Build 007")
         build.setObjectName("buildBadge")
         header.addWidget(build)
         content_layout.addLayout(header)
@@ -123,7 +123,7 @@ class MainWindow(QMainWindow):
         heading.setObjectName("pageTitle")
         layout.addWidget(heading)
 
-        intro = QLabel("Build 006 makes the pricing calculator person-aware, enforcing Build 005 occupancy rules and allowing different rates for each person type.")
+        intro = QLabel("Build 007 combines an element's own base charge with optional Adult/Child/custom person supplements, while keeping occupancy validation and duration discounts.")
         intro.setWordWrap(True)
         intro.setObjectName("bodyText")
         layout.addWidget(intro)
@@ -144,17 +144,17 @@ class MainWindow(QMainWindow):
         panel = QFrame()
         panel.setObjectName("panel")
         panel_layout = QVBoxLayout(panel)
-        panel_title = QLabel("Build 006 person-aware pricing")
+        panel_title = QLabel("Build 007 combined element pricing")
         panel_title.setObjectName("sectionTitle")
         panel_layout.addWidget(panel_title)
         for line in [
-            "Pricing Test uses the actual quantities of each active person type",
-            "Element overall and per-person-type occupancy limits are enforced",
-            "Per person and Per person per night can use different rates for Adult, Child or any custom type",
-            "Unset person rates automatically fall back to the element Base Price",
-            "Non-person pricing still validates the people occupying the element",
-            "Duration discounts continue to apply after the complete base/person calculation",
-            "Existing Build 005 person types, occupancy limits and all earlier setup remain intact",
+            "One Element remains one bookable resource",
+            "Per night/day/stay/package elements keep their configured Base Price",
+            "Configured person rates become supplements on those fixed/base-priced elements",
+            "Per person and Per person per night keep person-specific rate behaviour",
+            "Occupancy limits are checked before a price is accepted",
+            "Pricing Test shows element base, person charges, combined amount, discount and final price",
+            "Duration discounts apply after element base and person charges are combined",
         ]:
             label = QLabel(f"✓  {line}")
             label.setObjectName("bodyText")
