@@ -22,24 +22,24 @@ from .pricing import calculate_price
 
 
 class PricingTestDialog(QDialog):
-    """Build 006 calculator for validating person-aware pricing and occupancy."""
+    """Build 007 calculator for combined element base and person supplements."""
 
     def __init__(self, database: Database, parent: QWidget | None = None):
         super().__init__(parent)
         self.database = database
         self.person_controls: dict[int, QSpinBox] = {}
-        self.setWindowTitle("Pricing Test - Build 006")
-        self.setMinimumWidth(700)
+        self.setWindowTitle("Pricing Test - Build 007")
+        self.setMinimumWidth(760)
 
         layout = QVBoxLayout(self)
 
-        heading = QLabel("Person-aware pricing test")
+        heading = QLabel("Combined element pricing test")
         heading.setObjectName("pageTitle")
         layout.addWidget(heading)
 
         note = QLabel(
-            "This still calculates a price only; it does not create an enquiry, offer or booking. "
-            "Choose the actual mix of person types. Element occupancy limits are checked before the price is accepted."
+            "This calculates one complete element price only; it does not create an enquiry, offer or booking. "
+            "The element base charge, any person supplements, occupancy limits and duration discount are all combined here."
         )
         note.setWordWrap(True)
         note.setObjectName("bodyText")
@@ -99,6 +99,8 @@ class PricingTestDialog(QDialog):
         self.result_pricing_type = QLabel("—")
         self.result_calculation = QLabel("—")
         self.result_calculation.setWordWrap(True)
+        self.result_element_base = QLabel("—")
+        self.result_person_amount = QLabel("—")
         self.result_base = QLabel("—")
         self.result_rule = QLabel("—")
         self.result_discount = QLabel("—")
@@ -108,8 +110,10 @@ class PricingTestDialog(QDialog):
         result_layout.addRow("Duration", self.result_duration)
         result_layout.addRow("People", self.result_people)
         result_layout.addRow("Pricing type", self.result_pricing_type)
-        result_layout.addRow("Base calculation", self.result_calculation)
-        result_layout.addRow("Base amount", self.result_base)
+        result_layout.addRow("Calculation", self.result_calculation)
+        result_layout.addRow("Element base charge", self.result_element_base)
+        result_layout.addRow("Person charges", self.result_person_amount)
+        result_layout.addRow("Combined before discount", self.result_base)
         result_layout.addRow("Discount rule", self.result_rule)
         result_layout.addRow("Discount", self.result_discount)
         result_layout.addRow("Final price", self.result_final)
@@ -149,6 +153,8 @@ class PricingTestDialog(QDialog):
         self.result_people.setText(str(result["people_summary"]))
         self.result_pricing_type.setText(str(result["pricing_type"]))
         self.result_calculation.setText(str(result["calculation"]))
+        self.result_element_base.setText(f"€ {float(result['element_base_amount']):.2f}")
+        self.result_person_amount.setText(f"€ {float(result['person_amount']):.2f}")
         self.result_base.setText(f"€ {float(result['base_amount']):.2f}")
         rule_name = str(result["discount_rule_name"])
         self.result_rule.setText(rule_name if rule_name else "No qualifying discount")
