@@ -5,7 +5,7 @@ from PySide6.QtWidgets import QWidget
 from . import annual_config as annual
 from . import annual_config_repair as repair
 from . import setup_page as setup
-from .addon_model import copy_addon_year, delete_addon_year, ensure_addon_schema
+from .addon_model import ensure_addon_schema
 from .addon_setup import AddonsTab, ElementAddonRulesTab
 from .database import Database
 
@@ -38,8 +38,25 @@ def apply_addon_year_integration() -> None:
         result = original_copy(database, target_year)
         try:
             database.connection.execute("BEGIN")
-            copy_addon_year(database, source_year, target_year)
-            target_rows = _addon_rows(database, target_year)
+            database.connection.execute(
+                """
+                INSERT INTO annual_element_addons(company_id,year,element_id,addon_id,allowed,min_qty,max_qty,rate)
+                SELECT company_id, ?, element_id, addon_id, allowed, min_qty, max_qty, rate
+                FROM annual_element_addons
+                WHERE company_id=? AND year=?
+                """,
+                (target_year, database.company_id(), source_year),
+            )
+            target_rows = database.connection.execute(
+                """
+                SELECT element_id, addon_id, allowed, min_qty, max_qty, rate
+                FROM annual_element_addons
+                WHERE company_id=? AND year=?
+                ORDER BY element_id, addon_id
+                """,
+                (database.company_id(), target_year),
+            ).fetchall()
+            target_rows = [tuple(row) for row in target_rows]
             if target_rows != source_rows:
                 raise ValueError("Add-on rules did not copy completely")
             database.connection.commit()
@@ -47,6 +64,11 @@ def apply_addon_year_integration() -> None:
             database.connection.rollback()
             try:
                 original_delete(database, target_year)
+                database.connection.execute(
+                    "DELETE FROM annual_element_addons WHERE company_id=? AND year=?",
+                    (database.company_id(), target_year),
+                )
+                database.connection.commit()
             except Exception:
                 pass
             if isinstance(exc, ValueError):
@@ -59,7 +81,10 @@ def apply_addon_year_integration() -> None:
 
     def delete_with_addons(database: Database, year: int) -> None:
         original_delete(database, year)
-        delete_addon_year(database, year)
+        database.connection.execute(
+            "DELETE FROM annual_element_addons WHERE company_id=? AND year=?",
+            (database.company_id(), int(year)),
+        )
         database.connection.commit()
 
     annual.copy_previous_year = copy_with_addons
