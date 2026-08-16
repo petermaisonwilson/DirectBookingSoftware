@@ -17,3 +17,7 @@ apply_annual_grid_safety()
 from .addon_integration import apply_addon_year_integration
 
 apply_addon_year_integration()
+
+from .build010_ui import apply_build010_labels
+
+apply_build010_labels()
