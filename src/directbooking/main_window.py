@@ -15,9 +15,9 @@ from PySide6.QtWidgets import (
     QWidget,
 )
 
+from .annual_config import AnnualConfigurationTab
 from .database import Database
-from .people_setup import OccupancyTab, PersonTypesTab
-from .person_pricing import PersonPricingTab
+from .people_setup import PersonTypesTab
 from .pricing_test_dialog import PricingTestDialog
 from .setup_page import SetupPage
 
@@ -45,7 +45,7 @@ class MainWindow(QMainWindow):
     def __init__(self, database: Database):
         super().__init__()
         self.database = database
-        self.setWindowTitle("Direct Booking Software - Build 007")
+        self.setWindowTitle("Direct Booking Software - Build 008")
         self.resize(1280, 800)
         self.setMinimumSize(1000, 650)
 
@@ -80,7 +80,7 @@ class MainWindow(QMainWindow):
         title_box.addWidget(subtitle)
         header.addLayout(title_box)
         header.addStretch()
-        build = QLabel("Build 007")
+        build = QLabel("Build 008")
         build.setObjectName("buildBadge")
         header.addWidget(build)
         content_layout.addLayout(header)
@@ -94,16 +94,12 @@ class MainWindow(QMainWindow):
 
         self.setup_page = SetupPage(database)
         self.person_types_tab = PersonTypesTab(database)
-        self.occupancy_tab = OccupancyTab(database)
-        self.person_pricing_tab = PersonPricingTab(database)
+        self.annual_config_tab = AnnualConfigurationTab(database)
         self.setup_page.tabs.addTab(self.person_types_tab, "Person types")
-        self.setup_page.tabs.addTab(self.occupancy_tab, "Occupancy")
-        self.setup_page.tabs.addTab(self.person_pricing_tab, "Person pricing")
+        self.setup_page.tabs.addTab(self.annual_config_tab, "Annual grids")
 
-        self.person_types_tab.changed.connect(self.occupancy_tab.refresh_person_types)
-        self.person_types_tab.changed.connect(self.person_pricing_tab.refresh_person_types)
-        self.setup_page.data_changed.connect(self.occupancy_tab.refresh_elements)
-        self.setup_page.data_changed.connect(self.person_pricing_tab.refresh_elements)
+        self.person_types_tab.changed.connect(self.annual_config_tab.refresh_all)
+        self.setup_page.data_changed.connect(self.annual_config_tab.refresh_all)
         self.setup_page.data_changed.connect(self.refresh_dashboard)
         self.stack.addWidget(self.setup_page)
         content_layout.addWidget(self.stack, 1)
@@ -123,7 +119,9 @@ class MainWindow(QMainWindow):
         heading.setObjectName("pageTitle")
         layout.addWidget(heading)
 
-        intro = QLabel("Build 007 combines an element's own base charge with optional Adult/Child/custom person supplements, while keeping occupancy validation and duration discounts.")
+        intro = QLabel(
+            "Build 008 introduces year-by-year pricing and configuration grids, completeness warnings, and copy-forward setup while retaining historical annual data."
+        )
         intro.setWordWrap(True)
         intro.setObjectName("bodyText")
         layout.addWidget(intro)
@@ -144,17 +142,19 @@ class MainWindow(QMainWindow):
         panel = QFrame()
         panel.setObjectName("panel")
         panel_layout = QVBoxLayout(panel)
-        panel_title = QLabel("Build 007 combined element pricing")
+        panel_title = QLabel("Build 008 annual configuration")
         panel_title.setObjectName("sectionTitle")
         panel_layout.addWidget(panel_title)
         for line in [
-            "One Element remains one bookable resource",
-            "Per night/day/stay/package elements keep their configured Base Price",
-            "Configured person rates become supplements on those fixed/base-priced elements",
-            "Per person and Per person per night keep person-specific rate behaviour",
-            "Occupancy limits are checked before a price is accepted",
-            "Pricing Test shows element base, person charges, combined amount, discount and final price",
-            "Duration discounts apply after element base and person charges are combined",
+            "All active Elements are visible together in annual grids",
+            "Seasonal element prices are entered directly in a grid",
+            "Person rates / supplements are entered directly in a grid; 0.00 explicitly means no supplement",
+            "Occupancy limits are visible and editable for all Elements in one grid",
+            "Each grid warns when required data is missing",
+            "A new year can be blank or copied from the previous year",
+            "New Elements or Person Types not present in the copied year appear as missing cells",
+            "Pricing uses the correct annual/seasonal data and blocks incomplete required setup",
+            "Previous annual grids are retained for reference and future booking audit",
         ]:
             label = QLabel(f"✓  {line}")
             label.setObjectName("bodyText")
