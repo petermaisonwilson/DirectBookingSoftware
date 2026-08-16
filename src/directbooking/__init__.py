@@ -23,6 +23,12 @@ from .addon_delete011 import apply_addon_delete_safety
 
 apply_addon_delete_safety()
 
+# Build 012 makes Add-on rule entry click-based: Y/N checkbox for Type defaults
+# and compact I/Y/N radio controls for individual Element overrides.
+from .addon_controls012 import apply_build012_controls
+
+apply_build012_controls()
+
 from .build010_ui import apply_build010_labels
 
 apply_build010_labels()
