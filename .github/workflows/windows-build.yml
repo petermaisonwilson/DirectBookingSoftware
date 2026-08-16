@@ -1,4 +1,4 @@
-name: Direct Booking Software Build 008
+name: Direct Booking Software Build 009
 
 on:
   push:
@@ -23,7 +23,7 @@ jobs:
         with:
           python-version: "3.11"
 
-      - name: Verify required Build 008 files
+      - name: Verify required Build 009 files
         shell: pwsh
         run: |
           $required = @(
@@ -36,6 +36,7 @@ jobs:
             "src/directbooking/person_pricing.py",
             "src/directbooking/annual_config.py",
             "src/directbooking/annual_config_repair.py",
+            "src/directbooking/annual_grid_safety.py",
             "src/directbooking/record_foundation.py",
             "src/directbooking/pricing.py",
             "src/directbooking/pricing_test_dialog.py",
@@ -45,7 +46,7 @@ jobs:
             "tests/smoke_test.py"
           )
           foreach ($file in $required) {
-            if (-not (Test-Path $file)) { throw "Missing Build 008 file: $file" }
+            if (-not (Test-Path $file)) { throw "Missing Build 009 file: $file" }
           }
 
       - name: Install dependencies
@@ -61,7 +62,7 @@ jobs:
       - name: Verify imports
         shell: pwsh
         run: |
-          python -c "from directbooking.database import Database; from directbooking.main_window import MainWindow; from directbooking.annual_config import AnnualConfigurationTab, copy_previous_year, validate_year; from directbooking.annual_config_repair import copy_previous_year_verified, delete_pricing_year; from directbooking.record_foundation import ensure_record_foundation; from directbooking.pricing import calculate_price; from directbooking.pricing_test_dialog import PricingTestDialog; from directbooking.app import main; assert Database and MainWindow and AnnualConfigurationTab and copy_previous_year and copy_previous_year_verified and delete_pricing_year and validate_year and ensure_record_foundation and calculate_price and PricingTestDialog and main; print('Build 008 imports: passed')"
+          python -c "from directbooking.database import Database; from directbooking.main_window import MainWindow; from directbooking.annual_config import AnnualConfigurationTab, copy_previous_year, validate_year; from directbooking.annual_config_repair import copy_previous_year_verified, delete_pricing_year; from directbooking.annual_grid_safety import apply_annual_grid_safety, missing_counts_from_tables; from directbooking.record_foundation import ensure_record_foundation; from directbooking.pricing import calculate_price; from directbooking.pricing_test_dialog import PricingTestDialog; from directbooking.app import main; assert Database and MainWindow and AnnualConfigurationTab and copy_previous_year and copy_previous_year_verified and delete_pricing_year and apply_annual_grid_safety and missing_counts_from_tables and validate_year and ensure_record_foundation and calculate_price and PricingTestDialog and main; print('Build 009 imports: passed')"
           if ($LASTEXITCODE -ne 0) { throw "Application import verification failed" }
 
       - name: Run source smoke test
@@ -82,7 +83,7 @@ jobs:
         run: |
           $process = Start-Process -FilePath "dist/DirectBookingSoftware.exe" -ArgumentList "--self-test" -PassThru -Wait
           if ($process.ExitCode -ne 0) { throw "Packaged EXE self-test failed with exit code $($process.ExitCode)" }
-          Write-Host "Packaged DirectBookingSoftware.exe Build 008 self-test passed"
+          Write-Host "Packaged DirectBookingSoftware.exe Build 009 self-test passed"
 
       - name: Stage artifact
         shell: pwsh
@@ -91,10 +92,10 @@ jobs:
           Copy-Item "dist/DirectBookingSoftware.exe" "artifact/DirectBookingSoftware.exe" -Force
           Copy-Item "ACCEPTANCE_TEST.md" "artifact/ACCEPTANCE_TEST.md" -Force
 
-      - name: Upload Build 008 artifact
+      - name: Upload Build 009 artifact
         uses: actions/upload-artifact@v4
         with:
-          name: DirectBookingSoftware-Build008
+          name: DirectBookingSoftware-Build009
           path: artifact/
           if-no-files-found: error
           retention-days: 30
