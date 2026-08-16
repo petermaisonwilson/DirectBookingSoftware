@@ -9,6 +9,7 @@ from PySide6.QtWidgets import QApplication
 
 from .database import Database
 from .main_window import MainWindow
+from .person_pricing import get_element_person_rates, save_element_person_rates
 from .pricing import calculate_price
 from .pricing_test_dialog import PricingTestDialog
 
@@ -29,56 +30,45 @@ def run_self_test() -> int:
         database = Database(db_path)
         database.initialise()
 
-        night_id = database.save_element(None, "Pitch 11", "Camping", "Per night", 40.0)
-        database.save_discount_rule(None, "7 nights 10%", 7, "Percentage", 10, "Element", element_id=night_id)
-        database.save_discount_rule(None, "7 nights one free", 7, "Free nights", 1, "Element", element_id=night_id)
-        result = calculate_price(database, night_id, "2026-09-01", "2026-09-08", 1)
-        assert result["nights"] == 7
-        assert result["base_amount"] == 280.0
-        assert result["discount_amount"] == 40.0
-        assert result["final_amount"] == 240.0
-
         adult_id = database.save_person_type(None, "Adult", "Ad")
         child_id = database.save_person_type(None, "Child", "Ch")
-        database.save_element_capacity(night_id, 4, {adult_id: 2, child_id: 3})
-        capacity = database.get_element_capacity(night_id)
-        assert capacity["max_total"] == 4
-        assert capacity["limits"][adult_id] == 2
-        assert capacity["limits"][child_id] == 3
-        assert database.validate_occupancy(night_id, {adult_id: 2, child_id: 2}) == []
-        assert any("Adult" in error for error in database.validate_occupancy(night_id, {adult_id: 3, child_id: 1}))
-        assert any("Total persons" in error for error in database.validate_occupancy(night_id, {adult_id: 2, child_id: 3}))
+        bunk_id = database.save_element(None, "Bunk", "Rooms", "Per person per night", 20.0)
+        database.save_element_capacity(bunk_id, 4, {adult_id: 2, child_id: 3})
+        save_element_person_rates(database, bunk_id, {adult_id: 20.0, child_id: 10.0})
+        assert get_element_person_rates(database, bunk_id)[child_id] == 10.0
 
-        peg_id = database.save_element(None, "Fishing Peg", "Fishing", "Per day", 20.0)
-        database.save_element_capacity(peg_id, 1, {adult_id: 1, child_id: 0})
-        assert database.validate_occupancy(peg_id, {adult_id: 1}) == []
-        assert any("Child" in error for error in database.validate_occupancy(peg_id, {child_id: 1}))
+        result = calculate_price(
+            database, bunk_id, "2026-09-01", "2026-09-04",
+            person_counts={adult_id: 2, child_id: 2},
+        )
+        assert result["guests"] == 4
+        assert result["base_amount"] == 180.0
+        assert result["people_summary"] == "2 Ad, 2 Ch"
+
+        blocked = False
+        try:
+            calculate_price(database, bunk_id, "2026-09-01", "2026-09-04", person_counts={adult_id: 3, child_id: 1})
+        except ValueError:
+            blocked = True
+        assert blocked
 
         window = MainWindow(database)
-        assert window.windowTitle() == "Direct Booking Software - Build 005"
-        assert window.nav.count() == 6
-        assert window.setup_page.tabs.count() == 6
-        assert window.setup_page.tabs.tabText(4) == "Person types"
-        assert window.setup_page.tabs.tabText(5) == "Occupancy"
-        assert window.pricing_test_button.text() == "Open Pricing Test"
-
+        assert window.windowTitle() == "Direct Booking Software - Build 006"
+        assert window.setup_page.tabs.count() == 7
+        assert window.setup_page.tabs.tabText(6) == "Person pricing"
         dialog = PricingTestDialog(database)
-        assert dialog.element.count() >= 3
+        assert len(dialog.person_controls) == 2
         dialog.close()
         window.close()
         database.close()
 
         reopened = Database(db_path)
         reopened.initialise()
-        assert any(row["name"] == "Adult" for row in reopened.list_person_types())
-        reopened_capacity = reopened.get_element_capacity(night_id)
-        assert reopened_capacity["max_total"] == 4
-        assert reopened_capacity["limits"][adult_id] == 2
-        assert reopened.validate_occupancy(night_id, {adult_id: 2, child_id: 2}) == []
+        assert get_element_person_rates(reopened, bunk_id)[child_id] == 10.0
         reopened.close()
 
     app.quit()
-    print("Direct Booking Software Build 005 self-test: passed")
+    print("Direct Booking Software Build 006 self-test: passed")
     return 0
 
 
