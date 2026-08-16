@@ -9,6 +9,7 @@ from pathlib import Path
 from PySide6.QtWidgets import QApplication
 
 from .annual_config import copy_previous_year, list_years, migrate_legacy_current_year, validate_year
+from .annual_config_repair import delete_pricing_year
 from .database import Database
 from .main_window import MainWindow
 from .person_pricing import save_element_person_rates
@@ -25,11 +26,20 @@ def application_data_dir() -> Path:
     return base / "DirectBookingSoftware"
 
 
+def _annual_rates(database: Database, year: int) -> list[tuple[int, float]]:
+    rows = database.connection.execute(
+        "SELECT element_id, rate FROM annual_element_rates WHERE company_id=? AND year=? ORDER BY element_id, rate",
+        (database.company_id(), year),
+    ).fetchall()
+    return [(int(row["element_id"]), float(row["rate"])) for row in rows]
+
+
 def run_self_test() -> int:
     os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
     app = QApplication.instance() or QApplication([])
     current_year = date.today().year
     next_year = current_year + 1
+    delete_test_year = current_year + 2
     with tempfile.TemporaryDirectory() as temp_dir:
         db_path = Path(temp_dir) / "self_test.db"
         database = Database(db_path)
@@ -69,13 +79,21 @@ def run_self_test() -> int:
             assert discounted["discount_amount"] == 25.2
             assert discounted["final_amount"] == 226.8
 
+            source_rates = _annual_rates(database, current_year)
             copy_previous_year(database, next_year)
             assert next_year in list_years(database)
+            assert _annual_rates(database, next_year) == source_rates
             copied = calculate_price(
                 database, pitch_id, f"{next_year}-09-01", f"{next_year}-09-08",
                 person_counts={adult_id: 2, child_id: 2},
             )
             assert copied["final_amount"] == 226.8
+
+            copy_previous_year(database, delete_test_year)
+            assert _annual_rates(database, delete_test_year) == source_rates
+            delete_pricing_year(database, delete_test_year)
+            assert delete_test_year not in list_years(database)
+            assert _annual_rates(database, delete_test_year) == []
 
             new_element = database.save_element(None, "New Pitch", "Camping", "Per night", 22.0)
             missing = validate_year(database, next_year)
@@ -92,6 +110,8 @@ def run_self_test() -> int:
             assert window.setup_page.tabs.tabText(4) == "Person types"
             assert window.setup_page.tabs.tabText(5) == "Annual grids"
             assert window.annual_config_tab.tabs.count() == 3
+            assert hasattr(window.annual_config_tab, "delete_year_button")
+            assert window.annual_config_tab.delete_year_button.text() == "Delete year"
             dialog = PricingTestDialog(database)
             assert len(dialog.person_controls) == 2
             assert dialog.windowTitle() == "Pricing Test - Build 008"
