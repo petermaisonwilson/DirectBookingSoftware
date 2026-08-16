@@ -76,7 +76,7 @@ def save_element_person_rates(database: Database, element_id: int, rates: dict[i
 
 
 class PersonPricingTab(QWidget):
-    """Configure optional element-specific rates for each person type."""
+    """Configure element-specific person rates/supplements."""
 
     def __init__(self, database: Database):
         super().__init__()
@@ -88,9 +88,10 @@ class PersonPricingTab(QWidget):
         layout.setContentsMargins(16, 16, 16, 16)
 
         help_text = QLabel(
-            "For Per person and Per person per night elements, set an optional rate for each person type. "
-            "A rate left as 'Use base price' uses the element's normal Base Price. These rates do not affect "
-            "Per night, Per day, Per stay or Per package pricing."
+            "Person values work in two ways. For Per person and Per person per night elements they are the actual "
+            "rate charged for that person type. For Per night, Per day, Per stay and Per package elements they are "
+            "supplements added on top of the element Base Price. Leave a supplement as 'No supplement' when that "
+            "person type should not add anything to a fixed/base element charge."
         )
         help_text.setWordWrap(True)
         help_text.setObjectName("bodyText")
@@ -105,7 +106,7 @@ class PersonPricingTab(QWidget):
         self.base_price_note.setObjectName("bodyText")
         layout.addWidget(self.base_price_note)
 
-        heading = QLabel("Rates by person type")
+        heading = QLabel("Person rates / supplements")
         heading.setObjectName("sectionTitle")
         layout.addWidget(heading)
 
@@ -153,7 +154,8 @@ class PersonPricingTab(QWidget):
             control = QDoubleSpinBox()
             control.setRange(-1.0, 1_000_000.0)
             control.setDecimals(2)
-            control.setSpecialValueText("Use base price")
+            control.setPrefix("€ ")
+            control.setSpecialValueText("No supplement / use base")
             control.setValue(-1.0)
             label = row["name"] + ("" if row["active"] else " [Inactive]")
             self.rates_form.addRow(label, control)
@@ -173,8 +175,13 @@ class PersonPricingTab(QWidget):
         )
         if element is None:
             return
+        pricing_type = str(element["pricing_type"])
+        if pricing_type in {"Per person", "Per person per night"}:
+            meaning = "Values below are person-specific rates; unset types use Base Price."
+        else:
+            meaning = "Values below are person supplements added on top of Base Price; unset types add nothing."
         self.base_price_note.setText(
-            f"Base Price: €{float(element['base_price']):.2f} — Pricing type: {element['pricing_type']}"
+            f"Base Price: €{float(element['base_price']):.2f} — Pricing type: {pricing_type}. {meaning}"
         )
         rates = get_element_person_rates(self.database, int(element_id))
         for person_type_id, control in self.rate_controls.items():
@@ -194,4 +201,4 @@ class PersonPricingTab(QWidget):
         except ValueError as exc:
             QMessageBox.warning(self, "Cannot save person rates", str(exc))
             return
-        QMessageBox.information(self, "Saved", "Person rates saved.")
+        QMessageBox.information(self, "Saved", "Person rates / supplements saved.")
