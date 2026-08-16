@@ -12,8 +12,8 @@ from .annual_grid_safety import apply_annual_grid_safety
 
 apply_annual_grid_safety()
 
-# Build 010 Add-on integration: copy/delete annual Element/Add-on rules alongside
-# the established annual pricing, person-pricing and occupancy grids.
+# Build 010/011 Add-on integration: Element Type defaults with individual Element
+# overrides are copied/deleted alongside the established annual setup.
 from .addon_integration import apply_addon_year_integration
 
 apply_addon_year_integration()
@@ -21,3 +21,7 @@ apply_addon_year_integration()
 from .build010_ui import apply_build010_labels
 
 apply_build010_labels()
+
+from .build011_ui import apply_build011_labels
+
+apply_build011_labels()
