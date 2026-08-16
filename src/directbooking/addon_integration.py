@@ -5,12 +5,14 @@ from PySide6.QtWidgets import QWidget
 from . import annual_config as annual
 from . import annual_config_repair as repair
 from . import setup_page as setup
+from .addon_inheritance import ensure_group_addon_schema
 from .addon_model import ensure_addon_schema
-from .addon_setup import AddonsTab, ElementAddonRulesTab
+from .addon_rules011 import ElementAddonRules011Tab
+from .addon_setup import AddonsTab
 from .database import Database
 
 
-def _addon_rows(database: Database, year: int) -> list[tuple]:
+def _element_override_rows(database: Database, year: int) -> list[tuple]:
     ensure_addon_schema(database)
     rows = database.connection.execute(
         """
@@ -18,6 +20,20 @@ def _addon_rows(database: Database, year: int) -> list[tuple]:
         FROM annual_element_addons
         WHERE company_id=? AND year=?
         ORDER BY element_id, addon_id
+        """,
+        (database.company_id(), int(year)),
+    ).fetchall()
+    return [tuple(row) for row in rows]
+
+
+def _group_default_rows(database: Database, year: int) -> list[tuple]:
+    ensure_group_addon_schema(database)
+    rows = database.connection.execute(
+        """
+        SELECT group_name, addon_id, allowed, min_qty, max_qty, rate
+        FROM annual_group_addons
+        WHERE company_id=? AND year=?
+        ORDER BY group_name COLLATE NOCASE, addon_id
         """,
         (database.company_id(), int(year)),
     ).fetchall()
@@ -34,7 +50,8 @@ def apply_addon_year_integration() -> None:
     def copy_with_addons(database: Database, target_year: int):
         target_year = int(target_year)
         source_year = target_year - 1
-        source_rows = _addon_rows(database, source_year)
+        source_overrides = _element_override_rows(database, source_year)
+        source_defaults = _group_default_rows(database, source_year)
         result = original_copy(database, target_year)
         try:
             database.connection.execute("BEGIN")
@@ -47,7 +64,16 @@ def apply_addon_year_integration() -> None:
                 """,
                 (target_year, database.company_id(), source_year),
             )
-            target_rows = database.connection.execute(
+            database.connection.execute(
+                """
+                INSERT INTO annual_group_addons(company_id,year,group_name,addon_id,allowed,min_qty,max_qty,rate)
+                SELECT company_id, ?, group_name, addon_id, allowed, min_qty, max_qty, rate
+                FROM annual_group_addons
+                WHERE company_id=? AND year=?
+                """,
+                (target_year, database.company_id(), source_year),
+            )
+            target_overrides = database.connection.execute(
                 """
                 SELECT element_id, addon_id, allowed, min_qty, max_qty, rate
                 FROM annual_element_addons
@@ -56,9 +82,21 @@ def apply_addon_year_integration() -> None:
                 """,
                 (database.company_id(), target_year),
             ).fetchall()
-            target_rows = [tuple(row) for row in target_rows]
-            if target_rows != source_rows:
-                raise ValueError("Add-on rules did not copy completely")
+            target_overrides = [tuple(row) for row in target_overrides]
+            target_defaults = database.connection.execute(
+                """
+                SELECT group_name, addon_id, allowed, min_qty, max_qty, rate
+                FROM annual_group_addons
+                WHERE company_id=? AND year=?
+                ORDER BY group_name COLLATE NOCASE, addon_id
+                """,
+                (database.company_id(), target_year),
+            ).fetchall()
+            target_defaults = [tuple(row) for row in target_defaults]
+            if target_overrides != source_overrides:
+                raise ValueError("Individual Element Add-on overrides did not copy completely")
+            if target_defaults != source_defaults:
+                raise ValueError("Element Type Add-on defaults did not copy completely")
             database.connection.commit()
         except Exception as exc:
             database.connection.rollback()
@@ -68,21 +106,30 @@ def apply_addon_year_integration() -> None:
                     "DELETE FROM annual_element_addons WHERE company_id=? AND year=?",
                     (database.company_id(), target_year),
                 )
+                database.connection.execute(
+                    "DELETE FROM annual_group_addons WHERE company_id=? AND year=?",
+                    (database.company_id(), target_year),
+                )
                 database.connection.commit()
             except Exception:
                 pass
             if isinstance(exc, ValueError):
                 raise ValueError(f"{exc}; the new year has been rolled back.") from exc
-            raise ValueError(f"Could not copy Add-on rules into {target_year}; the new year has been rolled back: {exc}") from exc
+            raise ValueError(f"Could not copy Add-on setup into {target_year}; the new year has been rolled back: {exc}") from exc
         if isinstance(result, dict):
             result = dict(result)
-            result["addon_rules"] = len(target_rows)
+            result["addon_overrides"] = len(target_overrides)
+            result["addon_type_defaults"] = len(target_defaults)
         return result
 
     def delete_with_addons(database: Database, year: int) -> None:
         original_delete(database, year)
         database.connection.execute(
             "DELETE FROM annual_element_addons WHERE company_id=? AND year=?",
+            (database.company_id(), int(year)),
+        )
+        database.connection.execute(
+            "DELETE FROM annual_group_addons WHERE company_id=? AND year=?",
             (database.company_id(), int(year)),
         )
         database.connection.commit()
@@ -95,8 +142,9 @@ def apply_addon_year_integration() -> None:
 
     def setup_init_with_addons(self, database: Database):
         original_setup_init(self, database)
+        ensure_group_addon_schema(database)
         self.addons_tab = AddonsTab(database)
-        self.addon_rules_tab = ElementAddonRulesTab(database)
+        self.addon_rules_tab = ElementAddonRules011Tab(database)
         self.tabs.insertTab(4, self.addons_tab, "Add-ons")
         self.tabs.insertTab(5, self.addon_rules_tab, "Add-on rules")
         self.addons_tab.changed.connect(self.addon_rules_tab.refresh)
@@ -108,5 +156,5 @@ def apply_addon_year_integration() -> None:
         self.refresh_years(self.current_year())
         QWidget.showEvent(self, event)
 
-    ElementAddonRulesTab.showEvent = rules_show_event
+    ElementAddonRules011Tab.showEvent = rules_show_event
     annual._addon_year_integration_applied = True
