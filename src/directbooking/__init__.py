@@ -18,6 +18,11 @@ from .addon_integration import apply_addon_year_integration
 
 apply_addon_year_integration()
 
+# Build 011 deletion safety includes the new Element Type default references.
+from .addon_delete011 import apply_addon_delete_safety
+
+apply_addon_delete_safety()
+
 from .build010_ui import apply_build010_labels
 
 apply_build010_labels()
