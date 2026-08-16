@@ -47,8 +47,6 @@ def run_self_test() -> int:
             database.initialise()
             ensure_record_foundation(database)
 
-            # A brand-new application database contains demo Elements. The packaged self-test
-            # needs a controlled fixture so completeness assertions only cover records created here.
             database.connection.execute("DELETE FROM elements")
             database.connection.commit()
 
@@ -105,7 +103,7 @@ def run_self_test() -> int:
                 pass
 
             window = MainWindow(database)
-            assert window.windowTitle() == "Direct Booking Software - Build 008"
+            assert window.windowTitle() == "Direct Booking Software - Build 009"
             assert window.setup_page.tabs.count() == 6
             assert window.setup_page.tabs.tabText(4) == "Person types"
             assert window.setup_page.tabs.tabText(5) == "Annual grids"
@@ -114,7 +112,7 @@ def run_self_test() -> int:
             assert window.annual_config_tab.delete_year_button.text() == "Delete year"
             dialog = PricingTestDialog(database)
             assert len(dialog.person_controls) == 2
-            assert dialog.windowTitle() == "Pricing Test - Build 008"
+            assert dialog.windowTitle() == "Pricing Test - Build 009"
             dialog.close()
             window.close()
 
@@ -126,7 +124,7 @@ def run_self_test() -> int:
             database.close()
 
     app.quit()
-    print("Direct Booking Software Build 008 self-test: passed")
+    print("Direct Booking Software Build 009 self-test: passed")
     return 0
 
 
