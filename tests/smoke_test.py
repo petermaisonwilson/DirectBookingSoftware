@@ -10,6 +10,7 @@ os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
 from PySide6.QtWidgets import QApplication
 
 from directbooking.annual_config import copy_previous_year, list_years, migrate_legacy_current_year, validate_year
+from directbooking.annual_config_repair import delete_pricing_year
 from directbooking.database import Database
 from directbooking.main_window import MainWindow
 from directbooking.person_pricing import save_element_person_rates
@@ -18,10 +19,19 @@ from directbooking.pricing_test_dialog import PricingTestDialog
 from directbooking.record_foundation import ensure_record_foundation
 
 
+def _annual_rates(database: Database, year: int) -> list[tuple[int, float]]:
+    rows = database.connection.execute(
+        "SELECT element_id, rate FROM annual_element_rates WHERE company_id=? AND year=? ORDER BY element_id, rate",
+        (database.company_id(), year),
+    ).fetchall()
+    return [(int(row["element_id"]), float(row["rate"])) for row in rows]
+
+
 def main() -> None:
     app = QApplication.instance() or QApplication([])
     current_year = date.today().year
     next_year = current_year + 1
+    delete_test_year = current_year + 2
     with tempfile.TemporaryDirectory() as temp_dir:
         db_path = Path(temp_dir) / "smoke.db"
         database = Database(db_path)
@@ -63,12 +73,24 @@ def main() -> None:
             assert discounted["discount_amount"] == 25.2
             assert discounted["final_amount"] == 226.8
 
+            source_rates = _annual_rates(database, current_year)
             copy_previous_year(database, next_year)
+            assert _annual_rates(database, next_year) == source_rates
             copied = calculate_price(
                 database, pitch, f"{next_year}-09-01", f"{next_year}-09-08",
                 person_counts={adult: 2, child: 2},
             )
             assert copied["final_amount"] == 226.8
+
+            # A further copied year can be deleted cleanly without disturbing its source.
+            copy_previous_year(database, delete_test_year)
+            assert delete_test_year in list_years(database)
+            assert _annual_rates(database, delete_test_year) == source_rates
+            delete_pricing_year(database, delete_test_year)
+            assert delete_test_year not in list_years(database)
+            assert _annual_rates(database, delete_test_year) == []
+            assert next_year in list_years(database)
+            assert _annual_rates(database, next_year) == source_rates
 
             new_pitch = database.save_element(None, "Pitch added later", "Camping", "Per night", 25.0)
             missing = validate_year(database, next_year)
@@ -89,6 +111,8 @@ def main() -> None:
             assert window.setup_page.tabs.tabText(5) == "Annual grids"
             assert window.annual_config_tab.tabs.count() == 3
             assert window.annual_config_tab.year_combo.count() >= 2
+            assert hasattr(window.annual_config_tab, "delete_year_button")
+            assert window.annual_config_tab.delete_year_button.text() == "Delete year"
 
             dialog = PricingTestDialog(database)
             assert dialog.element.count() >= 2
