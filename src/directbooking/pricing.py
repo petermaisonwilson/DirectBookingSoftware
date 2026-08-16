@@ -33,13 +33,12 @@ def calculate_price(
     guests: int | None = None,
     person_counts: dict[int, int] | None = None,
 ) -> dict[str, object]:
-    """Calculate one element price using person-type occupancy and rates.
+    """Calculate one complete element price.
 
-    Build 006 supports explicit person-type quantities. When person_counts is used,
-    occupancy limits are validated and person-based pricing can use an element-specific
-    rate for each person type. A missing person-type rate falls back to the element's
-    Base Price. The legacy guests argument remains temporarily available for backwards
-    compatibility with earlier tests and code paths.
+    Build 007 keeps the element as the single bookable resource. For non-person pricing
+    types, the configured Base Price is calculated first and any configured person rates
+    are then treated as supplements. For Per person / Per person per night, person rates
+    remain the actual rates for each person type. Occupancy is validated before pricing.
     """
 
     arrival = _as_date(arrival_date)
@@ -84,21 +83,29 @@ def calculate_price(
     nights = (departure - arrival).days
     days = nights + 1
     base_rate = float(element["base_price"])
+    rates = get_element_person_rates(database, int(element_id)) if person_counts is not None else {}
     person_breakdown: list[dict[str, object]] = []
+    calculation_parts: list[str] = []
 
+    # First calculate the element's own base charge.
     if pricing_type == "Per night":
-        base_amount = base_rate * nights
-        calculation = f"{nights} night{'s' if nights != 1 else ''} × €{base_rate:.2f}"
+        element_base_amount = base_rate * nights
+        calculation_parts.append(f"Element: {nights} night{'s' if nights != 1 else ''} × €{base_rate:.2f}")
     elif pricing_type == "Per day":
-        base_amount = base_rate * days
-        calculation = f"{days} day{'s' if days != 1 else ''} × €{base_rate:.2f}"
+        element_base_amount = base_rate * days
+        calculation_parts.append(f"Element: {days} day{'s' if days != 1 else ''} × €{base_rate:.2f}")
     elif pricing_type == "Per stay":
-        base_amount = base_rate
-        calculation = f"1 stay × €{base_rate:.2f}"
-    elif pricing_type in {"Per person", "Per person per night"} and person_counts is not None:
-        rates = get_element_person_rates(database, int(element_id))
-        base_amount = 0.0
-        calculation_parts: list[str] = []
+        element_base_amount = base_rate
+        calculation_parts.append(f"Element: 1 stay × €{base_rate:.2f}")
+    elif pricing_type == "Per package":
+        element_base_amount = base_rate
+        calculation_parts.append(f"Element: 1 package × €{base_rate:.2f}")
+    else:
+        element_base_amount = 0.0
+
+    person_amount = 0.0
+
+    if pricing_type in {"Per person", "Per person per night"} and person_counts is not None:
         for person_type_id, count in normalised_counts.items():
             if count <= 0:
                 continue
@@ -106,7 +113,7 @@ def calculate_price(
             rate = float(rates.get(person_type_id, base_rate))
             multiplier = nights if pricing_type == "Per person per night" else 1
             line_amount = rate * count * multiplier
-            base_amount += line_amount
+            person_amount += line_amount
             person_breakdown.append(
                 {
                     "person_type_id": person_type_id,
@@ -114,26 +121,62 @@ def calculate_price(
                     "short_label": str(person_type["short_label"]),
                     "count": count,
                     "rate": round(rate, 2),
+                    "multiplier": multiplier,
+                    "kind": "person rate",
                     "amount": round(line_amount, 2),
                 }
             )
             if pricing_type == "Per person per night":
-                calculation_parts.append(f"{count} {person_type['short_label']} × {nights} nights × €{rate:.2f}")
+                calculation_parts.append(
+                    f"{person_type['name']}: {count} × {nights} nights × €{rate:.2f}"
+                )
             else:
-                calculation_parts.append(f"{count} {person_type['short_label']} × €{rate:.2f}")
-        calculation = " + ".join(calculation_parts)
+                calculation_parts.append(f"{person_type['name']}: {count} × €{rate:.2f}")
     elif pricing_type == "Per person":
-        base_amount = base_rate * total_persons
-        calculation = f"{total_persons} guests × €{base_rate:.2f}"
+        person_amount = base_rate * total_persons
+        calculation_parts.append(f"{total_persons} guests × €{base_rate:.2f}")
     elif pricing_type == "Per person per night":
-        base_amount = base_rate * total_persons * nights
-        calculation = f"{total_persons} guests × {nights} nights × €{base_rate:.2f}"
-    else:  # Per package
-        base_amount = base_rate
-        calculation = f"1 package × €{base_rate:.2f}"
+        person_amount = base_rate * total_persons * nights
+        calculation_parts.append(f"{total_persons} guests × {nights} nights × €{base_rate:.2f}")
+    elif person_counts is not None:
+        # Non-person-priced elements may carry optional person supplements.
+        if pricing_type == "Per night":
+            supplement_multiplier = nights
+            unit_label = f"{nights} nights"
+        elif pricing_type == "Per day":
+            supplement_multiplier = days
+            unit_label = f"{days} days"
+        else:  # Per stay / Per package
+            supplement_multiplier = 1
+            unit_label = "1 stay"
 
-    base_amount = round(base_amount, 2)
-    discount = database.calculate_duration_discount(int(element_id), nights, base_amount)
+        for person_type_id, count in normalised_counts.items():
+            if count <= 0 or person_type_id not in rates:
+                continue
+            person_type = active_types[person_type_id]
+            rate = float(rates[person_type_id])
+            line_amount = rate * count * supplement_multiplier
+            person_amount += line_amount
+            person_breakdown.append(
+                {
+                    "person_type_id": person_type_id,
+                    "name": str(person_type["name"]),
+                    "short_label": str(person_type["short_label"]),
+                    "count": count,
+                    "rate": round(rate, 2),
+                    "multiplier": supplement_multiplier,
+                    "kind": "supplement",
+                    "amount": round(line_amount, 2),
+                }
+            )
+            calculation_parts.append(
+                f"{person_type['name']} supplement: {count} × {unit_label} × €{rate:.2f}"
+                if supplement_multiplier != 1
+                else f"{person_type['name']} supplement: {count} × €{rate:.2f}"
+            )
+
+    pre_discount_amount = round(element_base_amount + person_amount, 2)
+    discount = database.calculate_duration_discount(int(element_id), nights, pre_discount_amount)
 
     if person_counts is not None:
         people_summary = ", ".join(
@@ -158,7 +201,9 @@ def calculate_price(
         "person_counts": normalised_counts,
         "people_summary": people_summary,
         "person_breakdown": person_breakdown,
-        "calculation": calculation,
+        "element_base_amount": round(element_base_amount, 2),
+        "person_amount": round(person_amount, 2),
+        "calculation": " + ".join(calculation_parts),
         "base_amount": float(discount["base_amount"]),
         "discount_amount": float(discount["discount_amount"]),
         "discount_rule_id": discount["rule_id"],
