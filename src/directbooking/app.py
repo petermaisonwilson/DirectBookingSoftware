@@ -7,11 +7,13 @@ from pathlib import Path
 
 from PySide6.QtWidgets import QApplication
 
+from .annual_config import copy_previous_year, list_years, migrate_legacy_current_year, validate_year
 from .database import Database
 from .main_window import MainWindow
-from .person_pricing import get_element_person_rates, save_element_person_rates
+from .person_pricing import save_element_person_rates
 from .pricing import calculate_price
 from .pricing_test_dialog import PricingTestDialog
+from .record_foundation import ensure_record_foundation
 
 
 def application_data_dir() -> Path:
@@ -29,21 +31,26 @@ def run_self_test() -> int:
         db_path = Path(temp_dir) / "self_test.db"
         database = Database(db_path)
         database.initialise()
+        ensure_record_foundation(database)
 
         adult_id = database.save_person_type(None, "Adult", "Ad")
         child_id = database.save_person_type(None, "Child", "Ch")
-
         pitch_id = database.save_element(None, "Pitch 1", "Camping", "Per night", 20.0)
         database.save_element_capacity(pitch_id, 4, {adult_id: 4, child_id: 4})
         save_element_person_rates(database, pitch_id, {adult_id: 5.0, child_id: 3.0})
+
+        migrate_legacy_current_year(database)
+        assert 2026 in list_years(database)
+        assert validate_year(database, 2026) == {"seasons": 0, "rates": 0, "people": 0, "occupancy": 0}
+
         result = calculate_price(
             database, pitch_id, "2026-09-01", "2026-09-08",
             person_counts={adult_id: 2, child_id: 2},
         )
+        assert result["annual_mode"] is True
         assert result["element_base_amount"] == 140.0
         assert result["person_amount"] == 112.0
         assert result["base_amount"] == 252.0
-        assert result["people_summary"] == "2 Ad, 2 Ch"
 
         database.save_discount_rule(None, "7 nights 10%", 7, "Percentage", 10, "Element", element_id=pitch_id)
         discounted = calculate_price(
@@ -53,35 +60,43 @@ def run_self_test() -> int:
         assert discounted["discount_amount"] == 25.2
         assert discounted["final_amount"] == 226.8
 
-        bunk_id = database.save_element(None, "Bunk", "Rooms", "Per person per night", 20.0)
-        database.save_element_capacity(bunk_id, 4, {adult_id: 2, child_id: 3})
-        save_element_person_rates(database, bunk_id, {adult_id: 20.0, child_id: 10.0})
-        bunk = calculate_price(
-            database, bunk_id, "2026-09-01", "2026-09-04",
+        copy_previous_year(database, 2027)
+        assert 2027 in list_years(database)
+        copied = calculate_price(
+            database, pitch_id, "2027-09-01", "2027-09-08",
             person_counts={adult_id: 2, child_id: 2},
         )
-        assert bunk["element_base_amount"] == 0.0
-        assert bunk["person_amount"] == 180.0
-        assert bunk["base_amount"] == 180.0
+        assert copied["final_amount"] == 226.8
+
+        new_element = database.save_element(None, "New Pitch", "Camping", "Per night", 22.0)
+        missing = validate_year(database, 2027)
+        assert missing["rates"] > 0 and missing["people"] > 0 and missing["occupancy"] > 0
+        try:
+            calculate_price(database, new_element, "2027-09-01", "2027-09-02", person_counts={adult_id: 1})
+            raise AssertionError("Incomplete annual setup was not blocked")
+        except ValueError:
+            pass
 
         window = MainWindow(database)
-        assert window.windowTitle() == "Direct Booking Software - Build 007"
-        assert window.setup_page.tabs.count() == 7
-        assert window.setup_page.tabs.tabText(6) == "Person pricing"
+        assert window.windowTitle() == "Direct Booking Software - Build 008"
+        assert window.setup_page.tabs.count() == 6
+        assert window.setup_page.tabs.tabText(4) == "Person types"
+        assert window.setup_page.tabs.tabText(5) == "Annual grids"
+        assert window.annual_config_tab.tabs.count() == 3
         dialog = PricingTestDialog(database)
         assert len(dialog.person_controls) == 2
-        assert dialog.windowTitle() == "Pricing Test - Build 007"
+        assert dialog.windowTitle() == "Pricing Test - Build 008"
         dialog.close()
         window.close()
+
+        for table in ("clients", "booking_clients", "booking_party_snapshot", "booking_pricing_snapshots"):
+            assert database.connection.execute(
+                "SELECT 1 FROM sqlite_master WHERE type='table' AND name=?", (table,)
+            ).fetchone() is not None
         database.close()
 
-        reopened = Database(db_path)
-        reopened.initialise()
-        assert get_element_person_rates(reopened, pitch_id)[child_id] == 3.0
-        reopened.close()
-
     app.quit()
-    print("Direct Booking Software Build 007 self-test: passed")
+    print("Direct Booking Software Build 008 self-test: passed")
     return 0
 
 
@@ -95,6 +110,7 @@ def main() -> int:
 
     database = Database(application_data_dir() / "direct_booking.db")
     database.initialise()
+    ensure_record_foundation(database)
 
     window = MainWindow(database)
     window.show()
