@@ -4,6 +4,7 @@ import os
 import tempfile
 from datetime import date
 from pathlib import Path
+from unittest.mock import patch
 
 os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
 
@@ -11,6 +12,12 @@ from PySide6.QtWidgets import QApplication
 
 from directbooking.annual_config import copy_previous_year, list_years, migrate_legacy_current_year, validate_year
 from directbooking.annual_config_repair import delete_pricing_year
+from directbooking.annual_grid_safety import (
+    MISSING_COLOUR,
+    ZERO_COLOUR,
+    apply_cell_highlights,
+    missing_counts_from_tables,
+)
 from directbooking.database import Database
 from directbooking.main_window import MainWindow
 from directbooking.person_pricing import save_element_person_rates
@@ -104,7 +111,7 @@ def main() -> None:
                 pass
 
             window = MainWindow(database)
-            assert window.windowTitle() == "Direct Booking Software - Build 008"
+            assert window.windowTitle() == "Direct Booking Software - Build 009"
             assert window.nav.count() == 6
             assert window.setup_page.tabs.count() == 6
             assert window.setup_page.tabs.tabText(4) == "Person types"
@@ -114,10 +121,42 @@ def main() -> None:
             assert hasattr(window.annual_config_tab, "delete_year_button")
             assert window.annual_config_tab.delete_year_button.text() == "Delete year"
 
+            annual_tab = window.annual_config_tab
+            annual_tab.refresh_years(next_year)
+            new_pitch_row = next(
+                row for row in range(annual_tab.people_table.rowCount())
+                if annual_tab.people_table.item(row, 0).text() == "Pitch added later"
+            )
+            adult_column = next(
+                column for column in range(2, annual_tab.people_table.columnCount())
+                if annual_tab.people_table.horizontalHeaderItem(column).text() == "Adult"
+            )
+            test_item = annual_tab.people_table.item(new_pitch_row, adult_column)
+            assert test_item.text() == ""
+            apply_cell_highlights(annual_tab)
+            assert test_item.background().color() == MISSING_COLOUR
+            before = missing_counts_from_tables(annual_tab)
+
+            test_item.setText("0.00")
+            apply_cell_highlights(annual_tab)
+            after_zero = missing_counts_from_tables(annual_tab)
+            assert after_zero["people"] == before["people"] - 1
+            assert test_item.background().color() == ZERO_COLOUR
+
+            test_item.setText("")
+            apply_cell_highlights(annual_tab)
+            after_blank = missing_counts_from_tables(annual_tab)
+            assert after_blank["people"] == before["people"]
+            assert test_item.background().color() == MISSING_COLOUR
+            with patch("directbooking.annual_grid_safety.QMessageBox.warning") as warning:
+                annual_tab.save_all()
+                assert warning.called
+            assert validate_year(database, next_year)["people"] > 0
+
             dialog = PricingTestDialog(database)
             assert dialog.element.count() >= 2
             assert len(dialog.person_controls) == 2
-            assert dialog.windowTitle() == "Pricing Test - Build 008"
+            assert dialog.windowTitle() == "Pricing Test - Build 009"
             dialog.close()
             window.close()
 
@@ -141,7 +180,7 @@ def main() -> None:
             reopened.close()
 
     app.quit()
-    print("Build 008 smoke test: passed")
+    print("Build 009 smoke test: passed")
 
 
 if __name__ == "__main__":
