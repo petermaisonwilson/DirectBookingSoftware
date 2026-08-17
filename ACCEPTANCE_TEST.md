@@ -1,30 +1,28 @@
-# Direct Booking Software - Build 012 Acceptance Test
+# Direct Booking Software — Online Build 013 Acceptance Test
 
-Build 012 passes when:
+Build 013 is the first online/browser architecture build. Windows Build 012 remains frozen as the reference desktop prototype.
 
-1. GitHub Actions runs on `windows-latest`, the source smoke test passes, PyInstaller creates `DirectBookingSoftware.exe`, and the packaged EXE self-test passes.
-2. GitHub uploads `DirectBookingSoftware-Build012` containing the EXE and this acceptance test.
-3. On Windows the application title shows `Direct Booking Software - Build 012`.
-4. Existing annual pricing, occupancy, Element Type inheritance, Add-on pricing methods, copy-year behaviour and deletion safety remain unchanged from Build 011.
-5. In `Add-on rules → Element Type defaults`, the old editable Yes/No text cell is replaced by a simple tick control.
-6. Ticked means **Y / Yes / available** for that Element Type; unticked means **N / No / not available**.
-7. There is no blank/unreviewed availability state in the Element Type default control: a newly shown unticked row explicitly means No once saved.
-8. When the Type-default control is ticked, Min, Max and Price must be completed before saving.
-9. When the Type-default control is unticked, Min, Max and Price are not required and are visually inactive.
-10. A Type-default price of `0.00` remains valid and retains the gentle zero-price highlight.
-11. In `Element overrides`, the old word-based state entry is replaced by three compact radio choices: **I | Y | N**.
-12. A brief explanation above the override grid states: **I = Inherit Element Type rule, Y = Yes allow this Add-on, N = No do not allow this Add-on**.
-13. Exactly one of I, Y or N is selected for each override row.
-14. **I** is the default when no individual Element override is stored.
-15. **Y** enables Min, Max and Price and stores an individual Yes override when saved.
-16. **N** stores an individual No override and requires no Min, Max or Price.
-17. Returning a row to **I** removes the individual exception and restores inheritance from the Element Type default.
-18. Existing Build 011 stored Yes/No overrides open with the correct Y or N radio selected; no database reset or conversion is required.
-19. Existing Type defaults open with the correct ticked/unticked state.
-20. Example behaviour remains: Camping → Dog Yes can be inherited by Pitch 1, while Pitch 7 → Dog N overrides it only for Pitch 7.
-21. `Copy previous year` still copies and verifies Element Type defaults and individual overrides exactly as in Build 011.
-22. `Delete year` still removes those annual rules safely while preserving catalogue records and other years.
-23. Add-ons still inherit their parent Element dates; anything needing independent dates remains an Element.
-24. Existing Elements, Person Types, seasons, discounts, annual pricing, occupancy and dormant Client/booking snapshot foundations remain intact.
+Build 013 passes when:
 
-Build 012 is deliberately a **UI-entry refinement only**. It does not alter Add-on pricing, inheritance priority or booking logic. The inheritance priority remains: **individual Element override → Element Type default → unavailable if no rule exists**.
+1. GitHub Actions installs the online dependencies, imports the application and passes `tests/online_smoke_test.py`.
+2. CI starts the local web server and receives an OK response from `/health` reporting Build 013.
+3. GitHub uploads `DirectBookingSoftware-Online-Build013` containing the online application, starter script, requirements and instructions.
+4. On a Windows PC, extracting the artifact and double-clicking `START_BUILD013.bat` starts the local server and opens the application in a normal browser.
+5. The application clearly identifies itself as Online Build 013 and runs at `127.0.0.1`, so it is local-only rather than exposed to the internet.
+6. Three permission roles exist from the beginning: Supervisor, Client/Operator and Customer.
+7. A Supervisor dashboard lists client companies and can enter `View as Client` / Support Mode for a selected client.
+8. Support Mode is visibly obvious on screen and identifies the client being viewed.
+9. A Supervisor action made in Support Mode remains attributed to the Supervisor in the audit trail and records the client in which the Supervisor was acting.
+10. A Client/Operator is tied to one company and cannot see another company's dashboard/data.
+11. A Customer receives a separate restricted area and cannot access client settings or Supervisor audit screens.
+12. The audit foundation records meaningful actions including successful login, failed login, Support Mode entry/exit and client-setting changes.
+13. Audit change records retain before and after values.
+14. Audit rows are append-only: normal database UPDATE or DELETE attempts are rejected.
+15. Global Audit is available only to Supervisor users and is searchable by Client and date/date range.
+16. Client/Operator and Customer users receive a forbidden response if they attempt to open Global Audit.
+17. Future Booking Log permissions are encoded now: Supervisor and Client/Operator may view it; Customer may not.
+18. Build 013 uses a separate local development database and does not alter or reset the Windows Build 012 database.
+19. Windows Builds 001–012 remain in the repository as the reference prototype; Build 013 does not rewrite their pricing/Add-on logic.
+20. The online storage layer is isolated so local SQLite can later be replaced with the central PostgreSQL database on the managed VPS.
+
+Build 013 deliberately stops before transferring the full Elements/Add-ons/annual-pricing Setup and before building the Client Register, availability calendar, enquiries, bookings or payments.
