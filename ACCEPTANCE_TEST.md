@@ -1,28 +1,38 @@
-# Direct Booking Software — Online Build 013 Acceptance Test
+# Direct Booking Software — Online Build 014 Acceptance Test
 
-Build 013 is the first online/browser architecture build. Windows Build 012 remains frozen as the reference desktop prototype.
+Build 014 transfers the proven Setup model from the Windows prototype into the browser while retaining the accepted Build 013 online foundation.
 
-Build 013 passes when:
+Build 014 passes when:
 
-1. GitHub Actions installs the online dependencies, imports the application and passes `tests/online_smoke_test.py`.
-2. CI starts the local web server and receives an OK response from `/health` reporting Build 013.
-3. GitHub uploads `DirectBookingSoftware-Online-Build013` containing the online application, starter script, requirements and instructions.
-4. On a Windows PC, extracting the artifact and double-clicking `START_BUILD013.bat` starts the local server and opens the application in a normal browser.
-5. The application clearly identifies itself as Online Build 013 and runs at `127.0.0.1`, so it is local-only rather than exposed to the internet.
-6. Three permission roles exist from the beginning: Supervisor, Client/Operator and Customer.
-7. A Supervisor dashboard lists client companies and can enter `View as Client` / Support Mode for a selected client.
-8. Support Mode is visibly obvious on screen and identifies the client being viewed.
-9. A Supervisor action made in Support Mode remains attributed to the Supervisor in the audit trail and records the client in which the Supervisor was acting.
-10. A Client/Operator is tied to one company and cannot see another company's dashboard/data.
-11. A Customer receives a separate restricted area and cannot access client settings or Supervisor audit screens.
-12. The audit foundation records meaningful actions including successful login, failed login, Support Mode entry/exit and client-setting changes.
-13. Audit change records retain before and after values.
-14. Audit rows are append-only: normal database UPDATE or DELETE attempts are rejected.
-15. Global Audit is available only to Supervisor users and is searchable by Client and date/date range.
-16. Client/Operator and Customer users receive a forbidden response if they attempt to open Global Audit.
-17. Future Booking Log permissions are encoded now: Supervisor and Client/Operator may view it; Customer may not.
-18. Build 013 uses a separate local development database and does not alter or reset the Windows Build 012 database.
-19. Windows Builds 001–012 remain in the repository as the reference prototype; Build 013 does not rewrite their pricing/Add-on logic.
-20. The online storage layer is isolated so local SQLite can later be replaced with the central PostgreSQL database on the managed VPS.
+1. GitHub Actions passes the original online foundation smoke test and the new `tests/online_setup014_test.py` Setup workflow test.
+2. CI starts the local server and `/health` reports Build 014.
+3. GitHub uploads `DirectBookingSoftware-Online-Build014` with `START_BUILD014.bat`.
+4. Supervisor, Client/Operator and Customer roles continue to behave as in accepted Build 013.
+5. Supervisor Support Mode remains visibly obvious and Setup changes made there are attributed to the Supervisor, not the client.
+6. Client/Operator users can access Setup only for their own company.
+7. Customers cannot access Setup.
+8. Setup contains Elements, Person Types, Add-ons, Years, Seasonal pricing, Occupancy and Add-on rules.
+9. Elements have a name, Element Type, pricing method and Base Price.
+10. Element pricing methods include Per night, Per day, Per stay, Per person, Per person per night and Per package.
+11. Person Types remain people/occupants rather than Elements or Add-ons.
+12. Add-ons remain extras attached to Elements and support Fixed once, Per quantity, Per night, Per quantity per night, Per day and Per quantity per day.
+13. Pricing years are independent and can be created blank or created using Copy previous year.
+14. A blank year starts with an All Year season covering 1 January to 31 December.
+15. Seasonal Element prices are entered for every active Element × Season cell; blank required cells are rejected while `0.00` is valid.
+16. Occupancy is annual and contains Total maximum plus one maximum per Person Type for each Element.
+17. Occupancy zero is valid; a Person Type maximum of zero means that Person Type is not allowed on that Element.
+18. Element Type Add-on defaults use a simple availability tick: ticked = Yes/available, unticked = No/unavailable.
+19. A Yes Type default requires Min, Max and Price; a zero Add-on price is valid.
+20. Individual Element Add-on overrides use **I | Y | N** where I = inherit, Y = individual Yes and N = individual No.
+21. I stores no individual exception and therefore returns to the Element Type default.
+22. Individual Element override takes priority over the Element Type default.
+23. Add-on inheritance priority remains **individual Element override → Element Type default → unavailable if no rule exists**.
+24. Copy previous year copies seasons, seasonal Element prices, occupancy, Person Type limits, Element Type Add-on defaults and individual Element overrides.
+25. A copied season keeps the same month/day pattern in the new year.
+26. A newly added Element in an already-configured Element Type can inherit the Type Add-on default without requiring an individual Add-on rule.
+27. Setup records are company-scoped; data created for Forest View cannot be viewed by another client such as Riverside.
+28. Meaningful Setup changes are written to the permanent audit trail with the correct actor/client context.
+29. Global Audit remains Supervisor-only and the append-only audit protection remains intact.
+30. Windows Build 012 remains untouched as the reference prototype.
 
-Build 013 deliberately stops before transferring the full Elements/Add-ons/annual-pricing Setup and before building the Client Register, availability calendar, enquiries, bookings or payments.
+Build 014 deliberately stops before the Client Register, visual availability calendar, enquiry/offer workflow, customer-direct booking and payments.
