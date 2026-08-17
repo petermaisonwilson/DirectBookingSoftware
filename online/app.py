@@ -80,6 +80,7 @@ def layout(title: str, body: str, context=None) -> str:
         links = ['<a href="/dashboard">Dashboard</a>']
         if context["role"] in {"operator", "supervisor"} and (context["company_id"] or context["acting_company_id"]):
             links.append('<a href="/company/settings">Client settings</a>')
+            links.append('<a href="/setup">Setup</a>')
         if context["role"] == "supervisor":
             links.append('<a href="/audit">Global Audit</a>')
         links.append(
@@ -154,176 +155,86 @@ def create_app(db_path: str | Path | None = None, *, seed_demo: bool = True) -> 
         email = data.get("email", "").strip()
         user = database.user_by_email(email)
         if user is None or not verify_password(data.get("password", ""), user["password_hash"]):
-            database.write_audit(
-                action="LOGIN_FAILED", entity_type="authentication", entity_id=email or None,
-                actor_user_id=None, actor_role=None, company_id=None, acting_company_id=None,
-                after={"email": email},
-            )
+            database.write_audit(action="LOGIN_FAILED", entity_type="authentication", entity_id=email or None, actor_user_id=None, actor_role=None, company_id=None, acting_company_id=None, after={"email": email})
             return RedirectResponse("/login?error=Email+or+password+not+recognised", status_code=303)
         session = database.create_session(int(user["id"]))
-        database.write_audit(
-            action="LOGIN_SUCCESS", entity_type="user", entity_id=user["id"],
-            actor_user_id=user["id"], actor_role=user["role"], company_id=user["company_id"], acting_company_id=None,
-            after={"email": user["email"], "role": user["role"]},
-        )
+        database.write_audit(action="LOGIN_SUCCESS", entity_type="user", entity_id=user["id"], actor_user_id=user["id"], actor_role=user["role"], company_id=user["company_id"], acting_company_id=None, after={"email": user["email"], "role": user["role"]})
         response = RedirectResponse("/dashboard", status_code=303)
         response.set_cookie(COOKIE_NAME, session["token"], httponly=True, samesite="lax", max_age=12 * 3600)
         return response
 
     @app.post("/logout")
     def logout(request: Request):
-        token = request.cookies.get(COOKIE_NAME)
-        context = context_from(request)
+        token = request.cookies.get(COOKIE_NAME); context = context_from(request)
         if token and context:
-            database.write_audit(
-                action="LOGOUT", entity_type="user", entity_id=context["user_id"],
-                actor_user_id=context["user_id"], actor_role=context["role"], company_id=context["company_id"],
-                acting_company_id=context["acting_company_id"],
-            )
+            database.write_audit(action="LOGOUT", entity_type="user", entity_id=context["user_id"], actor_user_id=context["user_id"], actor_role=context["role"], company_id=context["company_id"], acting_company_id=context["acting_company_id"])
             database.delete_session(token)
-        response = RedirectResponse("/login", status_code=303)
-        response.delete_cookie(COOKIE_NAME)
-        return response
+        response = RedirectResponse("/login", status_code=303); response.delete_cookie(COOKIE_NAME); return response
 
     @app.get("/dashboard", response_class=HTMLResponse)
     def dashboard(request: Request):
         context = require_login(request)
         if context["role"] == "supervisor":
-            rows = database.companies()
-            cards = []
-            for company in rows:
-                cards.append(
-                    f'<div class="card"><h3>{esc(company["name"])}</h3><p>{esc(company["contact_email"])}</p>'
-                    f'<form method="post" action="/support/start/{company["id"]}">'
-                    f'<input type="hidden" name="csrf" value="{esc(context["csrf_token"])}">'
-                    '<button type="submit">View as Client</button></form></div>'
-                )
-            stop = ""
+            cards=[]
+            for company in database.companies():
+                cards.append(f'<div class="card"><h3>{esc(company["name"])}</h3><p>{esc(company["contact_email"])}</p><form method="post" action="/support/start/{company["id"]}"><input type="hidden" name="csrf" value="{esc(context["csrf_token"])}"><button type="submit">View as Client</button></form></div>')
+            stop=""
             if context["acting_company_id"]:
-                stop = (
-                    f'<form method="post" action="/support/stop"><input type="hidden" name="csrf" value="{esc(context["csrf_token"])}">'
-                    '<button class="warning" type="submit">Leave Support Mode</button></form>'
-                )
-            body = f"""<h1>Supervisor Dashboard</h1>
-            <div class="card"><p>Logged in as <strong>{esc(context['first_name'])} {esc(context['last_name'])}</strong>.</p>
-            <p>Choose a client to enter Support Mode. Any changes remain attributed to your Supervisor account.</p>{stop}</div>
-            <div class="grid">{''.join(cards)}</div>"""
+                stop=f'<form method="post" action="/support/stop"><input type="hidden" name="csrf" value="{esc(context["csrf_token"])}"><button class="warning" type="submit">Leave Support Mode</button></form>'
+            body=f"""<h1>Supervisor Dashboard</h1><div class="card"><p>Logged in as <strong>{esc(context['first_name'])} {esc(context['last_name'])}</strong>.</p><p>Choose a client to enter Support Mode. Any changes remain attributed to your Supervisor account.</p>{stop}</div><div class="grid">{''.join(cards)}</div>"""
         elif context["role"] == "operator":
-            body = f"""<h1>{esc(context['company_name'])}</h1><div class="card"><h2>Client / Operator Dashboard</h2>
-            <p>Welcome {esc(context['first_name'])}. You can only see this client's information.</p>
-            <p><a class="button" href="/company/settings">Open Client settings</a></p>
-            <p class="muted">Booking calendar, Client Register and Booking Log arrive in later online builds.</p></div>"""
+            body=f"""<h1>{esc(context['company_name'])}</h1><div class="card"><h2>Client / Operator Dashboard</h2><p>Welcome {esc(context['first_name'])}. You can only see this client's information.</p><p><a class="button" href="/company/settings">Open Client settings</a></p><p class="muted">Booking calendar, Client Register and Booking Log arrive in later online builds.</p></div>"""
         else:
-            body = f"""<h1>Customer Area</h1><div class="card"><p>Welcome {esc(context['first_name'])}.</p>
-            <p>This confirms the separate Customer permission level. Customer booking history and availability search will be added later.</p>
-            <p><strong>Customers cannot see Booking Logs or the Global Audit.</strong></p></div>"""
+            body=f"""<h1>Customer Area</h1><div class="card"><p>Welcome {esc(context['first_name'])}.</p><p>This confirms the separate Customer permission level. Customer booking history and availability search will be added later.</p><p><strong>Customers cannot see Booking Logs or the Global Audit.</strong></p></div>"""
         return layout("Dashboard", body, context)
 
     @app.post("/support/start/{company_id}")
     async def support_start(company_id: int, request: Request):
-        context = require_login(request)
-        data = await form_data(request)
-        require_csrf(context, data)
-        if context["role"] != "supervisor":
-            raise HTTPException(status_code=403, detail="Supervisor only")
-        company = database.company(company_id)
-        if company is None:
-            raise HTTPException(status_code=404, detail="Client not found")
-        token = request.cookies.get(COOKIE_NAME)
-        database.set_acting_company(token, company_id)
-        database.write_audit(
-            action="SUPPORT_MODE_STARTED", entity_type="company", entity_id=company_id,
-            actor_user_id=context["user_id"], actor_role=context["role"], company_id=company_id,
-            acting_company_id=company_id, after={"company": company["name"]},
-        )
-        return RedirectResponse("/company/settings", status_code=303)
+        context=require_login(request); data=await form_data(request); require_csrf(context,data)
+        if context["role"]!="supervisor": raise HTTPException(status_code=403,detail="Supervisor only")
+        company=database.company(company_id)
+        if company is None: raise HTTPException(status_code=404,detail="Client not found")
+        token=request.cookies.get(COOKIE_NAME); database.set_acting_company(token,company_id)
+        database.write_audit(action="SUPPORT_MODE_STARTED",entity_type="company",entity_id=company_id,actor_user_id=context["user_id"],actor_role=context["role"],company_id=company_id,acting_company_id=company_id,after={"company":company["name"]})
+        return RedirectResponse("/company/settings",status_code=303)
 
     @app.post("/support/stop")
     async def support_stop(request: Request):
-        context = require_login(request)
-        data = await form_data(request)
-        require_csrf(context, data)
-        if context["role"] != "supervisor":
-            raise HTTPException(status_code=403, detail="Supervisor only")
-        token = request.cookies.get(COOKIE_NAME)
-        previous = context["acting_company_id"]
-        if previous:
-            database.write_audit(
-                action="SUPPORT_MODE_STOPPED", entity_type="company", entity_id=previous,
-                actor_user_id=context["user_id"], actor_role=context["role"], company_id=previous,
-                acting_company_id=previous,
-            )
-        database.set_acting_company(token, None)
-        return RedirectResponse("/dashboard", status_code=303)
+        context=require_login(request); data=await form_data(request); require_csrf(context,data)
+        if context["role"]!="supervisor": raise HTTPException(status_code=403,detail="Supervisor only")
+        token=request.cookies.get(COOKIE_NAME); previous=context["acting_company_id"]
+        if previous: database.write_audit(action="SUPPORT_MODE_STOPPED",entity_type="company",entity_id=previous,actor_user_id=context["user_id"],actor_role=context["role"],company_id=previous,acting_company_id=previous)
+        database.set_acting_company(token,None); return RedirectResponse("/dashboard",status_code=303)
 
     @app.get("/company/settings", response_class=HTMLResponse)
     def company_settings(request: Request, saved: int = 0):
-        context = require_login(request)
-        company_id = working_company_id(context)
-        if not company_id:
-            raise HTTPException(status_code=403, detail="Select a client in Support Mode first")
-        company = database.company(company_id)
-        if company is None:
-            raise HTTPException(status_code=404, detail="Client not found")
-        saved_html = '<div class="ok">Saved. The change has been written to the permanent audit trail.</div>' if saved else ""
-        body = f"""<h1>{esc(company['name'])}</h1>{saved_html}<div class="card"><h2>Client settings</h2>
-        <p>This deliberately simple form gives Build 013 something safe to change and audit.</p>
-        <form method="post" action="/company/settings">
-        <input type="hidden" name="csrf" value="{esc(context['csrf_token'])}">
-        <label>Contact email</label><input name="contact_email" type="email" value="{esc(company['contact_email'])}">
-        <label>Telephone</label><input name="phone" value="{esc(company['phone'])}">
-        <p><button type="submit">Save client settings</button></p></form></div>
-        <div class="card"><h3>Permission reminder</h3><p>Booking Log will later be visible here to Supervisor and Client/Operator users only. Customers will never see it.</p></div>"""
-        return layout("Client settings", body, context)
+        context=require_login(request); company_id=working_company_id(context)
+        if not company_id: raise HTTPException(status_code=403,detail="Select a client in Support Mode first")
+        company=database.company(company_id)
+        if company is None: raise HTTPException(status_code=404,detail="Client not found")
+        saved_html='<div class="ok">Saved. The change has been written to the permanent audit trail.</div>' if saved else ""
+        body=f"""<h1>{esc(company['name'])}</h1>{saved_html}<div class="card"><h2>Client settings</h2><p>This deliberately simple form gives Build 013 something safe to change and audit.</p><form method="post" action="/company/settings"><input type="hidden" name="csrf" value="{esc(context['csrf_token'])}"><label>Contact email</label><input name="contact_email" type="email" value="{esc(company['contact_email'])}"><label>Telephone</label><input name="phone" value="{esc(company['phone'])}"><p><button type="submit">Save client settings</button></p></form></div><div class="card"><h3>Permission reminder</h3><p>Booking Log will later be visible here to Supervisor and Client/Operator users only. Customers will never see it.</p></div>"""
+        return layout("Client settings",body,context)
 
     @app.post("/company/settings")
     async def company_settings_save(request: Request):
-        context = require_login(request)
-        data = await form_data(request)
-        require_csrf(context, data)
-        company_id = working_company_id(context)
-        if context["role"] not in {"supervisor", "operator"} or not company_id:
-            raise HTTPException(status_code=403, detail="Not permitted")
-        before, after = database.update_company_contact(
-            company_id, contact_email=data.get("contact_email", ""), phone=data.get("phone", "")
-        )
-        database.write_audit(
-            action="COMPANY_CONTACT_UPDATED", entity_type="company", entity_id=company_id,
-            actor_user_id=context["user_id"], actor_role=context["role"], company_id=company_id,
-            acting_company_id=context["acting_company_id"], before=before, after=after,
-        )
-        return RedirectResponse("/company/settings?saved=1", status_code=303)
+        context=require_login(request); data=await form_data(request); require_csrf(context,data); company_id=working_company_id(context)
+        if context["role"] not in {"supervisor","operator"} or not company_id: raise HTTPException(status_code=403,detail="Not permitted")
+        before,after=database.update_company_contact(company_id,contact_email=data.get("contact_email",""),phone=data.get("phone",""))
+        database.write_audit(action="COMPANY_CONTACT_UPDATED",entity_type="company",entity_id=company_id,actor_user_id=context["user_id"],actor_role=context["role"],company_id=company_id,acting_company_id=context["acting_company_id"],before=before,after=after)
+        return RedirectResponse("/company/settings?saved=1",status_code=303)
 
     @app.get("/audit", response_class=HTMLResponse)
     def global_audit(request: Request, company_id: str = "", date_from: str = "", date_to: str = ""):
-        context = require_login(request)
-        if not can_view_global_audit(context):
-            raise HTTPException(status_code=403, detail="Supervisor only")
-        selected_company = int(company_id) if company_id.isdigit() else None
-        rows = database.audit_rows(company_id=selected_company, date_from=date_from, date_to=date_to)
-        companies = database.companies()
-        options = ['<option value="">All clients</option>'] + [
-            f'<option value="{c["id"]}" {"selected" if selected_company == c["id"] else ""}>{esc(c["name"])}</option>'
-            for c in companies
-        ]
-        table_rows = []
-        for row in rows:
-            actor = "System / unknown" if not row["actor_user_id"] else f'{row["first_name"]} {row["last_name"]} ({role_label(row["actor_role"])})'
-            client = row["company_name"] or "—"
-            acting = row["acting_company_name"] or "—"
-            table_rows.append(
-                f'<tr><td>{esc(row["created_at"])}</td><td>{esc(client)}</td><td>{esc(actor)}</td><td>{esc(acting)}</td>'
-                f'<td>{esc(row["action"])}</td><td>{esc(row["entity_type"])} {esc(row["entity_id"] or "")}</td>'
-                f'<td><small>{esc(row["before_json"] or "")}</small></td><td><small>{esc(row["after_json"] or "")}</small></td></tr>'
-            )
-        body = f"""<h1>Global Audit</h1><div class="card"><p><strong>Supervisor only.</strong> Search by client and date.</p>
-        <form method="get" action="/audit"><div class="grid"><div><label>Client</label><select name="company_id">{''.join(options)}</select></div>
-        <div><label>From date</label><input type="date" name="date_from" value="{esc(date_from)}"></div>
-        <div><label>To date</label><input type="date" name="date_to" value="{esc(date_to)}"></div></div>
-        <p><button type="submit">Search Audit</button> <a class="button secondary" href="/audit">Clear</a></p></form></div>
-        <div class="card" style="overflow:auto"><table><thead><tr><th>When</th><th>Client</th><th>User</th><th>Acting in</th><th>Action</th><th>Item</th><th>Before</th><th>After</th></tr></thead>
-        <tbody>{''.join(table_rows) if table_rows else '<tr><td colspan="8">No audit entries match.</td></tr>'}</tbody></table></div>"""
-        return layout("Global Audit", body, context)
+        context=require_login(request)
+        if not can_view_global_audit(context): raise HTTPException(status_code=403,detail="Supervisor only")
+        selected_company=int(company_id) if company_id.isdigit() else None; audit_rows=database.audit_rows(company_id=selected_company,date_from=date_from,date_to=date_to); companies=database.companies()
+        options=['<option value="">All clients</option>']+[f'<option value="{c["id"]}" {"selected" if selected_company==c["id"] else ""}>{esc(c["name"])}</option>' for c in companies]; table_rows=[]
+        for row in audit_rows:
+            actor="System / unknown" if not row["actor_user_id"] else f'{row["first_name"]} {row["last_name"]} ({role_label(row["actor_role"])})'; client=row["company_name"] or "—"; acting=row["acting_company_name"] or "—"
+            table_rows.append(f'<tr><td>{esc(row["created_at"])}</td><td>{esc(client)}</td><td>{esc(actor)}</td><td>{esc(acting)}</td><td>{esc(row["action"])}</td><td>{esc(row["entity_type"])} {esc(row["entity_id"] or "")}</td><td><small>{esc(row["before_json"] or "")}</small></td><td><small>{esc(row["after_json"] or "")}</small></td></tr>')
+        body=f"""<h1>Global Audit</h1><div class="card"><p><strong>Supervisor only.</strong> Search by client and date.</p><form method="get" action="/audit"><div class="grid"><div><label>Client</label><select name="company_id">{''.join(options)}</select></div><div><label>From date</label><input type="date" name="date_from" value="{esc(date_from)}"></div><div><label>To date</label><input type="date" name="date_to" value="{esc(date_to)}"></div></div><p><button type="submit">Search Audit</button> <a class="button secondary" href="/audit">Clear</a></p></form></div><div class="card" style="overflow:auto"><table><thead><tr><th>When</th><th>Client</th><th>User</th><th>Acting in</th><th>Action</th><th>Item</th><th>Before</th><th>After</th></tr></thead><tbody>{''.join(table_rows) if table_rows else '<tr><td colspan="8">No audit entries match.</td></tr>'}</tbody></table></div>"""
+        return layout("Global Audit",body,context)
 
     return app
 
