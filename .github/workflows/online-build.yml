@@ -1,4 +1,4 @@
-name: Direct Booking Software Online Build 013
+name: Direct Booking Software Online Build 014
 
 on:
   push:
@@ -19,7 +19,7 @@ jobs:
         with:
           python-version: "3.11"
 
-      - name: Verify Build 013 online files
+      - name: Verify Build 014 online files
         shell: pwsh
         run: |
           $required = @(
@@ -27,22 +27,24 @@ jobs:
             "online/security.py",
             "online/database.py",
             "online/app.py",
+            "online/setup014.py",
             "run_online.py",
-            "START_BUILD013.bat",
+            "START_BUILD014.bat",
             "requirements-online.txt",
             "ONLINE_README.md",
             "tests/online_smoke_test.py",
+            "tests/online_setup014_test.py",
             "ACCEPTANCE_TEST.md"
           )
           foreach ($file in $required) {
-            if (-not (Test-Path $file)) { throw "Missing Build 013 online file: $file" }
+            if (-not (Test-Path $file)) { throw "Missing Build 014 online file: $file" }
           }
 
       - name: Test Windows starter Python detection
         shell: cmd
         env:
           DIRECTBOOKING_LAUNCHER_TEST: "1"
-        run: START_BUILD013.bat
+        run: START_BUILD014.bat
 
       - name: Install online dependencies
         shell: pwsh
@@ -54,20 +56,26 @@ jobs:
       - name: Verify imports
         shell: pwsh
         run: |
-          python -c "from online.app import app, create_app, can_view_booking_log; from online.database import OnlineDatabase; assert app and create_app and can_view_booking_log and OnlineDatabase; print('Online Build 013 imports: passed')"
+          python -c "from online.app import app, create_app, can_view_booking_log; from online.database import OnlineDatabase; from online.setup014 import register_setup014, copy_previous_year; assert app and create_app and can_view_booking_log and OnlineDatabase and register_setup014 and copy_previous_year; print('Online Build 014 imports: passed')"
           if ($LASTEXITCODE -ne 0) { throw "Online application import verification failed" }
 
-      - name: Run online source smoke test
+      - name: Run foundation smoke test
         shell: pwsh
         run: |
           python tests/online_smoke_test.py
-          if ($LASTEXITCODE -ne 0) { throw "Online Build 013 smoke test failed" }
+          if ($LASTEXITCODE -ne 0) { throw "Online Build 014 foundation smoke test failed" }
+
+      - name: Run Setup migration test
+        shell: pwsh
+        run: |
+          python tests/online_setup014_test.py
+          if ($LASTEXITCODE -ne 0) { throw "Online Build 014 Setup test failed" }
 
       - name: Launch local server and health check
         shell: pwsh
         run: |
           $env:DIRECTBOOKING_NO_BROWSER = "1"
-          $env:DIRECTBOOKING_DB = "$env:RUNNER_TEMP\directbooking013-health.db"
+          $env:DIRECTBOOKING_DB = "$env:RUNNER_TEMP\directbooking014-health.db"
           $process = Start-Process -FilePath "python" -ArgumentList "run_online.py" -PassThru
           try {
             $ok = $false
@@ -75,30 +83,30 @@ jobs:
               Start-Sleep -Seconds 1
               try {
                 $response = Invoke-RestMethod -Uri "http://127.0.0.1:8000/health" -TimeoutSec 2
-                if ($response.status -eq "ok" -and $response.build -eq "013") { $ok = $true; break }
+                if ($response.status -eq "ok" -and $response.build -eq "014") { $ok = $true; break }
               } catch {}
             }
-            if (-not $ok) { throw "Local Build 013 server did not pass health check" }
+            if (-not $ok) { throw "Local Build 014 server did not pass health check" }
           } finally {
             if (-not $process.HasExited) { Stop-Process -Id $process.Id -Force }
           }
-          Write-Host "Online Build 013 local server health check passed"
+          Write-Host "Online Build 014 local server health check passed"
 
-      - name: Stage Build 013 artifact
+      - name: Stage Build 014 artifact
         shell: pwsh
         run: |
           New-Item -ItemType Directory -Force "artifact\online" | Out-Null
           Copy-Item "online\*.py" "artifact\online\" -Force
           Copy-Item "run_online.py" "artifact\run_online.py" -Force
-          Copy-Item "START_BUILD013.bat" "artifact\START_BUILD013.bat" -Force
+          Copy-Item "START_BUILD014.bat" "artifact\START_BUILD014.bat" -Force
           Copy-Item "requirements-online.txt" "artifact\requirements-online.txt" -Force
           Copy-Item "ONLINE_README.md" "artifact\ONLINE_README.md" -Force
           Copy-Item "ACCEPTANCE_TEST.md" "artifact\ACCEPTANCE_TEST.md" -Force
 
-      - name: Upload Online Build 013 artifact
+      - name: Upload Online Build 014 artifact
         uses: actions/upload-artifact@v4
         with:
-          name: DirectBookingSoftware-Online-Build013
+          name: DirectBookingSoftware-Online-Build014
           path: artifact/
           if-no-files-found: error
           retention-days: 30
