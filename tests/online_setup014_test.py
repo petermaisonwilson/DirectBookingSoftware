@@ -11,6 +11,7 @@ from fastapi.testclient import TestClient
 
 from online.app import COOKIE_NAME, create_app
 from online.setup014 import register_setup014
+from online.setup014_usability import apply_setup014_usability
 
 
 def login(client: TestClient, email: str, password: str) -> None:
@@ -31,6 +32,7 @@ def main() -> None:
         db_path = Path(temp_dir) / "online014.db"
         app = create_app(db_path, seed_demo=True)
         register_setup014(app)
+        apply_setup014_usability(app)
         client = TestClient(app)
 
         login(client, "operator@forestview.test", "Operator013!")
@@ -62,6 +64,17 @@ def main() -> None:
         with db.connect() as c:
             season = c.execute("SELECT * FROM setup_seasons WHERE company_id=? AND year=2026", (forest,)).fetchone()
         assert season and season["start_date"] == "2026-01-01" and season["end_date"] == "2026-12-31"
+
+        # Usability repair: blank pricing remains on the normal page with a visible error.
+        blank = client.post("/setup/pricing", data={
+            "csrf": token, "year": "2026", f"r_{element['id']}_{season['id']}": "",
+        }, follow_redirects=False)
+        assert blank.status_code == 200
+        assert "Seasonal Element pricing" in blank.text
+        assert "Please correct the highlighted cells" in blank.text
+        assert "Every seasonal price cell must contain a valid zero or positive price" in blank.text
+        assert "background:#fde8e8" in blank.text
+        assert '"detail"' not in blank.text
 
         # Seasonal pricing: zero would also be accepted, but use an obvious value here.
         r = client.post("/setup/pricing", data={
