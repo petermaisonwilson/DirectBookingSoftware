@@ -1,6 +1,5 @@
 from __future__ import annotations
 
-import os
 import sys
 import tempfile
 from pathlib import Path
@@ -34,10 +33,11 @@ def main() -> None:
         client = TestClient(app)
 
         login(client, "operator@forestview.test", "Operator013!")
-        assert client.get("/setup").status_code == 200
+        setup_page = client.get("/setup")
+        assert setup_page.status_code == 200
+        assert 'href="/setup"' in client.get("/dashboard").text
         token = csrf(app, client)
 
-        # Core catalogues.
         r = client.post("/setup/elements", data={
             "csrf": token, "id": "", "name": "Pitch 7", "element_type": "Camping",
             "pricing_method": "Per night", "base_price": "20.00",
@@ -56,17 +56,26 @@ def main() -> None:
             dog = c.execute("SELECT * FROM setup_addons WHERE company_id=? AND name='Dog'", (forest,)).fetchone()
         assert element and adults and child and dog
 
-        # Blank annual year automatically has an All Year season.
         r = client.post("/setup/years/new", data={"csrf": token, "year": "2026"}, follow_redirects=False)
         assert r.status_code == 303
         with db.connect() as c:
             season = c.execute("SELECT * FROM setup_seasons WHERE company_id=? AND year=2026", (forest,)).fetchone()
         assert season and season["start_date"] == "2026-01-01" and season["end_date"] == "2026-12-31"
 
-        # Seasonal pricing: zero would also be accepted, but use an obvious value here.
-        r = client.post("/setup/pricing", data={
-            "csrf": token, "year": "2026", f"r_{element['id']}_{season['id']}": "25.00",
-        }, follow_redirects=False)
+        # Regression: incomplete seasonal pricing stays on the normal HTML page.
+        price_key = f"r_{element['id']}_{season['id']}"
+        r = client.post("/setup/pricing", data={"csrf": token, "year": "2026", price_key: ""}, follow_redirects=False)
+        assert r.status_code == 400
+        assert "text/html" in r.headers.get("content-type", "")
+        assert "Seasonal Element pricing" in r.text
+        assert "Every seasonal price cell must be completed" in r.text
+        assert "border:2px solid #b42318" in r.text
+        assert '"detail"' not in r.text
+        with db.connect() as c:
+            assert c.execute("SELECT COUNT(*) n FROM setup_element_rates WHERE company_id=? AND year=2026", (forest,)).fetchone()["n"] == 0
+
+        # Zero remains valid; use an obvious nonzero price for later copy verification.
+        r = client.post("/setup/pricing", data={"csrf": token, "year": "2026", price_key: "25.00"}, follow_redirects=False)
         assert r.status_code == 303
 
         # Occupancy: explicit zero means Child is not allowed on this Element.
@@ -82,7 +91,6 @@ def main() -> None:
             ).fetchone()["max_count"]
         assert child_limit == 0
 
-        # Type default + individual N override preserves the Windows 012 I/Y/N model.
         addon_payload = {
             "csrf": token, "year": "2026",
             f"ty_{dog['id']}_Camping": "on",
@@ -102,7 +110,6 @@ def main() -> None:
         assert type_rule["allowed"] == 1 and type_rule["max_qty"] == 2 and float(type_rule["rate"]) == 3.0
         assert override["state"] == "N"
 
-        # Copy previous year must copy rates, occupancy and both Add-on rule levels.
         r = client.post("/setup/years/copy", data={"csrf": token, "year": "2027"}, follow_redirects=False)
         assert r.status_code == 303
         with db.connect() as c:
@@ -112,27 +119,24 @@ def main() -> None:
             assert c.execute("SELECT COUNT(*) n FROM setup_type_addons WHERE company_id=? AND year=2027", (forest,)).fetchone()["n"] == 1
             assert c.execute("SELECT state FROM setup_element_addons WHERE company_id=? AND year=2027", (forest,)).fetchone()["state"] == "N"
 
-        # Setup changes are audited.
-        audit = db.audit_rows(company_id=int(forest))
-        actions = {row["action"] for row in audit}
+        audit_rows = db.audit_rows(company_id=int(forest))
+        actions = {row["action"] for row in audit_rows}
         assert "ELEMENT_SAVED" in actions
         assert "OCCUPANCY_SAVED" in actions
         assert "ADDON_RULES_SAVED" in actions
         assert "PRICING_YEAR_COPIED" in actions
 
-        # Another client cannot see Forest View setup data.
         client.post("/logout", follow_redirects=False)
         login(client, "operator@riverside.test", "Operator013!")
         page = client.get("/setup/elements")
         assert page.status_code == 200
         assert "Pitch 7" not in page.text
 
-        # Customer role is denied Setup completely.
         client.post("/logout", follow_redirects=False)
         login(client, "customer@forestview.test", "Customer013!")
         assert client.get("/setup").status_code == 403
 
-    print("Online Build 014 setup test: passed")
+    print("Online Build 014 clean rebuild setup test: passed")
 
 
 if __name__ == "__main__":
