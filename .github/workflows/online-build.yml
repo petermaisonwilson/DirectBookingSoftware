@@ -38,6 +38,12 @@ jobs:
             if (-not (Test-Path $file)) { throw "Missing Build 013 online file: $file" }
           }
 
+      - name: Test Windows starter Python detection
+        shell: cmd
+        env:
+          DIRECTBOOKING_LAUNCHER_TEST: "1"
+        run: START_BUILD013.bat
+
       - name: Install online dependencies
         shell: pwsh
         run: |
