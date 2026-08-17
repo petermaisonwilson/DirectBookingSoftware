@@ -30,14 +30,14 @@ def login(client: TestClient, email: str, password: str):
 
 def main() -> None:
     with tempfile.TemporaryDirectory() as temp_dir:
-        db_path = Path(temp_dir) / "online014.db"
+        db_path = Path(temp_dir) / "online015.db"
         app = create_app(db_path)
         database = app.state.database
 
         with TestClient(app) as anonymous:
             health = anonymous.get("/health")
             assert health.status_code == 200
-            assert health.json()["build"] == "014"
+            assert health.json()["build"] == "015"
 
         with TestClient(app) as supervisor:
             dashboard = login(supervisor, "supervisor@directbooking.test", "Supervisor013!")
@@ -111,7 +111,7 @@ def main() -> None:
             except sqlite3.DatabaseError as exc:
                 assert "append-only" in str(exc)
 
-    print("Online Build 014 foundation smoke test: passed")
+    print("Online Build 015 foundation smoke test: passed")
 
 
 if __name__ == "__main__":
