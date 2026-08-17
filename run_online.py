@@ -8,8 +8,10 @@ import uvicorn
 
 from online.app import app
 from online.setup014 import register_setup014
+from online.setup014_usability import apply_setup014_usability
 
 register_setup014(app)
+apply_setup014_usability(app)
 
 
 def main() -> None:
