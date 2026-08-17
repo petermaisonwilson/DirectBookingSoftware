@@ -1,14 +1,13 @@
-# Direct Booking Software — Online Build 013
+# Direct Booking Software — Online Build 014
 
-Build 013 is the first browser-based foundation. It is **not live on the internet**. It runs on the Windows PC in front of you and stores its test database locally in `online_data`.
+Build 014 moves the proven Windows Setup model into the browser. It is still **local-only** on your Windows PC and is not exposed to the internet.
 
 ## Start it on Windows
 
-1. Extract the complete Build 013 artifact to its own folder.
-2. Double-click `START_BUILD013.bat`.
-3. On the first run, allow it a minute to create its private Python environment and install the web components.
-4. Your normal browser opens to `http://127.0.0.1:8000`.
-5. Keep the black starter window open while testing. Closing it stops the local server.
+1. Extract the complete Build 014 artifact into its own folder.
+2. Double-click `START_BUILD014.bat`.
+3. Your normal browser opens to `http://127.0.0.1:8000`.
+4. Keep the black starter window open while testing.
 
 ## Test accounts
 
@@ -16,20 +15,40 @@ Build 013 is the first browser-based foundation. It is **not live on the interne
 - Forest View operator: `operator@forestview.test` / `Operator013!`
 - Forest View customer: `customer@forestview.test` / `Customer013!`
 
-These credentials are deliberately local test data only. They are not intended for a live VPS.
+The passwords retain the 013 suffix because these are the same local test accounts created by the accepted online foundation.
 
-## What Build 013 proves
+## What Build 014 adds
 
-- one browser application with Supervisor, Client/Operator and Customer roles;
-- client/company separation;
-- Supervisor `View as Client` Support Mode;
-- Support Mode changes remain attributed to the Supervisor in the audit trail;
-- a permanent append-only audit foundation;
-- Global Audit is Supervisor-only and searchable by client and date;
-- the future Booking Log permission is Supervisor + Client/Operator only, never Customer.
+Client/Operator and Supervisor-in-Support-Mode users now have a `Setup` area containing:
 
-The Windows Builds 001–012 remain in the repository unchanged as the reference prototype for pricing, Elements, Add-ons and annual setup.
+- Elements and Element Types;
+- Person Types;
+- Add-ons and their pricing methods;
+- independent pricing years;
+- create blank year or Copy previous year;
+- seasons and seasonal Element prices;
+- annual occupancy with explicit zero accepted;
+- Element Type Add-on defaults;
+- individual Element Add-on overrides using I / Y / N.
+
+The inherited Add-on priority remains:
+
+**individual Element override → Element Type default → unavailable if no rule exists**.
+
+A copied year carries seasonal rates, occupancy, Type Add-on defaults and individual overrides into the new year.
+
+## Permission rules
+
+- Supervisor can use Setup only while viewing a client in Support Mode.
+- Client/Operator can use Setup only for their own client account.
+- Customers cannot access Setup.
+- Setup changes are written to the permanent audit trail.
+- Global Audit remains Supervisor-only.
+
+## Still not in Build 014
+
+There is no booking calendar, enquiry workflow, Client Register, live customer booking or payments yet.
 
 ## Storage note
 
-Build 013 deliberately uses SQLite only for safe local development. The online code keeps storage behind its own data layer so we can replace that with the central PostgreSQL database when the WHUK VPS is ready.
+Build 014 still uses SQLite only for safe local development. The online storage remains isolated behind the application data layer so it can later move to PostgreSQL on the managed VPS.
