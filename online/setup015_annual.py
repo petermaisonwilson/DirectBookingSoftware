@@ -21,31 +21,26 @@ def _error_html(message: str) -> str:
     return f'<div class="error"><strong>Please correct the highlighted fields.</strong><br>{esc(message)}</div>' if message else ''
 
 
-def _style(name: str, errors: set[str]) -> str:
-    return 'min-width:90px;border:2px solid #b42318;background:#fff1f0' if name in errors else 'min-width:90px'
+def _style(name: str, errors: set[str], width: str = '90px') -> str:
+    base = f'min-width:{width}'
+    return base + ';border:2px solid #b42318;background:#fff1f0' if name in errors else base
 
 
 def _pricing_page(database, context, year: int | None, submitted: dict[str, str] | None = None, errors: set[str] | None = None, message: str = '') -> str:
     cid = working_company(context); available = years(database, cid); selected = selected_year(database, cid, year); errors = errors or set(); submitted = submitted or {}
     body = f'<h1>Seasonal Element pricing</h1>{setup_nav()}{_error_html(message)}{_year_select(available, selected, "/setup/pricing")}'
-    if selected is None:
-        return layout('Seasonal pricing', body, context)
-    seasons = rows(database, 'SELECT * FROM setup_seasons WHERE company_id=? AND year=? ORDER BY start_date', (cid, selected))
-    elements = rows(database, 'SELECT * FROM setup_elements WHERE company_id=? AND active=1 ORDER BY element_type,name', (cid,))
-    season_name = submitted.get('season_name', '') if submitted else ''
-    season_start = submitted.get('season_start', '') if submitted else ''
-    season_end = submitted.get('season_end', '') if submitted else ''
+    if selected is None: return layout('Seasonal pricing', body, context)
+    seasons = rows(database, 'SELECT * FROM setup_seasons WHERE company_id=? AND year=? ORDER BY start_date', (cid, selected)); elements = rows(database, 'SELECT * FROM setup_elements WHERE company_id=? AND active=1 ORDER BY element_type,name', (cid,))
+    season_name = submitted.get('season_name', '') if submitted else ''; season_start = submitted.get('season_start', '') if submitted else ''; season_end = submitted.get('season_end', '') if submitted else ''
     body += f'''<div class="card"><h2>Add season</h2><form method="post" action="/setup/seasons"><input type="hidden" name="csrf" value="{esc(context["csrf_token"])}"><input type="hidden" name="year" value="{selected}"><div class="grid"><div><label>Name</label><input style="{_style("season_name", errors)}" name="name" value="{esc(season_name)}"></div><div><label>Start</label><input style="{_style("season_start", errors)}" type="date" name="start_date" value="{esc(season_start)}"></div><div><label>End</label><input style="{_style("season_end", errors)}" type="date" name="end_date" value="{esc(season_end)}"></div></div><p><button>Add season</button></p></form></div>'''
     body += f'<form method="post" action="/setup/pricing"><input type="hidden" name="csrf" value="{esc(context["csrf_token"])}"><input type="hidden" name="year" value="{selected}"><div class="card" style="overflow:auto"><p><strong>Every visible price cell must contain a value. 0 or 0.00 is valid.</strong></p><table><thead><tr><th>Element</th>' + ''.join(f'<th>{esc(s["name"])}</th>' for s in seasons) + '</tr></thead><tbody>'
     for element in elements:
         body += f'<tr><td>{esc(element["name"])}</td>'
         for season in seasons:
             key = f'r_{element["id"]}_{season["id"]}'
-            if submitted and key in submitted:
-                value = submitted.get(key, '')
+            if submitted and key in submitted: value = submitted.get(key, '')
             else:
-                rate_row = one(database, 'SELECT rate FROM setup_element_rates WHERE company_id=? AND year=? AND element_id=? AND season_id=?', (cid, selected, element['id'], season['id']))
-                value = '' if rate_row is None else f'{float(rate_row["rate"]):.2f}'
+                rate_row = one(database, 'SELECT rate FROM setup_element_rates WHERE company_id=? AND year=? AND element_id=? AND season_id=?', (cid, selected, element['id'], season['id'])); value = '' if rate_row is None else f'{float(rate_row["rate"]):.2f}'
             body += f'<td><input style="{_style(key, errors)}" name="{key}" value="{esc(value)}" placeholder="required"></td>'
         body += '</tr>'
     body += '</tbody></table><p><button>Save seasonal prices</button></p></div></form>'
@@ -54,71 +49,52 @@ def _pricing_page(database, context, year: int | None, submitted: dict[str, str]
 
 def _occupancy_page(database, context, year: int | None, submitted: dict[str, str] | None = None, errors: set[str] | None = None, message: str = '') -> str:
     cid = working_company(context); available = years(database, cid); selected = selected_year(database, cid, year); submitted = submitted or {}; errors = errors or set()
-    body = f'<h1>Occupancy</h1>{setup_nav()}{_error_html(message)}{_year_select(available, selected, "/setup/occupancy")}'
-    if selected is None:
-        return layout('Occupancy', body, context)
-    elements = rows(database, 'SELECT * FROM setup_elements WHERE company_id=? AND active=1 ORDER BY element_type,name', (cid,))
-    people = rows(database, 'SELECT * FROM setup_person_types WHERE company_id=? AND active=1 ORDER BY name', (cid,))
-    body += f'<form method="post" action="/setup/occupancy"><input type="hidden" name="csrf" value="{esc(context["csrf_token"])}"><input type="hidden" name="year" value="{selected}"><div class="card"><p><strong>0 is valid:</strong> for a Person Type it means that type is not allowed on that Element.</p><table><thead><tr><th>Element</th><th>Total max</th>' + ''.join(f'<th>{esc(p["name"])}</th>' for p in people) + '</tr></thead><tbody>'
+    body = f'<h1>Occupancy & Person pricing</h1>{setup_nav()}{_error_html(message)}{_year_select(available, selected, "/setup/occupancy")}'
+    if selected is None: return layout('Occupancy', body, context)
+    elements = rows(database, 'SELECT * FROM setup_elements WHERE company_id=? AND active=1 ORDER BY element_type,name', (cid,)); people = rows(database, 'SELECT * FROM setup_person_types WHERE company_id=? AND active=1 ORDER BY name', (cid,))
+    body += f'<form method="post" action="/setup/occupancy"><input type="hidden" name="csrf" value="{esc(context["csrf_token"])}"><input type="hidden" name="year" value="{selected}"><div class="card" style="overflow:auto"><p><strong>No blanks:</strong> every Max and € box must contain a value. 0 is valid. A Person price of 0 means no extra charge.</p><table><thead><tr><th rowspan="2">Element</th><th rowspan="2">Total max</th>' + ''.join(f'<th colspan="2" style="text-align:center">{esc(p["name"])}</th>' for p in people) + '</tr><tr>' + ''.join('<th style="text-align:center">Max</th><th style="text-align:center">€</th>' for _ in people) + '</tr></thead><tbody>'
     for element in elements:
         total_key = f't_{element["id"]}'
-        if submitted:
-            total_value = submitted.get(total_key, '')
+        if submitted: total_value = submitted.get(total_key, '')
         else:
-            total = one(database, 'SELECT max_total FROM setup_occupancy WHERE company_id=? AND year=? AND element_id=?', (cid, selected, element['id']))
-            total_value = '' if total is None else str(total['max_total'])
-        body += f'<tr><td>{esc(element["name"])}</td><td><input style="{_style(total_key, errors)}" name="{total_key}" value="{esc(total_value)}"></td>'
+            total = one(database, 'SELECT max_total FROM setup_occupancy WHERE company_id=? AND year=? AND element_id=?', (cid, selected, element['id'])); total_value = '' if total is None else str(total['max_total'])
+        body += f'<tr><td>{esc(element["name"])}</td><td><input style="{_style(total_key, errors, "64px")}" name="{total_key}" value="{esc(total_value)}"></td>'
         for person in people:
-            key = f'p_{element["id"]}_{person["id"]}'
+            max_key = f'p_{element["id"]}_{person["id"]}'; rate_key = f'pr_{element["id"]}_{person["id"]}'
             if submitted:
-                value = submitted.get(key, '')
+                max_value = submitted.get(max_key, ''); rate_value = submitted.get(rate_key, '')
             else:
-                limit = one(database, 'SELECT max_count FROM setup_person_limits WHERE company_id=? AND year=? AND element_id=? AND person_type_id=?', (cid, selected, element['id'], person['id']))
-                value = '' if limit is None else str(limit['max_count'])
-            body += f'<td><input style="{_style(key, errors)}" name="{key}" value="{esc(value)}"></td>'
+                limit = one(database, 'SELECT max_count FROM setup_person_limits WHERE company_id=? AND year=? AND element_id=? AND person_type_id=?', (cid, selected, element['id'], person['id'])); price = one(database, 'SELECT rate FROM setup_person_prices WHERE company_id=? AND year=? AND element_id=? AND person_type_id=?', (cid, selected, element['id'], person['id']))
+                max_value = '' if limit is None else str(limit['max_count']); rate_value = '' if price is None else f'{float(price["rate"]):.2f}'
+            body += f'<td><input style="{_style(max_key, errors, "58px")}" name="{max_key}" value="{esc(max_value)}"></td><td><input style="{_style(rate_key, errors, "70px")}" name="{rate_key}" value="{esc(rate_value)}"></td>'
         body += '</tr>'
-    body += '</tbody></table><p><button>Save occupancy</button></p></div></form>'
+    body += '</tbody></table><p><button>Save occupancy & Person prices</button></p></div></form>'
     return layout('Occupancy', body, context)
 
 
 def _addon_page(database, context, year: int | None, submitted: dict[str, str] | None = None, errors: set[str] | None = None, message: str = '') -> str:
     cid = working_company(context); available = years(database, cid); selected = selected_year(database, cid, year); submitted = submitted or {}; errors = errors or set()
     body = f'<h1>Add-on rules</h1>{setup_nav()}{_error_html(message)}{_year_select(available, selected, "/setup/addon-rules")}'
-    if selected is None:
-        return layout('Add-on rules', body, context)
-    addons = rows(database, 'SELECT * FROM setup_addons WHERE company_id=? AND active=1 ORDER BY name', (cid,))
-    elements = rows(database, 'SELECT * FROM setup_elements WHERE company_id=? AND active=1 ORDER BY element_type,name', (cid,))
-    types = sorted({str(e['element_type']) for e in elements}, key=str.casefold)
+    if selected is None: return layout('Add-on rules', body, context)
+    addons = rows(database, 'SELECT * FROM setup_addons WHERE company_id=? AND active=1 ORDER BY name', (cid,)); elements = rows(database, 'SELECT * FROM setup_elements WHERE company_id=? AND active=1 ORDER BY element_type,name', (cid,)); types = sorted({str(e['element_type']) for e in elements}, key=str.casefold)
     body += f'<form method="post" action="/setup/addon-rules"><input type="hidden" name="csrf" value="{esc(context["csrf_token"])}"><input type="hidden" name="year" value="{selected}"><div class="card"><h2>Element Type defaults</h2><p>Tick = Y / available. Unticked = N / unavailable.</p><table><thead><tr><th>Element Type</th><th>Add-on</th><th>Y</th><th>Min</th><th>Max</th><th>Price €</th></tr></thead><tbody>'
     for typ in types:
         for addon in addons:
-            base = one(database, 'SELECT * FROM setup_type_addons WHERE company_id=? AND year=? AND element_type=? AND addon_id=?', (cid, selected, typ, addon['id']))
-            check_key = f'ty_{addon["id"]}_{typ}'
-            yes = (check_key in submitted) if submitted else bool(base and base['allowed'])
-            chk = 'checked' if yes else ''
-            vals = []
+            base = one(database, 'SELECT * FROM setup_type_addons WHERE company_id=? AND year=? AND element_type=? AND addon_id=?', (cid, selected, typ, addon['id'])); check_key = f'ty_{addon["id"]}_{typ}'; yes = (check_key in submitted) if submitted else bool(base and base['allowed']); chk = 'checked' if yes else ''; vals = []
             for prefix, col in (('tymin', 'min_qty'), ('tymax', 'max_qty'), ('tyrate', 'rate')):
                 key = f'{prefix}_{addon["id"]}_{typ}'
-                if submitted:
-                    value = submitted.get(key, '')
-                else:
-                    value = '' if not base or base[col] is None else (f'{float(base[col]):.2f}' if col == 'rate' else str(base[col]))
+                if submitted: value = submitted.get(key, '')
+                else: value = '' if not base or base[col] is None else (f'{float(base[col]):.2f}' if col == 'rate' else str(base[col]))
                 vals.append((key, value))
             body += f'<tr><td>{esc(typ)}</td><td>{esc(addon["name"])}</td><td><input style="width:auto" type="checkbox" name="{esc(check_key)}" {chk}></td>' + ''.join(f'<td><input style="{_style(k, errors)}" name="{esc(k)}" value="{esc(v)}"></td>' for k, v in vals) + '</tr>'
     body += '</tbody></table></div><div class="card"><h2>Individual Element overrides</h2><p><strong>I = Inherit Element Type rule &nbsp; Y = Yes &nbsp; N = No.</strong></p><table><thead><tr><th>Element</th><th>Add-on</th><th>I / Y / N</th><th>Min</th><th>Max</th><th>Price €</th></tr></thead><tbody>'
     for element in elements:
         for addon in addons:
-            base = one(database, 'SELECT * FROM setup_element_addons WHERE company_id=? AND year=? AND element_id=? AND addon_id=?', (cid, selected, element['id'], addon['id']))
-            radio_key = f'ov_{element["id"]}_{addon["id"]}'
-            state = submitted.get(radio_key, 'I') if submitted else ('I' if not base else base['state'])
-            radios = ' '.join(f'<label style="display:inline;font-weight:normal"><input style="width:auto" type="radio" name="{radio_key}" value="{s}" {"checked" if state == s else ""}> {s}</label>' for s in ('I', 'Y', 'N'))
-            vals = []
+            base = one(database, 'SELECT * FROM setup_element_addons WHERE company_id=? AND year=? AND element_id=? AND addon_id=?', (cid, selected, element['id'], addon['id'])); radio_key = f'ov_{element["id"]}_{addon["id"]}'; state = submitted.get(radio_key, 'I') if submitted else ('I' if not base else base['state']); radios = ' '.join(f'<label style="display:inline;font-weight:normal"><input style="width:auto" type="radio" name="{radio_key}" value="{s}" {"checked" if state == s else ""}> {s}</label>' for s in ('I', 'Y', 'N')); vals = []
             for prefix, col in (('ovmin', 'min_qty'), ('ovmax', 'max_qty'), ('ovrate', 'rate')):
                 key = f'{prefix}_{element["id"]}_{addon["id"]}'
-                if submitted:
-                    value = submitted.get(key, '')
-                else:
-                    value = '' if not base or base[col] is None else (f'{float(base[col]):.2f}' if col == 'rate' else str(base[col]))
+                if submitted: value = submitted.get(key, '')
+                else: value = '' if not base or base[col] is None else (f'{float(base[col]):.2f}' if col == 'rate' else str(base[col]))
                 vals.append((key, value))
             body += f'<tr><td>{esc(element["name"])}</td><td>{esc(addon["name"])}</td><td>{radios}</td>' + ''.join(f'<td><input style="{_style(k, errors)}" name="{k}" value="{esc(v)}"></td>' for k, v in vals) + '</tr>'
     body += '</tbody></table><p><button>Save Add-on rules</button></p></div></form>'
@@ -130,16 +106,13 @@ def register_annual_routes(app) -> None:
 
     @app.get('/setup/pricing', response_class=HTMLResponse)
     def pricing_page(request: Request, year: str = ''):
-        context = context_for(database, request)
-        return _pricing_page(database, context, selected_year(database, working_company(context), year))
+        context = context_for(database, request); return _pricing_page(database, context, selected_year(database, working_company(context), year))
 
     @app.post('/setup/seasons')
     async def season_save(request: Request):
         context = context_for(database, request); cid = working_company(context); data = await form_data(request); require_csrf(context, data)
-        try:
-            year = int(data.get('year', ''))
-        except ValueError:
-            return HTMLResponse(_pricing_page(database, context, None, message='Select a valid pricing year.'), 400)
+        try: year = int(data.get('year', ''))
+        except ValueError: return HTMLResponse(_pricing_page(database, context, None, message='Select a valid pricing year.'), 400)
         name = data.get('name', '').strip(); start_raw = data.get('start_date', ''); end_raw = data.get('end_date', ''); errors = set()
         if not name: errors.add('season_name')
         try: start = date.fromisoformat(start_raw)
@@ -148,21 +121,16 @@ def register_annual_routes(app) -> None:
         except ValueError: end = None; errors.add('season_end')
         if start and end and end < start: errors.update({'season_start', 'season_end'})
         if errors:
-            submitted = {'season_name': name, 'season_start': start_raw, 'season_end': end_raw}
-            return HTMLResponse(_pricing_page(database, context, year, submitted, errors, 'Complete the highlighted season fields. The end date cannot be before the start date.'), 400)
+            submitted = {'season_name': name, 'season_start': start_raw, 'season_end': end_raw}; return HTMLResponse(_pricing_page(database, context, year, submitted, errors, 'Complete the highlighted season fields. The end date cannot be before the start date.'), 400)
         with database.connect() as c:
-            try:
-                sid = c.execute('INSERT INTO setup_seasons(company_id,year,name,start_date,end_date) VALUES (?,?,?,?,?)', (cid, year, name, start_raw, end_raw)).lastrowid
+            try: sid = c.execute('INSERT INTO setup_seasons(company_id,year,name,start_date,end_date) VALUES (?,?,?,?,?)', (cid, year, name, start_raw, end_raw)).lastrowid
             except Exception:
-                submitted = {'season_name': name, 'season_start': start_raw, 'season_end': end_raw}
-                return HTMLResponse(_pricing_page(database, context, year, submitted, {'season_name'}, 'That season name already exists for this year.'), 400)
-        audit(database, context, cid, 'SEASON_ADDED', 'season', sid, None, {'year': year, 'name': name})
-        return RedirectResponse(f'/setup/pricing?year={year}', 303)
+                submitted = {'season_name': name, 'season_start': start_raw, 'season_end': end_raw}; return HTMLResponse(_pricing_page(database, context, year, submitted, {'season_name'}, 'That season name already exists for this year.'), 400)
+        audit(database, context, cid, 'SEASON_ADDED', 'season', sid, None, {'year': year, 'name': name}); return RedirectResponse(f'/setup/pricing?year={year}', 303)
 
     @app.post('/setup/pricing')
     async def pricing_save(request: Request):
-        context = context_for(database, request); cid = working_company(context); data = await form_data(request); require_csrf(context, data); year = int(data['year'])
-        seasons = rows(database, 'SELECT id FROM setup_seasons WHERE company_id=? AND year=?', (cid, year)); elements = rows(database, 'SELECT id FROM setup_elements WHERE company_id=? AND active=1', (cid,)); values = []; errors = set()
+        context = context_for(database, request); cid = working_company(context); data = await form_data(request); require_csrf(context, data); year = int(data['year']); seasons = rows(database, 'SELECT id FROM setup_seasons WHERE company_id=? AND year=?', (cid, year)); elements = rows(database, 'SELECT id FROM setup_elements WHERE company_id=? AND active=1', (cid,)); values = []; errors = set()
         for element in elements:
             for season in seasons:
                 key = f'r_{element["id"]}_{season["id"]}'; raw = data.get(key, '').strip()
@@ -181,20 +149,23 @@ def register_annual_routes(app) -> None:
 
     @app.post('/setup/occupancy')
     async def occupancy_save(request: Request):
-        context = context_for(database, request); cid = working_company(context); data = await form_data(request); require_csrf(context, data); year = int(data['year']); elements = rows(database, 'SELECT id FROM setup_elements WHERE company_id=? AND active=1', (cid,)); people = rows(database, 'SELECT id FROM setup_person_types WHERE company_id=? AND active=1', (cid,)); totals = []; limits = []; errors = set()
+        context = context_for(database, request); cid = working_company(context); data = await form_data(request); require_csrf(context, data); year = int(data['year']); elements = rows(database, 'SELECT id FROM setup_elements WHERE company_id=? AND active=1', (cid,)); people = rows(database, 'SELECT id FROM setup_person_types WHERE company_id=? AND active=1', (cid,)); totals = []; limits = []; prices = []; errors = set()
         for element in elements:
-            key = f't_{element["id"]}'
-            try: totals.append((element['id'], valid_whole(data.get(key, ''))))
-            except (TypeError, ValueError): errors.add(key)
+            total_key = f't_{element["id"]}'
+            try: totals.append((element['id'], valid_whole(data.get(total_key, ''))))
+            except (TypeError, ValueError): errors.add(total_key)
             for person in people:
-                key = f'p_{element["id"]}_{person["id"]}'
-                try: limits.append((element['id'], person['id'], valid_whole(data.get(key, ''))))
-                except (TypeError, ValueError): errors.add(key)
-        if errors: return HTMLResponse(_occupancy_page(database, context, year, data, errors, 'Occupancy values must be whole numbers of zero or more. Zero remains valid.'), 400)
+                max_key = f'p_{element["id"]}_{person["id"]}'; rate_key = f'pr_{element["id"]}_{person["id"]}'
+                try: limits.append((element['id'], person['id'], valid_whole(data.get(max_key, ''))))
+                except (TypeError, ValueError): errors.add(max_key)
+                try: prices.append((element['id'], person['id'], valid_money(data.get(rate_key, ''))))
+                except (TypeError, ValueError): errors.add(rate_key)
+        if errors: return HTMLResponse(_occupancy_page(database, context, year, data, errors, 'Every Total Max, Person Max and Person € box must contain a valid zero or positive value. Max values must be whole numbers. Zero is valid.'), 400)
         with database.connect() as c:
             for eid, total in totals: c.execute('INSERT OR REPLACE INTO setup_occupancy VALUES (?,?,?,?)', (cid, year, eid, total))
             for eid, pid, limit in limits: c.execute('INSERT OR REPLACE INTO setup_person_limits VALUES (?,?,?,?,?)', (cid, year, eid, pid, limit))
-        audit(database, context, cid, 'OCCUPANCY_SAVED', 'pricing_year', year, None, {'elements': len(elements)}); return RedirectResponse(f'/setup/occupancy?year={year}', 303)
+            for eid, pid, rate in prices: c.execute('INSERT OR REPLACE INTO setup_person_prices(company_id,year,element_id,person_type_id,rate) VALUES (?,?,?,?,?)', (cid, year, eid, pid, rate))
+        audit(database, context, cid, 'OCCUPANCY_SAVED', 'pricing_year', year, None, {'elements': len(elements), 'person_prices': len(prices)}); return RedirectResponse(f'/setup/occupancy?year={year}', 303)
 
     @app.get('/setup/addon-rules', response_class=HTMLResponse)
     def addon_rules_page(request: Request, year: str = ''):
