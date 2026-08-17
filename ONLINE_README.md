@@ -1,54 +1,21 @@
-# Direct Booking Software — Online Build 014
+# Direct Booking Software — Online Build 015
 
-Build 014 moves the proven Windows Setup model into the browser. It is still **local-only** on your Windows PC and is not exposed to the internet.
+Build 015 extends the accepted Build 014 online foundation with:
 
-## Start it on Windows
+- Client-defined Element Types with case-insensitive duplicate protection.
+- Element Type dropdowns when adding/editing Elements.
+- Safe type rename and active/inactive status; renames follow existing Elements and type-level Add-on rules.
+- Consistent red in-page validation across Setup forms and grids.
+- A Price / Rules test screen using dates, people, occupancy, seasonal rates, Add-on defaults and Element I/Y/N overrides.
+- Existing Build 014 year copy, permissions, Support Mode and audit behaviour retained.
 
-1. Extract the complete Build 014 artifact into its own folder.
-2. Double-click `START_BUILD014.bat`.
-3. Your normal browser opens to `http://127.0.0.1:8000`.
-4. Keep the black starter window open while testing.
+## Run locally
 
-## Test accounts
+Double-click `START_BUILD015.bat` and keep the black window open while testing.
+The local browser address is `http://127.0.0.1:8000`.
 
-- Supervisor: `supervisor@directbooking.test` / `Supervisor013!`
-- Forest View operator: `operator@forestview.test` / `Operator013!`
-- Forest View customer: `customer@forestview.test` / `Customer013!`
+The local development database is `online_data/direct_booking_online_dev.db` relative to the extracted folder. If you want to test migration with your previous local data, copy that database into the same relative location before starting Build 015.
 
-The passwords retain the 013 suffix because these are the same local test accounts created by the accepted online foundation.
+## Test calculator scope
 
-## What Build 014 adds
-
-Client/Operator and Supervisor-in-Support-Mode users now have a `Setup` area containing:
-
-- Elements and Element Types;
-- Person Types;
-- Add-ons and their pricing methods;
-- independent pricing years;
-- create blank year or Copy previous year;
-- seasons and seasonal Element prices;
-- annual occupancy with explicit zero accepted;
-- Element Type Add-on defaults;
-- individual Element Add-on overrides using I / Y / N.
-
-The inherited Add-on priority remains:
-
-**individual Element override → Element Type default → unavailable if no rule exists**.
-
-A copied year carries seasonal rates, occupancy, Type Add-on defaults and individual overrides into the new year.
-
-## Permission rules
-
-- Supervisor can use Setup only while viewing a client in Support Mode.
-- Client/Operator can use Setup only for their own client account.
-- Customers cannot access Setup.
-- Setup changes are written to the permanent audit trail.
-- Global Audit remains Supervisor-only.
-
-## Still not in Build 014
-
-There is no booking calendar, enquiry workflow, Client Register, live customer booking or payments yet.
-
-## Storage note
-
-Build 014 still uses SQLite only for safe local development. The online storage remains isolated behind the application data layer so it can later move to PostgreSQL on the managed VPS.
+Build 015 is a Setup/rules calculator, not yet a Booking. A stay must remain within one pricing year. If seasons overlap, the narrowest matching season wins, so a specific Summer season overrides an All Year season.
