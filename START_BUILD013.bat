@@ -12,11 +12,40 @@ echo First run may take a minute while the web components install.
 echo This build runs ONLY on this computer at http://127.0.0.1:8000
 echo.
 
+set "PYTHON_CMD="
+
 where py >nul 2>nul
 if %errorlevel%==0 (
-    set "PYTHON_CMD=py -3.11"
-) else (
-    set "PYTHON_CMD=python"
+    py -3.13 -c "import sys; raise SystemExit(0 if sys.version_info >= (3,11) else 1)" >nul 2>nul
+    if not errorlevel 1 set "PYTHON_CMD=py -3.13"
+
+    if not defined PYTHON_CMD (
+        py -3.12 -c "import sys; raise SystemExit(0 if sys.version_info >= (3,11) else 1)" >nul 2>nul
+        if not errorlevel 1 set "PYTHON_CMD=py -3.12"
+    )
+
+    if not defined PYTHON_CMD (
+        py -3.11 -c "import sys; raise SystemExit(0 if sys.version_info >= (3,11) else 1)" >nul 2>nul
+        if not errorlevel 1 set "PYTHON_CMD=py -3.11"
+    )
+)
+
+if not defined PYTHON_CMD (
+    where python >nul 2>nul
+    if not errorlevel 1 (
+        python -c "import sys; raise SystemExit(0 if sys.version_info >= (3,11) else 1)" >nul 2>nul
+        if not errorlevel 1 set "PYTHON_CMD=python"
+    )
+)
+
+if not defined PYTHON_CMD goto :python_error
+
+for /f "delims=" %%V in ('%PYTHON_CMD% --version 2^>^&1') do set "PYTHON_VERSION=%%V"
+echo Using %PYTHON_VERSION%
+
+if "%DIRECTBOOKING_LAUNCHER_TEST%"=="1" (
+    echo Launcher Python detection test passed.
+    exit /b 0
 )
 
 if not exist ".venv\Scripts\python.exe" (
@@ -42,8 +71,17 @@ goto :end
 
 :python_error
 echo.
-echo ERROR: Python 3.11 could not be started.
-echo Build 013 needs Python 3.11 installed on this computer.
+echo ERROR: I could not find a suitable Python installation.
+echo Build 013 can use Python 3.11, 3.12 or 3.13.
+echo.
+echo If Python is already installed, make sure it is available to Windows.
+echo Otherwise install a current Python 3 version and run this starter again.
+echo.
+where py >nul 2>nul
+if not errorlevel 1 (
+    echo Python versions Windows can currently see:
+    py -0p
+)
 pause
 goto :end
 
