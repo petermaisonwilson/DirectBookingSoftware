@@ -46,8 +46,7 @@ def main() -> None:
         r = client.post('/setup/element-types', data={'csrf': token, 'id': '', 'name': 'Camping'}, follow_redirects=False)
         assert r.status_code == 303
         r = client.post('/setup/element-types', data={'csrf': token, 'id': '', 'name': 'camping'}, follow_redirects=False)
-        assert r.status_code == 400
-        assert 'already exists' in r.text
+        assert r.status_code == 400 and 'already exists' in r.text
 
         page = client.get('/setup/elements')
         assert '<select' in page.text and 'name="element_type"' in page.text
@@ -75,11 +74,32 @@ def main() -> None:
         r = client.post('/setup/pricing', data={'csrf': token, 'year': '2026', price_key: '20.00'}, follow_redirects=False)
         assert r.status_code == 303
 
-        r = client.post('/setup/occupancy', data={
+        # Occupancy and Person prices share one compact grid. No blanks; zero is valid.
+        incomplete_occupancy = {
             'csrf': token, 'year': '2026', f"t_{element['id']}": '6',
-            f"p_{element['id']}_{adult['id']}": '6', f"p_{element['id']}_{child['id']}": '0',
-        }, follow_redirects=False)
+            f"p_{element['id']}_{adult['id']}": '6', f"pr_{element['id']}_{adult['id']}": '',
+            f"p_{element['id']}_{child['id']}": '0', f"pr_{element['id']}_{child['id']}": '0',
+        }
+        r = client.post('/setup/occupancy', data=incomplete_occupancy, follow_redirects=False)
+        assert r.status_code == 400
+        assert 'Person € box' in r.text and 'border:2px solid #b42318' in r.text
+        with db.connect() as c:
+            assert c.execute('SELECT COUNT(*) n FROM setup_occupancy WHERE company_id=? AND year=2026', (forest,)).fetchone()['n'] == 0
+            assert c.execute('SELECT COUNT(*) n FROM setup_person_prices WHERE company_id=? AND year=2026', (forest,)).fetchone()['n'] == 0
+
+        occupancy = {
+            'csrf': token, 'year': '2026', f"t_{element['id']}": '6',
+            f"p_{element['id']}_{adult['id']}": '6', f"pr_{element['id']}_{adult['id']}": '8.00',
+            f"p_{element['id']}_{child['id']}": '0', f"pr_{element['id']}_{child['id']}": '0',
+        }
+        r = client.post('/setup/occupancy', data=occupancy, follow_redirects=False)
         assert r.status_code == 303
+        page = client.get('/setup/occupancy?year=2026')
+        assert 'Occupancy &amp; Person pricing' in page.text or 'Occupancy & Person pricing' in page.text
+        assert '<th style="text-align:center">Max</th><th style="text-align:center">€</th>' in page.text
+        with db.connect() as c:
+            assert float(c.execute('SELECT rate FROM setup_person_prices WHERE company_id=? AND year=2026 AND element_id=? AND person_type_id=?', (forest, element['id'], adult['id'])).fetchone()['rate']) == 8.0
+            assert float(c.execute('SELECT rate FROM setup_person_prices WHERE company_id=? AND year=2026 AND element_id=? AND person_type_id=?', (forest, element['id'], child['id'])).fetchone()['rate']) == 0.0
 
         payload = {
             'csrf': token, 'year': '2026', f"ty_{dog['id']}_Camping": 'on',
@@ -94,23 +114,30 @@ def main() -> None:
             f"person_{adult['id']}": '2', f"person_{child['id']}": '0', f"addon_{dog['id']}": '1',
         }
         r = client.post('/setup/price-test', data=calc, follow_redirects=False)
-        assert r.status_code == 400
-        assert 'unavailable' in r.text.lower()
+        assert r.status_code == 400 and 'unavailable' in r.text.lower()
 
         payload[f"ov_{element['id']}_{dog['id']}"] = 'I'
         r = client.post('/setup/addon-rules', data=payload, follow_redirects=False)
         assert r.status_code == 303
         r = client.post('/setup/price-test', data=calc, follow_redirects=False)
         assert r.status_code == 200
-        assert 'Total: €46.00' in r.text
+        assert 'Total: €78.00' in r.text
+        assert 'Adult' in r.text and '€8.00' in r.text
         assert 'Element Type default Y' in r.text
+        assert 'max="2"' in r.text
         assert '2 night(s), 2 person(s)' in r.text
+
+        # Browser UI caps at 2, and the server independently rejects a forged quantity of 3.
+        calc[f"addon_{dog['id']}"] = '3'
+        r = client.post('/setup/price-test', data=calc, follow_redirects=False)
+        assert r.status_code == 400
+        assert 'minimum/maximum quantity' in r.text
+        assert 'max="2"' in r.text
 
         calc[f"person_{child['id']}"] = '1'
         calc[f"addon_{dog['id']}"] = '0'
         r = client.post('/setup/price-test', data=calc, follow_redirects=False)
-        assert r.status_code == 400
-        assert 'occupancy rules' in r.text
+        assert r.status_code == 400 and 'occupancy rules' in r.text
 
         with db.connect() as c:
             type_id = int(c.execute("SELECT id FROM setup_element_types WHERE company_id=? AND name='Camping'", (forest,)).fetchone()['id'])
@@ -125,6 +152,7 @@ def main() -> None:
         with db.connect() as c:
             assert c.execute('SELECT copied_from_year FROM setup_years WHERE company_id=? AND year=2027', (forest,)).fetchone()['copied_from_year'] == 2026
             assert c.execute('SELECT COUNT(*) n FROM setup_element_rates WHERE company_id=? AND year=2027', (forest,)).fetchone()['n'] == 1
+            assert c.execute('SELECT COUNT(*) n FROM setup_person_prices WHERE company_id=? AND year=2027', (forest,)).fetchone()['n'] == 2
 
         client.post('/logout', follow_redirects=False)
         login(client, 'operator@riverside.test', 'Operator013!')
@@ -134,7 +162,7 @@ def main() -> None:
         login(client, 'customer@forestview.test', 'Customer013!')
         assert client.get('/setup').status_code == 403
 
-    print('Online Build 015 Element Types / validation / price-rules test: passed')
+    print('Online Build 015 Element Types / Occupancy Person pricing / Add-on cap / price-rules test: passed')
 
 
 if __name__ == '__main__':
