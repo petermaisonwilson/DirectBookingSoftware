@@ -1,116 +1,14 @@
-name: Direct Booking Software Online Build 015
+name: Legacy Direct Booking Online Build 015
 
 on:
-  push:
-    branches:
-      - main
   workflow_dispatch:
 
 jobs:
-  test-online-windows:
+  legacy-build-015:
     runs-on: windows-latest
-    timeout-minutes: 20
     steps:
-      - name: Checkout source
-        uses: actions/checkout@v4
-
-      - name: Set up Python 3.11
-        uses: actions/setup-python@v5
-        with:
-          python-version: "3.11"
-
-      - name: Verify Build 015 online files
+      - name: Legacy notice
         shell: pwsh
         run: |
-          $required = @(
-            "online/__init__.py",
-            "online/security.py",
-            "online/database.py",
-            "online/app.py",
-            "online/setup015.py",
-            "online/setup015_core.py",
-            "online/setup015_catalogue.py",
-            "online/setup015_annual.py",
-            "online/setup015_calculator.py",
-            "run_online.py",
-            "START_BUILD015.bat",
-            "requirements-online.txt",
-            "ONLINE_README.md",
-            "tests/online_smoke_test.py",
-            "tests/online_setup015_test.py",
-            "ACCEPTANCE_TEST.md"
-          )
-          foreach ($file in $required) {
-            if (-not (Test-Path $file)) { throw "Missing Build 015 online file: $file" }
-          }
-
-      - name: Test Windows starter Python detection
-        shell: cmd
-        env:
-          DIRECTBOOKING_LAUNCHER_TEST: "1"
-        run: START_BUILD015.bat
-
-      - name: Install online dependencies
-        shell: pwsh
-        run: |
-          python -m pip install --upgrade pip
-          python -m pip install -r requirements-online.txt
-          if ($LASTEXITCODE -ne 0) { throw "Online dependency installation failed" }
-
-      - name: Verify imports
-        shell: pwsh
-        run: |
-          python -c "from online.app import app, create_app, can_view_booking_log; from online.database import OnlineDatabase; from online.setup015 import register_setup015, copy_previous_year; assert app and create_app and can_view_booking_log and OnlineDatabase and register_setup015 and copy_previous_year; print('Online Build 015 imports: passed')"
-          if ($LASTEXITCODE -ne 0) { throw "Online application import verification failed" }
-
-      - name: Run foundation smoke test
-        shell: pwsh
-        run: |
-          python tests/online_smoke_test.py
-          if ($LASTEXITCODE -ne 0) { throw "Online Build 015 foundation smoke test failed" }
-
-      - name: Run Build 015 setup and price-rules test
-        shell: pwsh
-        run: |
-          python tests/online_setup015_test.py
-          if ($LASTEXITCODE -ne 0) { throw "Online Build 015 setup test failed" }
-
-      - name: Launch local server and health check
-        shell: pwsh
-        run: |
-          $env:DIRECTBOOKING_NO_BROWSER = "1"
-          $env:DIRECTBOOKING_DB = "$env:RUNNER_TEMP\directbooking015-health.db"
-          $process = Start-Process -FilePath "python" -ArgumentList "run_online.py" -PassThru
-          try {
-            $ok = $false
-            for ($i = 0; $i -lt 30; $i++) {
-              Start-Sleep -Seconds 1
-              try {
-                $response = Invoke-RestMethod -Uri "http://127.0.0.1:8000/health" -TimeoutSec 2
-                if ($response.status -eq "ok" -and $response.build -eq "015") { $ok = $true; break }
-              } catch {}
-            }
-            if (-not $ok) { throw "Local Build 015 server did not pass health check" }
-          } finally {
-            if (-not $process.HasExited) { Stop-Process -Id $process.Id -Force }
-          }
-          Write-Host "Online Build 015 local server health check passed"
-
-      - name: Stage Build 015 artifact
-        shell: pwsh
-        run: |
-          New-Item -ItemType Directory -Force "artifact\online" | Out-Null
-          Copy-Item "online\*.py" "artifact\online\" -Force
-          Copy-Item "run_online.py" "artifact\run_online.py" -Force
-          Copy-Item "START_BUILD015.bat" "artifact\START_BUILD015.bat" -Force
-          Copy-Item "requirements-online.txt" "artifact\requirements-online.txt" -Force
-          Copy-Item "ONLINE_README.md" "artifact\ONLINE_README.md" -Force
-          Copy-Item "ACCEPTANCE_TEST.md" "artifact\ACCEPTANCE_TEST.md" -Force
-
-      - name: Upload Online Build 015 artifact
-        uses: actions/upload-artifact@v4
-        with:
-          name: DirectBookingSoftware-Online-Build015
-          path: artifact/
-          if-no-files-found: error
-          retention-days: 30
+          Write-Host "Build 015 is retained as the proven prototype/reference."
+          Write-Host "The active product direction is Direct Booking Web V1."
