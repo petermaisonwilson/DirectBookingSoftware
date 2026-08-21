@@ -1,0 +1,90 @@
+name: Direct Booking Web V1 Foundation
+
+on:
+  push:
+    branches:
+      - web-v1-foundation
+  workflow_dispatch:
+
+jobs:
+  test-web-v1-windows:
+    runs-on: windows-latest
+    timeout-minutes: 20
+    steps:
+      - name: Checkout source
+        uses: actions/checkout@v4
+
+      - name: Set up Python 3.11
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+
+      - name: Verify Web V1 foundation files
+        shell: pwsh
+        run: |
+          $required = @(
+            "online/webv1.py",
+            "online/webv1_core.py",
+            "online/webv1_routes.py",
+            "online/setup015.py",
+            "run_online.py",
+            "START_WEB_V1.bat",
+            "requirements-online.txt",
+            "tests/web_v1_foundation_test.py",
+            "tests/online_setup015_test.py"
+          )
+          foreach ($file in $required) {
+            if (-not (Test-Path $file)) { throw "Missing Web V1 file: $file" }
+          }
+
+      - name: Test Windows starter Python detection
+        shell: cmd
+        env:
+          DIRECTBOOKING_LAUNCHER_TEST: "1"
+        run: START_WEB_V1.bat
+
+      - name: Install online dependencies
+        shell: pwsh
+        run: |
+          python -m pip install --upgrade pip
+          python -m pip install -r requirements-online.txt
+          if ($LASTEXITCODE -ne 0) { throw "Web dependency installation failed" }
+
+      - name: Verify Web V1 imports
+        shell: pwsh
+        run: |
+          python -c "from online.app import app; from online.webv1 import register_web_v1, initialise_web_v1; assert app and register_web_v1 and initialise_web_v1; print('Web V1 imports: passed')"
+          if ($LASTEXITCODE -ne 0) { throw "Web V1 import verification failed" }
+
+      - name: Run proven Setup regression test
+        shell: pwsh
+        run: |
+          python tests/online_setup015_test.py
+          if ($LASTEXITCODE -ne 0) { throw "Proven Setup regression test failed" }
+
+      - name: Run Web V1 foundation test
+        shell: pwsh
+        run: |
+          python tests/web_v1_foundation_test.py
+          if ($LASTEXITCODE -ne 0) { throw "Web V1 foundation test failed" }
+
+      - name: Launch local server and health check
+        shell: pwsh
+        run: |
+          $env:DIRECTBOOKING_NO_BROWSER = "1"
+          $env:DIRECTBOOKING_DB = "$env:RUNNER_TEMP\directbooking-web-v1-health.db"
+          $process = Start-Process -FilePath "python" -ArgumentList "run_online.py" -PassThru
+          try {
+            $ok = $false
+            for ($i = 0; $i -lt 30; $i++) {
+              Start-Sleep -Seconds 1
+              try {
+                $response = Invoke-RestMethod -Uri "http://127.0.0.1:8000/health" -TimeoutSec 2
+                if ($response.status -eq "ok" -and $response.build -eq "WEB-V1") { $ok = $true; break }
+              } catch {}
+            }
+            if (-not $ok) { throw "Web V1 local server did not pass health check" }
+          } finally {
+            if (-not $process.HasExited) { Stop-Process -Id $process.Id -Force }
+          }
+          Write-Host "Web V1 local server health check passed"
