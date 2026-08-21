@@ -1,21 +1,13 @@
 # Direct Booking Software
 
-Windows desktop booking-handling software for small accommodation and activity operators.
+Direct Booking Software is now being developed as a **fully web-based booking and operations system** for campsites and other leisure businesses.
 
-## Build 001
+The proven Build 015 Setup engine remains the reference for Elements, Element Types, Person Types, annual/seasonal pricing, occupancy, Person pricing and Add-on rules.
 
-Build 001 establishes the desktop application foundation:
+The active product direction is **Web V1**:
 
-- Python 3.11
-- PySide6 / Qt desktop UI
-- SQLite development database
-- Main navigation for Dashboard, Enquiries, Availability, Bookings, Finance and Setup
-- Database schema for companies, users, elements, seasons, enquiries, offers, bookings, transactions and audit log
-- GitHub Actions Windows build
-- PyInstaller packaging to `DirectBookingSoftware.exe`
+Customer → Enquiry → Offer → Booking → Arrival / Self Check-in
 
-This build is intentionally a foundation build. Booking rules and the full workflows will be migrated into the desktop application in later builds.
+The Web V1 foundation also supports walk-in/unbooked arrivals and permanent Client isolation from the outset.
 
-## Development architecture
-
-The local SQLite database is a development-stage storage layer. Database access is isolated so that the long-term product can move to a central secure API and PostgreSQL without replacing the UI.
+See `WEB_V1_FOUNDATION.md` for the current foundation milestone.
