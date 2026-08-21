@@ -1,3 +1,3 @@
-"""Direct Booking Software online application (Build 015)."""
+"""Direct Booking Software fully web-based application."""
 
-BUILD = "015"
+BUILD = "WEB-V1"
