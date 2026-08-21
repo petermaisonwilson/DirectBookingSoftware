@@ -34,7 +34,8 @@ jobs:
             "START_WEB_V1.bat",
             "requirements-online.txt",
             "tests/web_v1_foundation_test.py",
-            "tests/online_setup015_test.py"
+            "tests/online_setup015_test.py",
+            "WEB_V1_FOUNDATION.md"
           )
           foreach ($file in $required) {
             if (-not (Test-Path $file)) { throw "Missing Web V1 file: $file" }
@@ -91,3 +92,21 @@ jobs:
             if (-not $process.HasExited) { Stop-Process -Id $process.Id -Force }
           }
           Write-Host "Web V1 local server health check passed"
+
+      - name: Stage Web V1 foundation artifact
+        shell: pwsh
+        run: |
+          New-Item -ItemType Directory -Force "artifact\online" | Out-Null
+          Copy-Item "online\*.py" "artifact\online\" -Force
+          Copy-Item "run_online.py" "artifact\run_online.py" -Force
+          Copy-Item "START_WEB_V1.bat" "artifact\START_WEB_V1.bat" -Force
+          Copy-Item "requirements-online.txt" "artifact\requirements-online.txt" -Force
+          Copy-Item "WEB_V1_FOUNDATION.md" "artifact\WEB_V1_FOUNDATION.md" -Force
+
+      - name: Upload Web V1 foundation artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: DirectBookingSoftware-Web-V1-Foundation
+          path: artifact/
+          if-no-files-found: error
+          retention-days: 30
