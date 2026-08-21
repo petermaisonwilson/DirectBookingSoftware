@@ -4,6 +4,9 @@ on:
   push:
     branches:
       - web-v1-foundation
+  pull_request:
+    branches:
+      - main
   workflow_dispatch:
 
 jobs:
