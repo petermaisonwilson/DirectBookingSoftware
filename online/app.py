@@ -79,6 +79,7 @@ def layout(title: str, body: str, context=None) -> str:
         )
         links = ['<a href="/dashboard">Dashboard</a>']
         if context["role"] in {"operator", "supervisor"} and (context["company_id"] or context["acting_company_id"]):
+            links.append('<a href="/operations">Operations</a>')
             links.append('<a href="/company/settings">Client settings</a>')
             links.append('<a href="/setup">Setup</a>')
         if context["role"] == "supervisor":
@@ -183,7 +184,7 @@ def create_app(db_path: str | Path | None = None, *, seed_demo: bool = True) -> 
                 stop=f'<form method="post" action="/support/stop"><input type="hidden" name="csrf" value="{esc(context["csrf_token"])}"><button class="warning" type="submit">Leave Support Mode</button></form>'
             body=f"""<h1>Supervisor Dashboard</h1><div class="card"><p>Logged in as <strong>{esc(context['first_name'])} {esc(context['last_name'])}</strong>.</p><p>Choose a client to enter Support Mode. Any changes remain attributed to your Supervisor account.</p>{stop}</div><div class="grid">{''.join(cards)}</div>"""
         elif context["role"] == "operator":
-            body=f"""<h1>{esc(context['company_name'])}</h1><div class="card"><h2>Client / Operator Dashboard</h2><p>Welcome {esc(context['first_name'])}. You can only see this client's information.</p><p><a class="button" href="/company/settings">Open Client settings</a></p><p class="muted">Booking calendar, Client Register and Booking Log arrive in later online builds.</p></div>"""
+            body=f"""<h1>{esc(context['company_name'])}</h1><div class="card"><h2>Client / Operator Dashboard</h2><p>Welcome {esc(context['first_name'])}. You can only see this client's information.</p><p><a class="button" href="/operations">Open Operations</a> <a class="button secondary" href="/company/settings">Client settings</a></p><p class="muted">Client Register and Enquiry Search are available in Operations. Offers, Bookings and the availability calendar follow in later milestones.</p></div>"""
         else:
             body=f"""<h1>Customer Area</h1><div class="card"><p>Welcome {esc(context['first_name'])}.</p><p>This confirms the separate Customer permission level. Customer booking history and availability search will be added later.</p><p><strong>Customers cannot see Booking Logs or the Global Audit.</strong></p></div>"""
         return layout("Dashboard", body, context)
