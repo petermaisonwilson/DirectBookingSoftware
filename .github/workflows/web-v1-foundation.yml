@@ -8,6 +8,7 @@ on:
       - web-v1-enquiry-search
       - web-v1-operations-navigation
       - web-v1-full-enquiry
+      - web-v1-integrated-enquiry
   pull_request:
     branches:
       - main
@@ -101,11 +102,11 @@ jobs:
           python tests/web_v1_operations_navigation_test.py
           if ($LASTEXITCODE -ne 0) { throw "Operations navigation test failed" }
 
-      - name: Run full Enquiry Setup integration test
+      - name: Run integrated New/Edit Enquiry test
         shell: pwsh
         run: |
           python tests/web_v1_full_enquiry_test.py
-          if ($LASTEXITCODE -ne 0) { throw "Full Enquiry Setup integration test failed" }
+          if ($LASTEXITCODE -ne 0) { throw "Integrated New/Edit Enquiry test failed" }
 
       - name: Launch local server and health check
         shell: pwsh
@@ -141,7 +142,7 @@ jobs:
       - name: Upload Web V1 artifact
         uses: actions/upload-artifact@v4
         with:
-          name: DirectBookingSoftware-Web-V1-Full-Enquiry
+          name: DirectBookingSoftware-Web-V1-Integrated-Enquiry
           path: artifact/
           if-no-files-found: error
           retention-days: 30
