@@ -21,10 +21,10 @@ def register_web_v1_routes(app) -> None:
         counts = lifecycle_counts(database, company_id)
         body = f'''<h1>{esc(company['name'])} — Operations</h1>
         <div class="card"><p><strong>Web V1</strong></p>
-        <p>This is the permanent day-to-day booking system. Client Register and New Enquiry are now working; Offers, Bookings, calendar and check-in follow as later milestones.</p></div>
+        <p>This is the permanent day-to-day booking system. Client Register, New Enquiry and Enquiry Search are now working; Offers, Bookings, calendar and check-in follow as later milestones.</p></div>
         <div class="grid">
           <div class="card"><h2>Customers</h2><p><strong>{counts['customer_records']}</strong> customer record(s)</p><p>Find returning customers or create a new Customer.</p><p><a class="button" href="/operations/customers">Open Client Register</a></p></div>
-          <div class="card"><h2>Enquiries</h2><p><strong>{counts['enquiries']}</strong> enquiry record(s)</p><p>New enquiries are created from the Customer record, keeping the complete customer history together.</p><p><a class="button secondary" href="/operations/customers">Find Customer / New Enquiry</a></p></div>
+          <div class="card"><h2>Enquiries</h2><p><strong>{counts['enquiries']}</strong> enquiry record(s)</p><p>Search all enquiries by customer, dates, status or source.</p><p><a class="button" href="/operations/enquiries">Open Enquiry Search</a></p><p><a class="button secondary" href="/operations/customers">Find Customer / New Enquiry</a></p></div>
           <div class="card"><h2>Offers</h2><p><strong>{counts['offers']}</strong> offer record(s)</p><p>Draft, sent, accepted, declined and expired offers with frozen price snapshots.</p></div>
           <div class="card"><h2>Bookings</h2><p><strong>{counts['bookings']}</strong> booking record(s)</p><p>Confirmed bookings with Elements, Persons and Add-ons stored as booking snapshots.</p></div>
           <div class="card"><h2>Arrivals / Self Check-in</h2><p><strong>{counts['arrivals']}</strong> arrival record(s)</p><p>Supports both booked arrivals and walk-in/unbooked arrivals. Self check-in tokens are part of the database foundation.</p></div>
