@@ -86,18 +86,19 @@ def register_addon_when_routes(app) -> None:
         company_id = working_company(context)
         addons = rows(database, 'SELECT * FROM setup_addons WHERE company_id=? ORDER BY active DESC,name COLLATE NOCASE', (company_id,))
         notice = '<div class="ok">Add-on timing choices saved.</div>' if saved else ''
-        body = f'''<h1>Add-on timing choices</h1><p><a href="/setup/addons">← Add-ons</a> &nbsp; <a href="/setup">Setup home</a></p>{notice}
+        body = f'''<h1>Add-on Timings</h1><p><a href="/setup/addons">← Add-ons</a> &nbsp; <a href="/setup">Setup home</a></p>{notice}
         <div class="card"><p>For each Add-on the Client chooses which <strong>When?</strong> choices appear to the Client and Customer. Labels are Client-defined.</p>
-        <p class="muted">For a Breakfast-style Add-on, enable both Every day and Selected days. Existing Add-ons default to Every day only so current behaviour is preserved.</p></div>'''
+        <p class="muted">For a Breakfast-style Add-on, enable both Every day and Selected days. Every day is always shown first; Selected days is second.</p></div>'''
         for addon in addons:
             options = {str(r['option_code']): r for r in when_options(database, company_id, int(addon['id']), active_only=False)}
-            every = options.get('every_day'); selected = options.get('selected_days')
-            body += f'''<div class="card"><h2>{esc(addon['name'])}</h2><p class="muted">Pricing method: {esc(addon['pricing_method'])}</p>
+            every = options.get('every_day')
+            selected = options.get('selected_days')
+            body += f'''<div class="card" id="addon-{int(addon['id'])}"><h2>{esc(addon['name'])}</h2><p class="muted">Pricing method: {esc(addon['pricing_method'])}</p>
             <form method="post" action="/setup/addons/when"><input type="hidden" name="csrf" value="{esc(context['csrf_token'])}"><input type="hidden" name="addon_id" value="{int(addon['id'])}">
             <div class="grid"><div><label><input style="width:auto" type="checkbox" name="every_active" value="1" {'checked' if every and every['active'] else ''}> Enable every-day choice</label><label>Label</label><input name="every_label" value="{esc(every['label'] if every else 'Every day')}"></div>
             <div><label><input style="width:auto" type="checkbox" name="selected_active" value="1" {'checked' if selected and selected['active'] else ''}> Enable selected-days choice</label><label>Label</label><input name="selected_label" value="{esc(selected['label'] if selected else 'Selected days')}"></div></div>
             <p><button type="submit">Save When? choices</button></p></form></div>'''
-        return layout('Add-on timing choices', body, context)
+        return layout('Add-on Timings', body, context)
 
     @app.post('/setup/addons/when')
     async def addon_when_save(request: Request):
@@ -120,8 +121,14 @@ def register_addon_when_routes(app) -> None:
             every_active = 1
         before = [dict(r) for r in when_options(database, company_id, addon_id, active_only=False)]
         with database.connect() as connection:
-            connection.execute("INSERT INTO setup_addon_when_options(company_id,addon_id,option_code,label,active,sort_order) VALUES (?,?,?,?,?,1) ON CONFLICT(company_id,addon_id,option_code) DO UPDATE SET label=excluded.label,active=excluded.active", (company_id, addon_id, 'every_day', every_label, every_active))
-            connection.execute("INSERT INTO setup_addon_when_options(company_id,addon_id,option_code,label,active,sort_order) VALUES (?,?,?,?,?,2) ON CONFLICT(company_id,addon_id,option_code) DO UPDATE SET label=excluded.label,active=excluded.active", (company_id, addon_id, 'selected_days', selected_label, selected_active))
+            connection.execute(
+                "INSERT INTO setup_addon_when_options(company_id,addon_id,option_code,label,active,sort_order) VALUES (?,?,?,?,?,1) ON CONFLICT(company_id,addon_id,option_code) DO UPDATE SET label=excluded.label,active=excluded.active,sort_order=1",
+                (company_id, addon_id, 'every_day', every_label, every_active),
+            )
+            connection.execute(
+                "INSERT INTO setup_addon_when_options(company_id,addon_id,option_code,label,active,sort_order) VALUES (?,?,?,?,?,2) ON CONFLICT(company_id,addon_id,option_code) DO UPDATE SET label=excluded.label,active=excluded.active,sort_order=2",
+                (company_id, addon_id, 'selected_days', selected_label, selected_active),
+            )
         after = [dict(r) for r in when_options(database, company_id, addon_id, active_only=False)]
         audit(database, context, company_id, 'ADDON_WHEN_OPTIONS_SAVED', 'addon', addon_id, before, after)
         return RedirectResponse('/setup/addons/when?saved=1', status_code=303)
@@ -140,7 +147,7 @@ def register_addon_when_routes(app) -> None:
         body = f'''<h1>{esc(company['name'])} — Direct booking preview</h1>
         <div class="card"><p>This is a Customer-facing preview only. It does not create a Booking yet.</p>
         <form method="get" action="/customer/direct-booking-preview"><div class="grid"><div><label>Arrival</label><input id="preview-arrival" type="date" name="arrival" value="{esc(arrival)}"></div><div><label>Departure</label><input id="preview-departure" type="date" name="departure" value="{esc(departure)}"></div></div><p><button type="submit">Show stay</button></p></form></div>
-        <div class="card"><h2>Optional extras</h2><p class="muted">This is how the Customer will see Client-defined Add-on timing choices.</p>'''
+        <div class="card"><h2>Optional extras</h2><p class="muted">This is how the Customer will see the Client-defined Add-on timing choices.</p>'''
         if not dates:
             body += '<p>Choose valid Arrival and Departure dates first.</p>'
         else:
@@ -149,9 +156,23 @@ def register_addon_when_routes(app) -> None:
                 if not opts:
                     continue
                 option_html = ''.join(f'<option value="{esc(o["option_code"])}">{esc(o["label"])}</option>' for o in opts)
-                body += f'''<div style="border-top:1px solid #dde3e9;padding:12px 0"><div class="grid"><div><strong>{esc(addon['name'])}</strong><br><span class="muted">{esc(addon['pricing_method'])}</span></div><div><label>Quantity</label><input class="preview-qty" data-addon="{int(addon['id'])}" type="number" min="0" value="0"></div><div><label>When?</label><select class="preview-when" data-addon="{int(addon['id'])}">{option_html}</select></div></div><div class="preview-days" id="preview-days-{int(addon['id'])}" style="display:none;margin-top:10px"></div></div>'''
+                body += f'''<div style="border-top:1px solid #dde3e9;padding:12px 0"><div class="grid"><div><strong>{esc(addon['name'])}</strong><br><span class="muted">{esc(addon['pricing_method'])}</span></div><div><label>Quantity</label><input class="preview-qty" data-addon="{int(addon['id'])}" type="number" min="0" value="0"></div><div><label>When?</label><select class="preview-when" data-addon="{int(addon['id'])}">{option_html}</select></div></div><div class="preview-days" id="preview-days-{int(addon['id'])}" style="margin-top:10px"></div></div>'''
         body += '</div>'
         if dates:
             dates_json = json.dumps(dates)
-            body += f'''<script>(function(){{const dates={dates_json};function pretty(s){{const p=s.split('-');return new Date(Date.UTC(Number(p[0]),Number(p[1])-1,Number(p[2]))).toLocaleDateString(undefined,{{weekday:'short',day:'numeric',month:'short'}});}}function render(sel){{const aid=sel.dataset.addon;const box=document.getElementById('preview-days-'+aid);if(sel.value!=='selected_days'){{box.style.display='none';box.innerHTML='';return;}}const qty=document.querySelector('.preview-qty[data-addon="'+aid+'"]');const start=Number(qty.value||0);box.innerHTML='<strong>Selected days</strong><div class="grid">'+dates.map(d=>'<div><label>'+pretty(d)+'</label><input type="number" min="0" value="'+start+'"></div>').join('')+'</div>';box.style.display='block';}}document.querySelectorAll('.preview-when').forEach(function(s){{s.addEventListener('change',function(){{render(s);}});render(s);}});}})();</script>'''
+            body += f'''<script>(function(){{
+const dates={dates_json};
+function pretty(s){{const p=s.split('-');return new Date(Date.UTC(Number(p[0]),Number(p[1])-1,Number(p[2]))).toLocaleDateString(undefined,{{weekday:'short',day:'numeric',month:'short'}});}}
+function render(sel){{
+ const aid=sel.dataset.addon;const box=document.getElementById('preview-days-'+aid);const qty=document.querySelector('.preview-qty[data-addon="'+aid+'"]');const base=String(Math.max(0,Number(qty.value||0)));
+ if(sel.value==='selected_days'){{
+   box.innerHTML='<strong>Selected days</strong><p class="muted">Tick only the dates required, then enter the quantity for each selected date.</p><div class="grid">'+dates.map(function(d){{return '<div><label style="display:flex;gap:8px;align-items:center"><input class="preview-day-check" data-addon="'+aid+'" data-date="'+d+'" type="checkbox" style="width:auto"> '+pretty(d)+'</label><input class="preview-day-qty" data-addon="'+aid+'" data-date="'+d+'" type="number" min="0" value="0" disabled></div>';}}).join('')+'</div>';
+   box.querySelectorAll('.preview-day-check').forEach(function(check){{check.addEventListener('change',function(){{const input=box.querySelector('.preview-day-qty[data-date="'+check.dataset.date+'"]');input.disabled=!check.checked;if(!check.checked)input.value='0';}});}});
+ }} else {{
+   box.innerHTML='<strong>Every day</strong><p class="muted">All stay dates are included.</p><div class="grid">'+dates.map(function(d){{return '<div><label style="display:flex;gap:8px;align-items:center"><input type="checkbox" checked disabled style="width:auto"> '+pretty(d)+'</label><input type="number" min="0" value="'+base+'" readonly></div>';}}).join('')+'</div>';
+ }}
+}}
+document.querySelectorAll('.preview-when').forEach(function(s){{s.addEventListener('change',function(){{render(s);}});render(s);}});
+document.querySelectorAll('.preview-qty').forEach(function(q){{q.addEventListener('input',function(){{const s=document.querySelector('.preview-when[data-addon="'+q.dataset.addon+'"]');if(s&&s.value==='every_day')render(s);}});}});
+}})();</script>'''
         return layout('Direct booking preview', body, context)
