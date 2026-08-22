@@ -95,7 +95,8 @@ def main() -> None:
             'source': 'Phone', 'notes': 'Needs electric pitch'
         }, follow_redirects=False)
         assert good.status_code == 303
-        assert good.headers['location'] == f'/operations/customers/{customer_id}?enquiry_created=1'
+        assert good.headers['location'].startswith('/operations/enquiries/')
+        assert good.headers['location'].endswith('?saved=1')
 
         vague = client.post(f'/operations/customers/{customer_id}/enquiries/new', data={
             'csrf': csrf, 'arrival_date': '', 'departure_date': '', 'party_size': '',
