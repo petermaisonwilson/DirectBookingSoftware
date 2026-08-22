@@ -1,7 +1,6 @@
 from __future__ import annotations
 
 from datetime import date
-from urllib.parse import quote_plus
 
 from fastapi import Request
 from fastapi.responses import HTMLResponse, RedirectResponse
