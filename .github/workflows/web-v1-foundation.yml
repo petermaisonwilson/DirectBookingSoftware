@@ -6,6 +6,7 @@ on:
       - web-v1-foundation
       - web-v1-client-register-enquiry
       - web-v1-enquiry-search
+      - web-v1-operations-navigation
   pull_request:
     branches:
       - main
@@ -40,6 +41,7 @@ jobs:
             "tests/web_v1_foundation_test.py",
             "tests/web_v1_client_register_test.py",
             "tests/web_v1_enquiry_search_test.py",
+            "tests/web_v1_operations_navigation_test.py",
             "tests/online_setup015_test.py",
             "WEB_V1_FOUNDATION.md"
           )
@@ -90,6 +92,12 @@ jobs:
           python tests/web_v1_enquiry_search_test.py
           if ($LASTEXITCODE -ne 0) { throw "Enquiry Search test failed" }
 
+      - name: Run Operations navigation test
+        shell: pwsh
+        run: |
+          python tests/web_v1_operations_navigation_test.py
+          if ($LASTEXITCODE -ne 0) { throw "Operations navigation test failed" }
+
       - name: Launch local server and health check
         shell: pwsh
         run: |
@@ -124,7 +132,7 @@ jobs:
       - name: Upload Web V1 artifact
         uses: actions/upload-artifact@v4
         with:
-          name: DirectBookingSoftware-Web-V1-Enquiry-Search
+          name: DirectBookingSoftware-Web-V1-Operations-Navigation
           path: artifact/
           if-no-files-found: error
           retention-days: 30
