@@ -211,7 +211,7 @@ def initialise_web_v1(database) -> None:
     with database.connect() as connection:
         connection.executescript(WEB_V1_SCHEMA)
         connection.execute(
-            "INSERT OR REPLACE INTO web_schema_meta(key,value) VALUES ('schema_version','web-v1-full-enquiry')"
+            "INSERT OR REPLACE INTO web_schema_meta(key,value) VALUES ('schema_version','web-v1-foundation')"
         )
         connection.execute(
             "INSERT OR IGNORE INTO web_schema_meta(key,value) VALUES ('created_at',?)",
