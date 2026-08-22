@@ -1,9 +1,10 @@
-name: Direct Booking Web V1 Foundation
+name: Direct Booking Web V1
 
 on:
   push:
     branches:
       - web-v1-foundation
+      - web-v1-client-register-enquiry
   pull_request:
     branches:
       - main
@@ -22,18 +23,20 @@ jobs:
         with:
           python-version: "3.11"
 
-      - name: Verify Web V1 foundation files
+      - name: Verify Web V1 files
         shell: pwsh
         run: |
           $required = @(
             "online/webv1.py",
             "online/webv1_core.py",
             "online/webv1_routes.py",
+            "online/webv1_customers.py",
             "online/setup015.py",
             "run_online.py",
             "START_WEB_V1.bat",
             "requirements-online.txt",
             "tests/web_v1_foundation_test.py",
+            "tests/web_v1_client_register_test.py",
             "tests/online_setup015_test.py",
             "WEB_V1_FOUNDATION.md"
           )
@@ -57,7 +60,7 @@ jobs:
       - name: Verify Web V1 imports
         shell: pwsh
         run: |
-          python -c "from online.app import app; from online.webv1 import register_web_v1, initialise_web_v1; assert app and register_web_v1 and initialise_web_v1; print('Web V1 imports: passed')"
+          python -c "from online.app import app; from online.webv1 import register_web_v1, initialise_web_v1; from online.webv1_customers import register_customer_routes; assert app and register_web_v1 and initialise_web_v1 and register_customer_routes; print('Web V1 imports: passed')"
           if ($LASTEXITCODE -ne 0) { throw "Web V1 import verification failed" }
 
       - name: Run proven Setup regression test
@@ -71,6 +74,12 @@ jobs:
         run: |
           python tests/web_v1_foundation_test.py
           if ($LASTEXITCODE -ne 0) { throw "Web V1 foundation test failed" }
+
+      - name: Run Client Register and New Enquiry test
+        shell: pwsh
+        run: |
+          python tests/web_v1_client_register_test.py
+          if ($LASTEXITCODE -ne 0) { throw "Client Register and New Enquiry test failed" }
 
       - name: Launch local server and health check
         shell: pwsh
@@ -93,7 +102,7 @@ jobs:
           }
           Write-Host "Web V1 local server health check passed"
 
-      - name: Stage Web V1 foundation artifact
+      - name: Stage Web V1 artifact
         shell: pwsh
         run: |
           New-Item -ItemType Directory -Force "artifact\online" | Out-Null
@@ -103,10 +112,10 @@ jobs:
           Copy-Item "requirements-online.txt" "artifact\requirements-online.txt" -Force
           Copy-Item "WEB_V1_FOUNDATION.md" "artifact\WEB_V1_FOUNDATION.md" -Force
 
-      - name: Upload Web V1 foundation artifact
+      - name: Upload Web V1 artifact
         uses: actions/upload-artifact@v4
         with:
-          name: DirectBookingSoftware-Web-V1-Foundation
+          name: DirectBookingSoftware-Web-V1-Client-Register-Enquiry
           path: artifact/
           if-no-files-found: error
           retention-days: 30
