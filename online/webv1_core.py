@@ -43,6 +43,42 @@ CREATE TABLE IF NOT EXISTS enquiries (
 );
 CREATE INDEX IF NOT EXISTS idx_enquiries_company ON enquiries(company_id, status, created_at);
 
+CREATE TABLE IF NOT EXISTS enquiry_requests (
+    enquiry_id INTEGER PRIMARY KEY,
+    company_id INTEGER NOT NULL,
+    element_type TEXT NOT NULL DEFAULT '',
+    element_id INTEGER,
+    provisional_total REAL,
+    pricing_snapshot_json TEXT NOT NULL DEFAULT '{}',
+    updated_at TEXT NOT NULL,
+    FOREIGN KEY(enquiry_id) REFERENCES enquiries(id) ON DELETE CASCADE,
+    FOREIGN KEY(company_id) REFERENCES companies(id),
+    FOREIGN KEY(element_id) REFERENCES setup_elements(id)
+);
+CREATE INDEX IF NOT EXISTS idx_enquiry_requests_company ON enquiry_requests(company_id, element_type, element_id);
+
+CREATE TABLE IF NOT EXISTS enquiry_people (
+    enquiry_id INTEGER NOT NULL,
+    company_id INTEGER NOT NULL,
+    person_type_id INTEGER NOT NULL,
+    quantity INTEGER NOT NULL DEFAULT 0 CHECK(quantity >= 0),
+    PRIMARY KEY(enquiry_id, person_type_id),
+    FOREIGN KEY(enquiry_id) REFERENCES enquiries(id) ON DELETE CASCADE,
+    FOREIGN KEY(company_id) REFERENCES companies(id),
+    FOREIGN KEY(person_type_id) REFERENCES setup_person_types(id)
+);
+
+CREATE TABLE IF NOT EXISTS enquiry_addons (
+    enquiry_id INTEGER NOT NULL,
+    company_id INTEGER NOT NULL,
+    addon_id INTEGER NOT NULL,
+    quantity INTEGER NOT NULL DEFAULT 0 CHECK(quantity >= 0),
+    PRIMARY KEY(enquiry_id, addon_id),
+    FOREIGN KEY(enquiry_id) REFERENCES enquiries(id) ON DELETE CASCADE,
+    FOREIGN KEY(company_id) REFERENCES companies(id),
+    FOREIGN KEY(addon_id) REFERENCES setup_addons(id)
+);
+
 CREATE TABLE IF NOT EXISTS offers (
     id INTEGER PRIMARY KEY AUTOINCREMENT,
     company_id INTEGER NOT NULL,
@@ -175,7 +211,7 @@ def initialise_web_v1(database) -> None:
     with database.connect() as connection:
         connection.executescript(WEB_V1_SCHEMA)
         connection.execute(
-            "INSERT OR REPLACE INTO web_schema_meta(key,value) VALUES ('schema_version','web-v1-foundation')"
+            "INSERT OR REPLACE INTO web_schema_meta(key,value) VALUES ('schema_version','web-v1-full-enquiry')"
         )
         connection.execute(
             "INSERT OR IGNORE INTO web_schema_meta(key,value) VALUES ('created_at',?)",
