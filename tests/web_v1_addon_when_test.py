@@ -42,34 +42,89 @@ def main() -> None:
             c.execute("INSERT INTO setup_type_addons(company_id,year,element_type,addon_id,allowed,min_qty,max_qty,rate) VALUES (?,?,?,?,?,?,?,?)", (forest, 2026, 'Camping Pitch', breakfast_id, 1, 1, 4, 10.0))
             now = '2026-08-22T10:00:00+00:00'
             customer_id = int(c.execute("INSERT INTO customer_records(company_id,first_name,last_name,email,phone,created_at,updated_at) VALUES (?,?,?,?,?,?,?)", (forest, 'Alice', 'Walker', 'alice@example.test', '', now, now)).lastrowid)
-        # initialise options for Add-on created after app start
+
         from online.webv1_addon_when import initialise_addon_when
         initialise_addon_when(db)
 
         login(client, 'operator@forestview.test', 'Operator013!')
         csrf = csrf_for(client, db)
-        r = client.post('/setup/addons/when', data={'csrf': csrf, 'addon_id': str(breakfast_id), 'every_active': '1', 'every_label': 'Every day', 'selected_active': '1', 'selected_label': 'Selected days'}, follow_redirects=False)
+
+        addons_page = client.get('/setup/addons')
+        assert addons_page.status_code == 200
+        assert 'Add-on Timings' in addons_page.text
+        assert '/setup/addons/when' in addons_page.text
+
+        r = client.post(
+            '/setup/addons/when',
+            data={
+                'csrf': csrf,
+                'addon_id': str(breakfast_id),
+                'every_active': '1',
+                'every_label': 'Every day',
+                'selected_active': '1',
+                'selected_label': 'Selected days',
+            },
+            follow_redirects=False,
+        )
         assert r.status_code == 303
+
         page = client.get(f'/operations/customers/{customer_id}/enquiries/new')
-        assert 'When?' in page.text and 'Selected days' in page.text
-        payload = {'csrf': csrf, 'arrival_date': '2026-09-10', 'departure_date': '2026-09-14', 'party_size': '', 'source': 'Phone', 'notes': '', 'element_type': 'Camping Pitch', 'element_id': str(element_id), f'person_{adult_id}': '4', f'addon_{breakfast_id}': '4', f'addon_when_{breakfast_id}': 'selected_days', f'addon_day_{breakfast_id}_2026-09-10': '2', f'addon_day_{breakfast_id}_2026-09-11': '4', f'addon_day_{breakfast_id}_2026-09-12': '4', f'addon_day_{breakfast_id}_2026-09-13': '4'}
+        assert page.status_code == 200
+        assert 'When?' in page.text
+        assert page.text.index('Every day') < page.text.index('Selected days')
+        assert 'addon-day-check' in page.text
+        assert 'Quantities start at 0' in page.text
+
+        payload = {
+            'csrf': csrf,
+            'arrival_date': '2026-09-10',
+            'departure_date': '2026-09-14',
+            'party_size': '',
+            'source': 'Phone',
+            'notes': '',
+            'element_type': 'Camping Pitch',
+            'element_id': str(element_id),
+            f'person_{adult_id}': '4',
+            f'addon_{breakfast_id}': '4',
+            f'addon_when_{breakfast_id}': 'selected_days',
+            f'addon_day_{breakfast_id}_2026-09-10': '2',
+            f'addon_day_{breakfast_id}_2026-09-12': '4',
+        }
         calc = client.post(f'/operations/customers/{customer_id}/enquiries/new', data=payload | {'action': 'calculate'})
         assert calc.status_code == 200
-        assert 'Calculated provisional total: €320.00' in calc.text
+        # 4 nights x 25 = 100; 4 adults x 5 x 4 = 80; selected breakfasts 2+4 x 10 = 60.
+        assert 'Calculated provisional total: €240.00' in calc.text
+        assert '2026-09-10: 2' in calc.text
+        assert '2026-09-12: 4' in calc.text
+        assert '2026-09-11:' not in calc.text
+        assert '2026-09-13:' not in calc.text
+
         saved = client.post(f'/operations/customers/{customer_id}/enquiries/new', data=payload | {'action': 'save'}, follow_redirects=False)
         assert saved.status_code == 303
         enquiry_id = int(saved.headers['location'].split('/')[3].split('?')[0])
         with db.connect() as c:
-            assert int(c.execute('SELECT quantity FROM enquiry_addons WHERE enquiry_id=? AND addon_id=?', (enquiry_id, breakfast_id)).fetchone()['quantity']) == 14
+            assert int(c.execute('SELECT quantity FROM enquiry_addons WHERE enquiry_id=? AND addon_id=?', (enquiry_id, breakfast_id)).fetchone()['quantity']) == 6
             daily = c.execute('SELECT service_date,quantity FROM enquiry_addon_days WHERE enquiry_id=? AND addon_id=? ORDER BY service_date', (enquiry_id, breakfast_id)).fetchall()
-            assert [int(x['quantity']) for x in daily] == [2,4,4,4]
+            assert [(str(x['service_date']), int(x['quantity'])) for x in daily] == [('2026-09-10', 2), ('2026-09-12', 4)]
+
+        edit = client.get(f'/operations/enquiries/{enquiry_id}/edit')
+        assert edit.status_code == 200
+        assert 'Selected days' in edit.text
+        assert 'Quantities start at 0' in edit.text
+
         client.post('/logout', follow_redirects=False)
         login(client, 'customer@forestview.test', 'Customer013!')
         preview = client.get('/customer/direct-booking-preview?arrival=2026-09-10&departure=2026-09-14')
         assert preview.status_code == 200
-        assert 'Direct booking preview' in preview.text and 'Breakfast' in preview.text and 'When?' in preview.text and 'Selected days' in preview.text
+        assert 'Direct booking preview' in preview.text
+        assert 'Breakfast' in preview.text
+        assert 'When?' in preview.text
+        assert preview.text.index('Every day') < preview.text.index('Selected days')
+        assert 'preview-day-check' in preview.text
+        assert 'value="0" disabled' in preview.text
+        assert 'All stay dates are included.' in preview.text
 
-    print('Direct Booking Web V1 Add-on When test: passed')
+    print('Direct Booking Web V1 Add-on Timing UX test: passed')
 
 
 if __name__ == '__main__':
