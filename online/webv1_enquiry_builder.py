@@ -100,7 +100,7 @@ def _validate_dates(values: dict[str, str]) -> tuple[date | None, date | None, s
     arrival = values.get('arrival_date', '').strip()
     departure = values.get('departure_date', '').strip()
     if bool(arrival) != bool(departure):
-        return None, None, 'Enter both Arrival and Departure dates, or leave both blank.'
+        return None, None, 'Enter both arrival and departure dates, or leave both blank.'
     if not arrival:
         return None, None, ''
     try:
