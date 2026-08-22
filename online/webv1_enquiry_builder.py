@@ -107,9 +107,9 @@ def _validate_dates(values: dict[str, str]) -> tuple[date | None, date | None, s
         start = date.fromisoformat(arrival)
         end = date.fromisoformat(departure)
     except ValueError:
-        return None, None, 'Enter valid Arrival and Departure dates.'
+        return None, None, 'Enter valid arrival and departure dates.'
     if end <= start:
-        return None, None, 'Departure date must be after Arrival date.'
+        return None, None, 'Departure date must be after arrival date.'
     return start, end, ''
 
 
