@@ -107,7 +107,7 @@ def main() -> None:
 
         client.post('/logout', follow_redirects=False)
         login(client, 'customer@forestview.test', 'Customer013!')
-        preview = client.get('/customer/direct-booking-preview?arrival=2026-09-10&departure=2026-09-14')
+        preview = client.get(f'/customer/direct-booking-preview?arrival=2026-09-10&departure=2026-09-14&element={element_id}')
         assert preview.status_code == 200
         assert 'Direct booking preview' in preview.text
         assert 'Breakfast' in preview.text
