@@ -228,7 +228,7 @@ def _form_page(database, context, customer, values: dict[str,str], *, enquiry_id
 <div class="card"><h2>People</h2><div class="grid">'''
     for person in people:
         key=f'person_{int(person["id"])}'; body+=f'<div><label>{esc(person["name"])} <span class="muted" id="person-rate-{int(person["id"])}"></span></label><input class="person-input" data-person-id="{int(person["id"])}" style="{style(key)}" type="number" min="0" name="{key}" value="{esc(values.get(key,"0"))}"></div>'
-    body+='''</div></div><div class="card"><h2>Add-ons</h2><p class="muted">Choose an Add-on from the list. ✕ N/A = Not available for selected Element.</p><div style="display:grid;grid-template-columns:minmax(0,2fr) minmax(220px,1fr);gap:18px;align-items:start"><div id="selected-addons"><p class="muted" id="no-addons">No Add-ons selected.</p>'''
+    body+='''</div></div><div class="card"><h2>Add-ons</h2><p class="muted">Choose an Add-on from the list. ✕ N/A = Not available for selected Element. Selected days: Leave a date at 0 if none are required.</p><div style="display:grid;grid-template-columns:minmax(0,2fr) minmax(220px,1fr);gap:18px;align-items:start"><div id="selected-addons"><p class="muted" id="no-addons">No Add-ons selected.</p>'''
     for addon in addons:
         aid=int(addon['id']); key=f'addon_{aid}'; options=when_map.get(str(aid),[]); selected_when=values.get(f'addon_when_{aid}',options[0]['code'] if options else 'every_day'); option_html=''.join(f'<option value="{esc(o["code"])}" {"selected" if o["code"]==selected_when else ""}>{esc(o["label"])}</option>' for o in options); selected=values.get(f'addon_selected_{aid}')=='1' or _int_or_zero(values.get(key))>0
         if addon_modes.get(str(aid),'single')=='person_type':
