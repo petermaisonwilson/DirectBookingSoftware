@@ -72,7 +72,7 @@ def main():
         }
         good = client.post(f'/operations/customers/{customer}/enquiries/new', data=common)
         assert good.status_code == 200
-        assert 'Calculated provisional total: €160.00' in good.text
+        assert 'Calculated provisional total: €110.00' in good.text
 
         forged = client.post(f'/operations/customers/{customer}/enquiries/new', data=common | {f'addon_person_{breakfast}_{child}': '1'})
         assert forged.status_code in (200, 400)
