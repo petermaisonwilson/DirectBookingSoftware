@@ -11,6 +11,7 @@ on:
       - web-v1-integrated-enquiry
       - web-v1-addon-when
       - web-v1-persistent-data
+      - web-v1-addon-person-pricing
   pull_request:
     branches:
       - main
@@ -40,6 +41,7 @@ jobs:
             "online/webv1_enquiries.py",
             "online/webv1_enquiry_builder.py",
             "online/webv1_addon_when.py",
+            "online/webv1_addon_person.py",
             "online/setup015.py",
             "run_online.py",
             "START_WEB_V1.bat",
@@ -50,6 +52,7 @@ jobs:
             "tests/web_v1_operations_navigation_test.py",
             "tests/web_v1_full_enquiry_test.py",
             "tests/web_v1_addon_when_test.py",
+            "tests/web_v1_addon_person_pricing_test.py",
             "tests/web_v1_persistent_data_test.py",
             "tests/online_setup015_test.py",
             "WEB_V1_FOUNDATION.md"
@@ -74,7 +77,7 @@ jobs:
       - name: Verify Web V1 imports
         shell: pwsh
         run: |
-          python -c "from online.app import app; from online.webv1 import register_web_v1, initialise_web_v1; from online.webv1_customers import register_customer_routes; from online.webv1_enquiries import register_enquiry_routes; from online.webv1_enquiry_builder import register_enquiry_builder_routes; from online.webv1_addon_when import register_addon_when_routes; assert app and register_web_v1 and initialise_web_v1 and register_customer_routes and register_enquiry_routes and register_enquiry_builder_routes and register_addon_when_routes; print('Web V1 imports: passed')"
+          python -c "from online.app import app; from online.webv1 import register_web_v1, initialise_web_v1; from online.webv1_customers import register_customer_routes; from online.webv1_enquiries import register_enquiry_routes; from online.webv1_enquiry_builder import register_enquiry_builder_routes; from online.webv1_addon_when import register_addon_when_routes; from online.webv1_addon_person import initialise_addon_person; assert app and register_web_v1 and initialise_web_v1 and register_customer_routes and register_enquiry_routes and register_enquiry_builder_routes and register_addon_when_routes and initialise_addon_person; print('Web V1 imports: passed')"
           if ($LASTEXITCODE -ne 0) { throw "Web V1 import verification failed" }
 
       - name: Run proven Setup regression test
@@ -119,6 +122,12 @@ jobs:
           python tests/web_v1_addon_when_test.py
           if ($LASTEXITCODE -ne 0) { throw "Add-on When test failed" }
 
+      - name: Run Add-on Person Type pricing test
+        shell: pwsh
+        run: |
+          python tests/web_v1_addon_person_pricing_test.py
+          if ($LASTEXITCODE -ne 0) { throw "Add-on Person Type pricing test failed" }
+
       - name: Run persistent local data test
         shell: pwsh
         run: |
@@ -159,7 +168,7 @@ jobs:
       - name: Upload Web V1 artifact
         uses: actions/upload-artifact@v4
         with:
-          name: DirectBookingSoftware-Web-V1-Persistent-Data
+          name: DirectBookingSoftware-Web-V1-Addon-Person-Pricing
           path: artifact/
           if-no-files-found: error
           retention-days: 30
