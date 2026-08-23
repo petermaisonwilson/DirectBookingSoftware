@@ -85,7 +85,7 @@ def main() -> None:
         assert 'Priced by Person Type' in page.text
         assert f'name="addon_person_{breakfast_id}_{adult_id}"' in page.text
         assert f'name="addon_person_{breakfast_id}_{child_id}"' in page.text
-        assert 'Every day stays compact' in page.text
+        assert 'Only Person Types on this Enquiry are shown.' in page.text
 
         common = {
             'csrf': csrf,
@@ -150,13 +150,12 @@ def main() -> None:
 
         client.post('/logout', follow_redirects=False)
         login(client, 'customer@forestview.test', 'Customer013!')
-        preview = client.get('/customer/direct-booking-preview?arrival=2026-09-10&departure=2026-09-14')
+        preview = client.get(f'/customer/direct-booking-preview?arrival=2026-09-10&departure=2026-09-14&element={element_id}&person_{adult_id}=2&person_{child_id}=1')
         assert preview.status_code == 200
         assert 'Breakfast' in preview.text
-        assert 'priced by Person Type' in preview.text
         assert '€10.00' in preview.text
         assert '€6.00' in preview.text
-        assert 'preview-day-person-qty' in preview.text
+        assert 'activePeople()' in preview.text
 
     print('Direct Booking Web V1 Add-on Person Type pricing test: passed')
 

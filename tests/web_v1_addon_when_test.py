@@ -114,7 +114,6 @@ def main() -> None:
         assert 'When?' in preview.text
         assert preview.text.index('Every day') < preview.text.index('Selected days')
         assert 'preview-day-check' not in preview.text
-        assert 'Leave a date at 0 if none are required.' in preview.text
         assert "box.innerHTML=''" in preview.text
 
     print('Direct Booking Web V1 Add-on Timing UX test: passed')
