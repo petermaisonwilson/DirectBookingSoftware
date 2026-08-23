@@ -10,6 +10,7 @@ on:
       - web-v1-full-enquiry
       - web-v1-integrated-enquiry
       - web-v1-addon-when
+      - web-v1-persistent-data
   pull_request:
     branches:
       - main
@@ -49,6 +50,7 @@ jobs:
             "tests/web_v1_operations_navigation_test.py",
             "tests/web_v1_full_enquiry_test.py",
             "tests/web_v1_addon_when_test.py",
+            "tests/web_v1_persistent_data_test.py",
             "tests/online_setup015_test.py",
             "WEB_V1_FOUNDATION.md"
           )
@@ -117,6 +119,12 @@ jobs:
           python tests/web_v1_addon_when_test.py
           if ($LASTEXITCODE -ne 0) { throw "Add-on When test failed" }
 
+      - name: Run persistent local data test
+        shell: pwsh
+        run: |
+          python tests/web_v1_persistent_data_test.py
+          if ($LASTEXITCODE -ne 0) { throw "Persistent local data test failed" }
+
       - name: Launch local server and health check
         shell: pwsh
         run: |
@@ -151,7 +159,7 @@ jobs:
       - name: Upload Web V1 artifact
         uses: actions/upload-artifact@v4
         with:
-          name: DirectBookingSoftware-Web-V1-Addon-When
+          name: DirectBookingSoftware-Web-V1-Persistent-Data
           path: artifact/
           if-no-files-found: error
           retention-days: 30
