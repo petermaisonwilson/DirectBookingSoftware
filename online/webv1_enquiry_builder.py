@@ -28,10 +28,8 @@ def _enquiry(database, company_id: int, enquiry_id: int):
 
 
 def _int_or_zero(value) -> int:
-    try:
-        return int(value or 0)
-    except (TypeError, ValueError):
-        return 0
+    try: return int(value or 0)
+    except (TypeError, ValueError): return 0
 
 
 def _setup_payload(database, company_id: int):
@@ -41,7 +39,8 @@ def _setup_payload(database, company_id: int):
     addons = rows(database, 'SELECT * FROM setup_addons WHERE company_id=? AND active=1 ORDER BY name COLLATE NOCASE', (company_id,))
     years = rows(database, 'SELECT year FROM setup_years WHERE company_id=? ORDER BY year', (company_id,))
     element_json = [{'id': int(e['id']), 'name': str(e['name']), 'type': str(e['element_type'])} for e in elements]
-    people_json = [{'id': int(p['id']), 'name': str(p['name'])} for p in people]
+    people_json = [{'id': int(p['id']), 'name': str(p['name']), 'short': str(p['short_name'] or p['name'])[:8]} for p in people]
+    addon_json = [{'id': int(a['id']), 'name': str(a['name'])} for a in addons]
     rule_map: dict[str, dict[str, dict[str, object]]] = {}
     person_rate_map: dict[str, dict[str, dict[str, float]]] = {}
     for yr_row in years:
@@ -53,10 +52,9 @@ def _setup_payload(database, company_id: int):
                 rule_map[ykey][ekey][str(int(addon['id']))] = {'allowed': bool(rule['allowed']), 'source': str(rule['source']), 'min': rule['min'], 'max': rule['max'], 'rate': rule['rate']}
             for person in people:
                 price = one(database, 'SELECT rate FROM setup_person_prices WHERE company_id=? AND year=? AND element_id=? AND person_type_id=?', (company_id, year, element['id'], person['id']))
-                if price is not None:
-                    person_rate_map[ykey][ekey][str(int(person['id']))] = float(price['rate'])
+                if price is not None: person_rate_map[ykey][ekey][str(int(person['id']))] = float(price['rate'])
     addon_modes, addon_person_rate_map = addon_person_payload(database, company_id, addons, years)
-    return types, elements, people, addons, element_json, people_json, rule_map, person_rate_map, when_payload(database, company_id, addons), addon_modes, addon_person_rate_map
+    return types, elements, people, addons, element_json, people_json, addon_json, rule_map, person_rate_map, when_payload(database, company_id, addons), addon_modes, addon_person_rate_map
 
 
 def _saved_values(database, company_id: int, enquiry) -> dict[str, str]:
@@ -67,15 +65,17 @@ def _saved_values(database, company_id: int, enquiry) -> dict[str, str]:
         values['element_id'] = '' if request_row['element_id'] is None else str(int(request_row['element_id']))
     for row in rows(database, 'SELECT person_type_id,quantity FROM enquiry_people WHERE enquiry_id=? AND company_id=?', (enquiry['id'], company_id)):
         values[f'person_{int(row["person_type_id"])}'] = str(int(row['quantity']))
-    selected_addons: set[int] = set()
+    selected_days: set[int] = set()
     for row in rows(database, 'SELECT addon_id,service_date,quantity FROM enquiry_addon_days WHERE enquiry_id=? AND company_id=?', (enquiry['id'], company_id)):
-        aid = int(row['addon_id']); selected_addons.add(aid); values[f'addon_day_{aid}_{row["service_date"]}'] = str(int(row['quantity']))
+        aid = int(row['addon_id']); selected_days.add(aid); values[f'addon_day_{aid}_{row["service_date"]}'] = str(int(row['quantity']))
     for row in rows(database, 'SELECT addon_id,person_type_id,quantity FROM enquiry_addon_people WHERE enquiry_id=? AND company_id=?', (enquiry['id'], company_id)):
         values[f'addon_person_{int(row["addon_id"])}_{int(row["person_type_id"])}'] = str(int(row['quantity']))
     for row in rows(database, 'SELECT addon_id,person_type_id,service_date,quantity FROM enquiry_addon_person_days WHERE enquiry_id=? AND company_id=?', (enquiry['id'], company_id)):
-        aid = int(row['addon_id']); selected_addons.add(aid); values[f'addon_day_person_{aid}_{int(row["person_type_id"])}_{row["service_date"]}'] = str(int(row['quantity']))
+        aid = int(row['addon_id']); selected_days.add(aid); values[f'addon_day_person_{aid}_{int(row["person_type_id"])}_{row["service_date"]}'] = str(int(row['quantity']))
     for row in rows(database, 'SELECT addon_id,quantity FROM enquiry_addons WHERE enquiry_id=? AND company_id=?', (enquiry['id'], company_id)):
-        aid = int(row['addon_id']); values[f'addon_{aid}'] = str(int(row['quantity'])); values[f'addon_when_{aid}'] = 'selected_days' if aid in selected_addons else 'every_day'
+        aid = int(row['addon_id']); values[f'addon_{aid}'] = str(int(row['quantity'])); values[f'addon_when_{aid}'] = 'selected_days' if aid in selected_days else 'every_day'; values[f'addon_selected_{aid}'] = '1'
+    for row in rows(database, 'SELECT addon_id FROM enquiry_selected_addons WHERE enquiry_id=? AND company_id=? ORDER BY sort_order,addon_id', (enquiry['id'], company_id)):
+        values[f'addon_selected_{int(row["addon_id"])}'] = '1'
     return values
 
 
@@ -107,15 +107,13 @@ def _calculate(database, company_id: int, values: dict[str, str]):
     if start.year != (end - timedelta(days=1)).year: return None, {'arrival_date', 'departure_date'}, 'The current proven pricing engine requires the stay to remain within one pricing year.'
     year = start.year; nights = (end - start).days; service_dates = stay_dates(start.isoformat(), end.isoformat())
     people = rows(database, 'SELECT * FROM setup_person_types WHERE company_id=? AND active=1 ORDER BY name COLLATE NOCASE', (company_id,))
-    people_counts: dict[int, int] = {}; people_total = 0; errors: set[str] = set()
-    person_names = {int(p['id']): str(p['name']) for p in people}
+    people_counts: dict[int, int] = {}; people_total = 0; errors: set[str] = set(); person_names = {int(p['id']): str(p['name']) for p in people}
     for person in people:
         key = f'person_{int(person["id"])}'
         try: qty = valid_whole(values.get(key, '0'))
         except (TypeError, ValueError): qty = 0; errors.add(key)
         people_counts[int(person['id'])] = qty; people_total += qty
-    if people_total <= 0:
-        errors.update(f'person_{int(p["id"])}' for p in people); return None, errors, 'Enter at least one person.'
+    if people_total <= 0: errors.update(f'person_{int(p["id"])}' for p in people); return None, errors, 'Enter at least one person.'
     if errors: return None, errors, 'Correct every highlighted Person quantity.'
     occupancy = one(database, 'SELECT max_total FROM setup_occupancy WHERE company_id=? AND year=? AND element_id=?', (company_id, year, element_id))
     if occupancy is None: return None, set(), 'Occupancy Setup is incomplete for this Element and year.'
@@ -124,274 +122,230 @@ def _calculate(database, company_id: int, values: dict[str, str]):
         limit = one(database, 'SELECT max_count FROM setup_person_limits WHERE company_id=? AND year=? AND element_id=? AND person_type_id=?', (company_id, year, element_id, person['id']))
         if limit is None or people_counts[int(person['id'])] > int(limit['max_count']): errors.add(f'person_{int(person["id"])}')
     if errors: return None, errors, 'The selected people exceed the configured occupancy rules for this Element.'
-    nightly_rates: list[float] = []; season_names: list[str] = []
+    nightly_rates=[]; season_names=[]
     for offset in range(nights):
-        day = start + timedelta(days=offset); season, rate = _element_rate_for_date(database, company_id, element_id, day)
-        if season is None or rate is None: return None, {'arrival_date', 'departure_date'}, f'Pricing Setup is incomplete for {day.isoformat()}.'
+        day=start+timedelta(days=offset); season, rate=_element_rate_for_date(database,company_id,element_id,day)
+        if season is None or rate is None: return None, {'arrival_date','departure_date'}, f'Pricing Setup is incomplete for {day.isoformat()}.'
         nightly_rates.append(rate); season_names.append(str(season['name']))
-    element_amount = _price_element(element['pricing_method'], nightly_rates, people_total); unique_seasons = ', '.join(dict.fromkeys(season_names))
-    lines = [{'item': str(element['name']), 'rule': f'{element["pricing_method"]}; season(s): {unique_seasons}', 'amount': element_amount}]; total = element_amount
+    element_amount=_price_element(element['pricing_method'],nightly_rates,people_total); unique_seasons=', '.join(dict.fromkeys(season_names)); lines=[{'item':str(element['name']),'rule':f'{element["pricing_method"]}; season(s): {unique_seasons}','amount':element_amount}]; total=element_amount
     for person in people:
-        qty = people_counts[int(person['id'])]; price = one(database, 'SELECT rate FROM setup_person_prices WHERE company_id=? AND year=? AND element_id=? AND person_type_id=?', (company_id, year, element_id, person['id']))
-        if price is None: return None, {f'person_{int(person["id"])}'}, 'Person pricing Setup is incomplete for this Element and year.'
+        qty=people_counts[int(person['id'])]; price=one(database,'SELECT rate FROM setup_person_prices WHERE company_id=? AND year=? AND element_id=? AND person_type_id=?',(company_id,year,element_id,person['id']))
+        if price is None: return None,{f'person_{int(person["id"])}'},'Person pricing Setup is incomplete for this Element and year.'
         if qty:
-            rate = float(price['rate']); amount = _price_person(element['pricing_method'], rate, qty, nights); lines.append({'item': str(person['name']), 'rule': f'{qty} × €{rate:.2f}; follows Element pricing method {element["pricing_method"]}', 'amount': amount}); total += amount
-
-    addon_counts: dict[int, int] = {}
-    addon_days: dict[int, dict[str, int]] = {}
-    addon_people: dict[int, dict[int, int]] = {}
-    addon_person_days: dict[int, dict[str, dict[int, int]]] = {}
-    addon_when: dict[int, str] = {}
-    addon_errors: set[str] = set()
-    addons = rows(database, 'SELECT * FROM setup_addons WHERE company_id=? AND active=1 ORDER BY name COLLATE NOCASE', (company_id,))
+            rate=float(price['rate']); amount=_price_person(element['pricing_method'],rate,qty,nights); lines.append({'item':str(person['name']),'rule':f'{qty} × €{rate:.2f}; follows Element pricing method {element["pricing_method"]}','amount':amount}); total+=amount
+    addon_counts={}; addon_days={}; addon_people={}; addon_person_days={}; addon_when={}; addon_errors=set(); selected_ids=[]
+    addons=rows(database,'SELECT * FROM setup_addons WHERE company_id=? AND active=1 ORDER BY name COLLATE NOCASE',(company_id,))
     for addon in addons:
-        aid = int(addon['id']); key = f'addon_{aid}'; active_when = {str(r['option_code']) for r in when_options(database, company_id, aid)}; when_code = values.get(f'addon_when_{aid}', '').strip()
-        if when_code not in active_when: when_code = 'every_day' if 'every_day' in active_when else (next(iter(active_when), 'every_day'))
-        addon_when[aid] = when_code
-        rule = _addon_rule(database, company_id, year, element, aid)
-        mode = addon_person_mode(database, company_id, aid)
-
-        if mode == 'person_type':
-            rates = addon_person_rates(database, company_id, aid, year)
-            method = str(addon['pricing_method'])
-            if method not in {'Per quantity', 'Per quantity per night', 'Per quantity per day'}:
-                return None, set(), f'{addon["name"]} is configured for Person Type pricing but its pricing method is not quantity-based.'
-            if when_code == 'selected_days':
-                date_map: dict[str, dict[int, int]] = {}; total_qty = 0; amount = 0.0; selected_parts: list[str] = []
+        aid=int(addon['id']); key=f'addon_{aid}'; active_when={str(r['option_code']) for r in when_options(database,company_id,aid)}; when_code=values.get(f'addon_when_{aid}','').strip()
+        if when_code not in active_when: when_code='every_day' if 'every_day' in active_when else (next(iter(active_when),'every_day'))
+        rule=_addon_rule(database,company_id,year,element,aid); mode=addon_person_mode(database,company_id,aid)
+        explicit_selected = values.get(f'addon_selected_{aid}') == '1'
+        has_any = _int_or_zero(values.get(key)) > 0 or any(k.startswith(f'addon_day_{aid}_') and _int_or_zero(v)>0 for k,v in values.items()) or any((k.startswith(f'addon_person_{aid}_') or k.startswith(f'addon_day_person_{aid}_')) and _int_or_zero(v)>0 for k,v in values.items())
+        if not (explicit_selected or has_any): continue
+        selected_ids.append(aid); addon_when[aid]=when_code
+        if not rule['allowed']:
+            addon_errors.add(f'addon_selected_{aid}'); continue
+        if mode=='person_type':
+            rates=addon_person_rates(database,company_id,aid,year); method=str(addon['pricing_method'])
+            if method not in {'Per quantity','Per quantity per night','Per quantity per day'}: return None,set(),f'{addon["name"]} is configured for Person Type pricing but its pricing method is not quantity-based.'
+            active_people=[p for p in people if people_counts[int(p['id'])]>0]
+            if when_code=='selected_days':
+                date_map={}; total_qty=0; amount=0.0; selected_parts=[]
                 for service_date in service_dates:
-                    per_person: dict[int, int] = {}; date_total = 0; person_bits: list[str] = []
-                    for person in people:
-                        pid = int(person['id']); day_key = f'addon_day_person_{aid}_{pid}_{service_date}'
-                        try: qty = valid_whole(values.get(day_key, '0'))
-                        except (TypeError, ValueError): qty = 0; addon_errors.add(day_key)
-                        if qty > people_counts[pid]: addon_errors.add(day_key)
+                    per_person={}; date_total=0; person_bits=[]
+                    for person in active_people:
+                        pid=int(person['id']); day_key=f'addon_day_person_{aid}_{pid}_{service_date}'
+                        try: qty=valid_whole(values.get(day_key,'0'))
+                        except (TypeError,ValueError): qty=0; addon_errors.add(day_key)
+                        if qty>people_counts[pid]: addon_errors.add(day_key)
                         if qty:
                             if pid not in rates: addon_errors.add(day_key)
-                            else: amount += rates[pid] * qty
+                            else: amount+=rates[pid]*qty
                             person_bits.append(f'{person_names[pid]} {qty}')
-                        per_person[pid] = qty; date_total += qty; total_qty += qty
-                    if date_total and (not rule['allowed'] or date_total < int(rule['min']) or date_total > int(rule['max'])):
-                        addon_errors.update(f'addon_day_person_{aid}_{int(p["id"])}_{service_date}' for p in people)
-                    date_map[service_date] = per_person
-                    if person_bits: selected_parts.append(f'{service_date}: ' + ', '.join(person_bits))
-                addon_counts[aid] = total_qty; addon_person_days[aid] = date_map; addon_people[aid] = {}; addon_days[aid] = {}
-                if total_qty:
-                    lines.append({'item': str(addon['name']), 'rule': 'Selected days — ' + '; '.join(selected_parts) + '; Person Type prices', 'amount': amount}); total += amount
+                        per_person[pid]=qty; date_total+=qty; total_qty+=qty
+                    if date_total and (date_total<int(rule['min']) or date_total>int(rule['max'])): addon_errors.add(f'addon_selected_{aid}')
+                    date_map[service_date]=per_person
+                    if person_bits: selected_parts.append(f'{service_date}: '+', '.join(person_bits))
+                addon_counts[aid]=total_qty; addon_person_days[aid]=date_map; addon_people[aid]={}; addon_days[aid]={}
+                if total_qty: lines.append({'item':str(addon['name']),'rule':'Selected days — '+'; '.join(selected_parts)+'; Person Type prices','amount':amount}); total+=amount
             else:
-                per_person: dict[int, int] = {}; total_qty = 0; base_amount = 0.0; bits: list[str] = []
-                for person in people:
-                    pid = int(person['id']); person_key = f'addon_person_{aid}_{pid}'
-                    try: qty = valid_whole(values.get(person_key, '0'))
-                    except (TypeError, ValueError): qty = 0; addon_errors.add(person_key)
-                    if qty > people_counts[pid]: addon_errors.add(person_key)
+                per_person={}; total_qty=0; base_amount=0.0; bits=[]
+                for person in active_people:
+                    pid=int(person['id']); person_key=f'addon_person_{aid}_{pid}'
+                    try: qty=valid_whole(values.get(person_key,'0'))
+                    except (TypeError,ValueError): qty=0; addon_errors.add(person_key)
+                    if qty>people_counts[pid]: addon_errors.add(person_key)
                     if qty:
                         if pid not in rates: addon_errors.add(person_key)
-                        else: base_amount += rates[pid] * qty
-                        bits.append(f'{person_names[pid]} {qty} × €{rates.get(pid, 0):.2f}')
-                    per_person[pid] = qty; total_qty += qty
-                if total_qty and (not rule['allowed'] or total_qty < int(rule['min']) or total_qty > int(rule['max'])):
-                    addon_errors.update(f'addon_person_{aid}_{int(p["id"])}' for p in people)
-                amount = base_amount * nights if method in {'Per quantity per night', 'Per quantity per day'} else base_amount
-                addon_counts[aid] = total_qty; addon_people[aid] = per_person; addon_person_days[aid] = {}; addon_days[aid] = {}
-                if total_qty:
-                    lines.append({'item': str(addon['name']), 'rule': f'Every day; Person Type prices; {", ".join(bits)}; {method}', 'amount': amount}); total += amount
+                        else: base_amount+=rates[pid]*qty
+                        bits.append(f'{person_names[pid]} {qty} × €{rates.get(pid,0):.2f}')
+                    per_person[pid]=qty; total_qty+=qty
+                if total_qty and (total_qty<int(rule['min']) or total_qty>int(rule['max'])): addon_errors.add(f'addon_selected_{aid}')
+                amount=base_amount*nights if method in {'Per quantity per night','Per quantity per day'} else base_amount
+                addon_counts[aid]=total_qty; addon_people[aid]=per_person; addon_person_days[aid]={}; addon_days[aid]={}
+                if total_qty: lines.append({'item':str(addon['name']),'rule':f'Every day; Person Type prices; {", ".join(bits)}; {method}','amount':amount}); total+=amount
             continue
-
-        if when_code == 'selected_days':
-            day_quantities: dict[str, int] = {}
+        if when_code=='selected_days':
+            day_quantities={}
             for service_date in service_dates:
-                day_key = f'addon_day_{aid}_{service_date}'
-                try: day_qty = valid_whole(values.get(day_key, '0'))
-                except (TypeError, ValueError): day_qty = 0; addon_errors.add(day_key)
-                if day_qty and (not rule['allowed'] or day_qty < int(rule['min']) or day_qty > int(rule['max'])): addon_errors.add(day_key)
-                day_quantities[service_date] = day_qty
-            total_qty = sum(day_quantities.values()); addon_counts[aid] = total_qty; addon_days[aid] = day_quantities; addon_people[aid] = {}; addon_person_days[aid] = {}
+                day_key=f'addon_day_{aid}_{service_date}'
+                try: day_qty=valid_whole(values.get(day_key,'0'))
+                except (TypeError,ValueError): day_qty=0; addon_errors.add(day_key)
+                if day_qty and (day_qty<int(rule['min']) or day_qty>int(rule['max'])): addon_errors.add(day_key)
+                day_quantities[service_date]=day_qty
+            total_qty=sum(day_quantities.values()); addon_counts[aid]=total_qty; addon_days[aid]=day_quantities; addon_people[aid]={}; addon_person_days[aid]={}
             if total_qty:
-                amount = _selected_days_amount(str(addon['pricing_method']), float(rule['rate']), day_quantities)
-                selected_text = ', '.join(f'{d}: {q}' for d, q in day_quantities.items() if q)
-                lines.append({'item': str(addon['name']), 'rule': f'Selected days — {selected_text}; €{float(rule["rate"]):.2f}', 'amount': amount}); total += amount
+                amount=_selected_days_amount(str(addon['pricing_method']),float(rule['rate']),day_quantities); selected_text=', '.join(f'{d}: {q}' for d,q in day_quantities.items() if q); lines.append({'item':str(addon['name']),'rule':f'Selected days — {selected_text}; €{float(rule["rate"]):.2f}','amount':amount}); total+=amount
         else:
-            try: qty = valid_whole(values.get(key, '0'))
-            except (TypeError, ValueError): qty = 0; addon_errors.add(key)
-            addon_counts[aid] = qty; addon_days[aid] = {}; addon_people[aid] = {}; addon_person_days[aid] = {}
+            try: qty=valid_whole(values.get(key,'0'))
+            except (TypeError,ValueError): qty=0; addon_errors.add(key)
+            addon_counts[aid]=qty; addon_days[aid]={}; addon_people[aid]={}; addon_person_days[aid]={}
             if qty:
-                if not rule['allowed'] or qty < int(rule['min']) or qty > int(rule['max']): addon_errors.add(key); continue
-                amount = _price_addon(addon['pricing_method'], float(rule['rate']), qty, nights); lines.append({'item': str(addon['name']), 'rule': f'Every day; {rule["source"]}; qty {qty}; {addon["pricing_method"]} @ €{float(rule["rate"]):.2f}', 'amount': amount}); total += amount
-    if addon_errors: return None, addon_errors, 'One or more Add-on quantities are unavailable, exceed the people on the Enquiry, have a missing Person Type price, or fall outside the configured minimum/maximum quantity.'
-    return {'element_id': element_id, 'element_type': selected_type, 'element_name': str(element['name']), 'year': year, 'nights': nights, 'people_total': people_total, 'people_counts': people_counts, 'addon_counts': addon_counts, 'addon_days': addon_days, 'addon_people': addon_people, 'addon_person_days': addon_person_days, 'addon_when': addon_when, 'lines': lines, 'total': round(total, 2)}, set(), ''
+                if qty<int(rule['min']) or qty>int(rule['max']): addon_errors.add(key); continue
+                amount=_price_addon(addon['pricing_method'],float(rule['rate']),qty,nights); lines.append({'item':str(addon['name']),'rule':f'Every day; {rule["source"]}; qty {qty}; {addon["pricing_method"]} @ €{float(rule["rate"]):.2f}','amount':amount}); total+=amount
+    for key,value in values.items():
+        if key.startswith('addon_person_') and _int_or_zero(value)>0:
+            pid=_int_or_zero(key.split('_')[-1])
+            if people_counts.get(pid,0)<=0: addon_errors.add(key)
+        if key.startswith('addon_day_person_') and _int_or_zero(value)>0:
+            parts=key.split('_'); pid=_int_or_zero(parts[4])
+            if people_counts.get(pid,0)<=0: addon_errors.add(key)
+    if addon_errors: return None,addon_errors,'One or more Add-on quantities are unavailable, exceed the people on the Enquiry, have a missing Person Type price, or fall outside the configured minimum/maximum quantity.'
+    return {'element_id':element_id,'element_type':selected_type,'element_name':str(element['name']),'year':year,'nights':nights,'people_total':people_total,'people_counts':people_counts,'addon_counts':addon_counts,'addon_days':addon_days,'addon_people':addon_people,'addon_person_days':addon_person_days,'addon_when':addon_when,'selected_addons':selected_ids,'lines':lines,'total':round(total,2)},set(),''
 
 
-def _form_page(database, context, customer, values: dict[str, str], *, enquiry_id: int | None = None, errors=None, message='', result=None):
-    company_id = working_company(context); errors = errors or set()
-    types, elements, people, addons, element_json, people_json, rule_map, person_rate_map, when_map, addon_modes, addon_person_rates_map = _setup_payload(database, company_id)
-    type_names = [str(r['name']) for r in types]; selected_type = values.get('element_type', '').strip(); selected_element_id = _int_or_zero(values.get('element_id'))
-    if selected_type not in type_names: selected_type = ''; selected_element_id = 0
-    type_options = '<option value="">-- not decided yet --</option>' + ''.join(f'<option value="{esc(name)}" {"selected" if name == selected_type else ""}>{esc(name)}</option>' for name in type_names)
-    element_options = '<option value="">-- no specific Element yet --</option>' + ''.join(f'<option value="{int(e["id"])}" data-type="{esc(e["element_type"])}" {"selected" if int(e["id"]) == selected_element_id else ""}>{esc(e["name"])}</option>' for e in elements)
-    error_html = f'<div class="error">{esc(message)}</div>' if message else ''
-    title = f'Edit Enquiry #{enquiry_id}' if enquiry_id else 'New Enquiry'
-    back = f'/operations/enquiries/{enquiry_id}' if enquiry_id else f'/operations/customers/{int(customer["id"])}'
-    action = f'/operations/enquiries/{enquiry_id}/edit' if enquiry_id else f'/operations/customers/{int(customer["id"])}/enquiries/new'
-    def style(key: str) -> str: return 'border:2px solid #c62828;' if key in errors else ''
-
-    body = f'''<h1>{esc(title)}</h1><p><a href="{back}">← Back</a></p>{error_html}<form method="post" action="{action}" id="integrated-enquiry-form"><input type="hidden" name="csrf" value="{esc(context['csrf_token'])}">
-    <div class="card"><h2>Customer &amp; stay</h2><p><strong>Customer:</strong> {esc(_customer_name(customer))}</p><div class="grid"><div><label>Arrival date</label><input id="arrival_date" style="{style('arrival_date')}" type="date" name="arrival_date" value="{esc(values.get('arrival_date',''))}"></div><div><label>Departure date</label><input id="departure_date" style="{style('departure_date')}" type="date" name="departure_date" value="{esc(values.get('departure_date',''))}"></div><div><label>Party size (if breakdown not known yet)</label><input style="{style('party_size')}" type="number" min="1" name="party_size" value="{esc(values.get('party_size',''))}"></div><div><label>Source</label><input name="source" placeholder="Phone, website, walk-in..." value="{esc(values.get('source',''))}"></div></div></div>
-    <div class="card"><h2>Element</h2><div class="grid"><div><label>Element Type</label><select id="element_type" name="element_type">{type_options}</select></div><div><label>Specific Element (optional)</label><select id="element_id" name="element_id">{element_options}</select></div></div></div>
-    <div class="card"><h2>People</h2><div class="grid">'''
+def _form_page(database, context, customer, values: dict[str,str], *, enquiry_id: int|None=None, errors=None, message='', result=None):
+    company_id=working_company(context); errors=errors or set(); types,elements,people,addons,element_json,people_json,addon_json,rule_map,person_rate_map,when_map,addon_modes,addon_person_rates_map=_setup_payload(database,company_id)
+    type_names=[str(r['name']) for r in types]; selected_type=values.get('element_type','').strip(); selected_element_id=_int_or_zero(values.get('element_id'))
+    if selected_type not in type_names: selected_type=''; selected_element_id=0
+    type_options='<option value="">-- not decided yet --</option>'+''.join(f'<option value="{esc(n)}" {"selected" if n==selected_type else ""}>{esc(n)}</option>' for n in type_names)
+    element_options='<option value="">-- no specific Element yet --</option>'+''.join(f'<option value="{int(e["id"])}" data-type="{esc(e["element_type"])}" {"selected" if int(e["id"])==selected_element_id else ""}>{esc(e["name"])}</option>' for e in elements)
+    error_html=f'<div class="error">{esc(message)}</div>' if message else ''; title=f'Edit Enquiry #{enquiry_id}' if enquiry_id else 'New Enquiry'; back=f'/operations/enquiries/{enquiry_id}' if enquiry_id else f'/operations/customers/{int(customer["id"])}'; action=f'/operations/enquiries/{enquiry_id}/edit' if enquiry_id else f'/operations/customers/{int(customer["id"])}/enquiries/new'
+    def style(key): return 'border:2px solid #c62828;' if key in errors else ''
+    body=f'''<h1>{esc(title)}</h1><p><a href="{back}">← Back</a></p>{error_html}<form method="post" action="{action}" id="integrated-enquiry-form"><input type="hidden" name="csrf" value="{esc(context['csrf_token'])}">
+<div class="card"><h2>Customer &amp; stay</h2><p><strong>Customer:</strong> {esc(_customer_name(customer))}</p><div class="grid"><div><label>Arrival date</label><input id="arrival_date" style="{style('arrival_date')}" type="date" name="arrival_date" value="{esc(values.get('arrival_date',''))}"></div><div><label>Departure date</label><input id="departure_date" style="{style('departure_date')}" type="date" name="departure_date" value="{esc(values.get('departure_date',''))}"></div><div><label>Party size (if breakdown not known yet)</label><input style="{style('party_size')}" type="number" min="1" name="party_size" value="{esc(values.get('party_size',''))}"></div><div><label>Source</label><input name="source" placeholder="Phone, website, walk-in..." value="{esc(values.get('source',''))}"></div></div></div>
+<div class="card"><h2>Element</h2><div class="grid"><div><label>Element Type</label><select id="element_type" name="element_type">{type_options}</select></div><div><label>Specific Element (optional)</label><select id="element_id" name="element_id">{element_options}</select></div></div></div>
+<div class="card"><h2>People</h2><div class="grid">'''
     for person in people:
-        key = f'person_{int(person["id"])}'; body += f'<div><label>{esc(person["name"])} <span class="muted" id="person-rate-{int(person["id"])}"></span></label><input class="person-input" data-person-id="{int(person["id"])}" style="{style(key)}" type="number" min="0" name="{key}" value="{esc(values.get(key,"0"))}"></div>'
-    body += '</div></div><div class="card"><h2>Add-ons</h2><p class="muted">Every day stays compact. Selected days expands only the dates needed. Person-Type-priced Add-ons show separate Adult, Child or other Client-defined quantities.</p><table><thead><tr><th>Add-on</th><th>Setup rule</th><th>Quantity</th><th>When?</th></tr></thead><tbody>'
+        key=f'person_{int(person["id"])}'; body+=f'<div><label>{esc(person["name"])} <span class="muted" id="person-rate-{int(person["id"])}"></span></label><input class="person-input" data-person-id="{int(person["id"])}" style="{style(key)}" type="number" min="0" name="{key}" value="{esc(values.get(key,"0"))}"></div>'
+    body+='''</div></div><div class="card"><h2>Add-ons</h2><p class="muted">Choose an Add-on from the list. ✕ N/A = Not available for selected Element.</p><div style="display:grid;grid-template-columns:minmax(0,2fr) minmax(220px,1fr);gap:18px;align-items:start"><div id="selected-addons"><p class="muted" id="no-addons">No Add-ons selected.</p>'''
     for addon in addons:
-        aid = int(addon['id']); key = f'addon_{aid}'; options = when_map.get(str(aid), []); selected_when = values.get(f'addon_when_{aid}', options[0]['code'] if options else 'every_day'); option_html = ''.join(f'<option value="{esc(o["code"])}" {"selected" if o["code"] == selected_when else ""}>{esc(o["label"])}</option>' for o in options)
-        if addon_modes.get(str(aid), 'single') == 'person_type':
-            qty_html = '<div class="grid" style="grid-template-columns:repeat(auto-fit,minmax(110px,1fr))">'
+        aid=int(addon['id']); key=f'addon_{aid}'; options=when_map.get(str(aid),[]); selected_when=values.get(f'addon_when_{aid}',options[0]['code'] if options else 'every_day'); option_html=''.join(f'<option value="{esc(o["code"])}" {"selected" if o["code"]==selected_when else ""}>{esc(o["label"])}</option>' for o in options); selected=values.get(f'addon_selected_{aid}')=='1' or _int_or_zero(values.get(key))>0
+        if addon_modes.get(str(aid),'single')=='person_type':
+            qty_html='<div class="grid" style="grid-template-columns:repeat(auto-fit,minmax(95px,1fr))">'
             for person in people:
-                pid = int(person['id']); pkey = f'addon_person_{aid}_{pid}'
-                qty_html += f'<div><label style="font-size:12px">{esc(person["name"])} <span class="muted addon-person-rate" data-addon="{aid}" data-person="{pid}"></span></label><input class="addon-person-input" data-addon-id="{aid}" data-person-id="{pid}" style="{style(pkey)}" type="number" min="0" name="{pkey}" value="{esc(values.get(pkey,"0"))}"></div>'
-            qty_html += '</div>'
-        else:
-            qty_html = f'<input class="addon-input" data-addon-id="{aid}" style="{style(key)}" type="number" min="0" name="{key}" value="{esc(values.get(key,"0"))}">'
-        body += f'''<tr><td>{esc(addon['name'])}<br><span class="muted">{'Priced by Person Type' if addon_modes.get(str(aid)) == 'person_type' else esc(addon['pricing_method'])}</span></td><td id="addon-rule-{aid}" class="muted">Choose dates and an Element.</td><td><div class="addon-main-qty" data-addon-id="{aid}">{qty_html}</div></td><td><select class="addon-when" data-addon-id="{aid}" name="addon_when_{aid}">{option_html}</select></td></tr><tr class="addon-days-row" id="addon-days-row-{aid}" style="display:none"><td colspan="4"><div id="addon-days-{aid}"></div></td></tr>'''
-    body += f'''</tbody></table><p><a href="/setup/addons/when">Configure Add-on Timings &amp; Person Pricing in Setup</a></p></div><div class="card"><h2>Notes</h2><textarea name="notes" rows="5" style="width:100%;padding:9px;border:1px solid #aeb8c4;border-radius:6px">{esc(values.get('notes',''))}</textarea></div><div class="card"><h2>Provisional price</h2><p><button type="submit" name="action" value="calculate">Calculate provisional price</button> <button type="submit" name="action" value="save">Save Enquiry</button></p></div>'''
+                pid=int(person['id']); pkey=f'addon_person_{aid}_{pid}'; short=str(person['short_name'] or person['name'])[:8]
+                qty_html+=f'<div class="addon-person-wrap" data-person-id="{pid}"><label style="font-size:12px">{esc(short)} <span class="muted addon-person-rate" data-addon="{aid}" data-person="{pid}"></span></label><input class="addon-person-input" data-addon-id="{aid}" data-person-id="{pid}" style="{style(pkey)}" type="number" min="0" name="{pkey}" value="{esc(values.get(pkey,"0"))}"></div>'
+            qty_html+='</div>'
+        else: qty_html=f'<input class="addon-input" data-addon-id="{aid}" style="{style(key)}" type="number" min="0" name="{key}" value="{esc(values.get(key,"0"))}">'
+        body+=f'''<div class="addon-detail card" data-addon-id="{aid}" style="display:{'block' if selected else 'none'};margin:0 0 12px 0"><input class="addon-selected-hidden" type="hidden" name="addon_selected_{aid}" value="{'1' if selected else '0'}"><div style="display:flex;justify-content:space-between;gap:12px"><div><h3 style="margin:0">{esc(addon['name'])}</h3><span class="muted">{'Priced by Person Type' if addon_modes.get(str(aid))=='person_type' else esc(addon['pricing_method'])}</span></div><button type="button" class="secondary addon-remove" data-addon-id="{aid}">Remove</button></div><p id="addon-rule-{aid}" class="muted">Choose dates and a specific Element.</p><div class="grid"><div class="addon-main-qty" data-addon-id="{aid}"><label>Quantity</label>{qty_html}</div><div><label>When?</label><select class="addon-when" data-addon-id="{aid}" name="addon_when_{aid}">{option_html}</select></div></div><div id="addon-days-{aid}" style="margin-top:10px"></div></div>'''
+    body+='''</div><aside class="card" style="margin:0;position:sticky;top:12px"><h3 style="margin-top:0">Available Add-ons</h3><div id="addon-picker"></div></aside></div><p><a href="/setup/addons/when">Configure Add-on Timings &amp; Person Pricing in Setup</a></p></div>'''
+    body+=f'''<div class="card"><h2>Notes</h2><textarea name="notes" rows="5" style="width:100%;padding:9px;border:1px solid #aeb8c4;border-radius:6px">{esc(values.get('notes',''))}</textarea></div><div class="card"><h2>Provisional price</h2><p><button type="submit" name="action" value="calculate">Calculate provisional price</button> <button type="submit" name="action" value="save">Save Enquiry</button></p></div>'''
     if result:
-        line_rows = ''.join(f'<tr><td>{esc(line["item"])}</td><td>{esc(line["rule"])}</td><td>€{float(line["amount"]):.2f}</td></tr>' for line in result['lines'])
-        body += f'<div class="card"><h2>Calculated provisional total: €{float(result["total"]):.2f}</h2><table><thead><tr><th>Item</th><th>Rule used</th><th>Amount</th></tr></thead><tbody>{line_rows}</tbody></table><p><button type="submit" name="action" value="save">Save Enquiry with this price</button></p></div>'
-    body += '</form>'
-
-    day_values: dict[str, dict[str, str]] = {}
-    person_day_values: dict[str, dict[str, dict[str, str]]] = {}
-    for key, value in values.items():
+        line_rows=''.join(f'<tr><td>{esc(line["item"])}</td><td>{esc(line["rule"])}</td><td>€{float(line["amount"]):.2f}</td></tr>' for line in result['lines']); body+=f'<div class="card"><h2>Calculated provisional total: €{float(result["total"]):.2f}</h2><table><thead><tr><th>Item</th><th>Rule used</th><th>Amount</th></tr></thead><tbody>{line_rows}</tbody></table><p><button type="submit" name="action" value="save">Save Enquiry with this price</button></p></div>'
+    body+='</form>'
+    day_values={}; person_day_values={}
+    for key,value in values.items():
         if key.startswith('addon_day_person_'):
-            parts = key.split('_', 5)
-            if len(parts) == 6: person_day_values.setdefault(parts[3], {}).setdefault(parts[4], {})[parts[5]] = value
+            parts=key.split('_',5)
+            if len(parts)==6: person_day_values.setdefault(parts[3],{}).setdefault(parts[4],{})[parts[5]]=value
         elif key.startswith('addon_day_'):
-            parts = key.split('_', 3)
-            if len(parts) == 4: day_values.setdefault(parts[2], {})[parts[3]] = value
-
-    body += f'''<script>(function(){{
-const elements={json.dumps(element_json)};const people={json.dumps(people_json)};const rules={json.dumps(rule_map)};const personRates={json.dumps(person_rate_map)};const addonModes={json.dumps(addon_modes)};const addonPersonRates={json.dumps(addon_person_rates_map)};const dayValues={json.dumps(day_values)};const personDayValues={json.dumps(person_day_values)};const typeSel=document.getElementById('element_type');const elementSel=document.getElementById('element_id');const arrival=document.getElementById('arrival_date');const departure=document.getElementById('departure_date');const originalElement={json.dumps(str(selected_element_id) if selected_element_id else '')};
+            parts=key.split('_',3)
+            if len(parts)==4: day_values.setdefault(parts[2],{})[parts[3]]=value
+    body+=f'''<script>(function(){{
+const elements={json.dumps(element_json)};const people={json.dumps(people_json)};const addons={json.dumps(addon_json)};const rules={json.dumps(rule_map)};const personRates={json.dumps(person_rate_map)};const addonModes={json.dumps(addon_modes)};const addonPersonRates={json.dumps(addon_person_rates_map)};const dayValues={json.dumps(day_values)};const personDayValues={json.dumps(person_day_values)};const typeSel=document.getElementById('element_type'),elementSel=document.getElementById('element_id'),arrival=document.getElementById('arrival_date'),departure=document.getElementById('departure_date'),originalElement={json.dumps(str(selected_element_id) if selected_element_id else '')};
 function dates(){{if(!arrival.value||!departure.value)return[];const a=new Date(arrival.value+'T00:00:00Z'),b=new Date(departure.value+'T00:00:00Z');if(!(b>a))return[];const out=[];for(let d=new Date(a);d<b;d.setUTCDate(d.getUTCDate()+1))out.push(d.toISOString().slice(0,10));return out;}}
 function pretty(s){{const p=s.split('-');return new Date(Date.UTC(+p[0],+p[1]-1,+p[2])).toLocaleDateString(undefined,{{weekday:'short',day:'numeric',month:'short'}});}}
-function personDayInputs(aid,d){{const saved=(personDayValues[String(aid)]||{{}});return people.map(function(p){{const v=Number((((saved[String(p.id)]||{{}})[d])||0));const key='addon_day_person_'+aid+'_'+p.id+'_'+d;return '<div><label>'+p.name+' <span class="muted addon-person-day-rate" data-addon="'+aid+'" data-person="'+p.id+'"></span></label><input class="addon-day-person-qty" data-addon="'+aid+'" data-person="'+p.id+'" data-date="'+d+'" type="number" min="0" name="'+key+'" value="'+v+'"></div>';}}).join('');}}
-function renderDays(aid){{
- const sel=document.querySelector('.addon-when[data-addon-id="'+aid+'"]');const row=document.getElementById('addon-days-row-'+aid);const box=document.getElementById('addon-days-'+aid);const qtyWrap=document.querySelector('.addon-main-qty[data-addon-id="'+aid+'"]');if(!sel){{row.style.display='none';box.innerHTML='';return;}}
- const allDates=dates();const mode=addonModes[String(aid)]||'single';
- if(sel.value==='selected_days'){{
-   qtyWrap.style.display='none';qtyWrap.querySelectorAll('input').forEach(function(i){{i.disabled=true;}});
-   if(mode==='person_type') box.innerHTML='<strong>Selected days</strong><p class="muted">Enter the quantity for each Person Type on the dates required. Leave unwanted dates at 0.</p>'+allDates.map(function(d){{return '<div style="border-top:1px solid #eee;padding:10px 0"><strong>'+pretty(d)+'</strong><div class="grid">'+personDayInputs(aid,d)+'</div></div>';}}).join('');
-   else {{const saved=dayValues[String(aid)]||{{}};box.innerHTML='<strong>Selected days</strong><p class="muted">Enter the quantity wanted on each date. Leave a date at 0 if none are required.</p><div class="grid">'+allDates.map(function(d){{const v=Number(saved[d]||0);return '<div><label>'+pretty(d)+'</label><input class="addon-day-qty" data-addon="'+aid+'" data-date="'+d+'" type="number" min="0" name="addon_day_'+aid+'_'+d+'" value="'+v+'"></div>';}}).join('')+'</div>';}}
-   row.style.display=allDates.length?'table-row':'none';
- }} else {{qtyWrap.style.display='block';box.innerHTML='';row.style.display='none';}}
- updateAddonState(aid);
-}}
-function updateAddonState(aid){{const year=arrival.value?arrival.value.slice(0,4):'';const eid=elementSel.value;const configured=Boolean(year&&eid);const rule=(((rules[year]||{{}})[eid]||{{}})[String(aid)]);const text=document.getElementById('addon-rule-'+aid);const when=document.querySelector('.addon-when[data-addon-id="'+aid+'"]');const selected=when&&when.value==='selected_days';const mode=addonModes[String(aid)]||'single';const main=document.querySelector('.addon-main-qty[data-addon-id="'+aid+'"]');
- if(configured&&rule&&rule.allowed){{text.textContent=rule.source+'; min '+rule.min+', max '+rule.max+(mode==='person_type'?'; Person Type prices':'; €'+Number(rule.rate).toFixed(2));main.querySelectorAll('input').forEach(function(i){{i.disabled=selected;i.max=String(rule.max);}});}}
- else {{main.querySelectorAll('input').forEach(function(i){{i.disabled=true;}});if(configured&&rule)text.textContent=rule.source;else text.textContent='Choose dates and a specific Element.';}}
- const rateSet=((addonPersonRates[String(aid)]||{{}})[year]||{{}});document.querySelectorAll('.addon-person-rate[data-addon="'+aid+'"],.addon-person-day-rate[data-addon="'+aid+'"]').forEach(function(span){{const rate=rateSet[String(span.dataset.person)];span.textContent=(rate===undefined?'':'€'+Number(rate).toFixed(2));}});
-}}
-function rebuildElements(){{const wanted=typeSel.value;const old=elementSel.value||originalElement;elementSel.innerHTML='<option value="">-- no specific Element yet --</option>';elements.filter(e=>e.type===wanted).forEach(function(e){{const o=document.createElement('option');o.value=String(e.id);o.textContent=e.name;if(String(e.id)===old)o.selected=true;elementSel.appendChild(o);}});applyRules();}}
-function applyRules(){{const year=arrival.value?arrival.value.slice(0,4):'';const eid=elementSel.value;document.querySelectorAll('.person-input').forEach(function(input){{input.disabled=!eid;const pid=input.dataset.personId;const rate=((personRates[year]||{{}})[eid]||{{}})[pid];document.getElementById('person-rate-'+pid).textContent=(rate===undefined?'':'€'+Number(rate).toFixed(2));}});document.querySelectorAll('.addon-when').forEach(function(s){{renderDays(s.dataset.addonId);}});}}
-document.querySelectorAll('.addon-when').forEach(function(s){{s.addEventListener('change',function(){{renderDays(s.dataset.addonId);}});}});
-typeSel.addEventListener('change',function(){{elementSel.value='';rebuildElements();}});elementSel.addEventListener('change',applyRules);arrival.addEventListener('change',applyRules);departure.addEventListener('change',applyRules);rebuildElements();
+function count(pid){{const i=document.querySelector('.person-input[data-person-id="'+pid+'"]');return i?Number(i.value||0):0;}} function activePeople(){{return people.filter(p=>count(p.id)>0);}}
+function personDayInputs(aid,d){{const saved=personDayValues[String(aid)]||{{}};return activePeople().map(function(p){{const v=Number(((saved[String(p.id)]||{{}})[d])||0);return '<div><label>'+p.short+' <span class="muted addon-person-day-rate" data-addon="'+aid+'" data-person="'+p.id+'"></span></label><input class="addon-day-person-qty" data-addon="'+aid+'" data-person="'+p.id+'" data-date="'+d+'" type="number" min="0" max="'+count(p.id)+'" name="addon_day_person_'+aid+'_'+p.id+'_'+d+'" value="'+v+'"></div>';}}).join('');}}
+function renderDays(aid){{const detail=document.querySelector('.addon-detail[data-addon-id="'+aid+'"]');if(!detail||detail.style.display==='none')return;const sel=detail.querySelector('.addon-when'),box=document.getElementById('addon-days-'+aid),main=detail.querySelector('.addon-main-qty'),allDates=dates(),mode=addonModes[String(aid)]||'single';if(sel.value==='selected_days'){{main.style.display='none';main.querySelectorAll('input').forEach(i=>i.disabled=true);if(mode==='person_type')box.innerHTML='<strong>Selected days</strong><p class="muted">Only Person Types on this Enquiry are shown.</p>'+allDates.map(d=>'<div style="border-top:1px solid #eee;padding:8px 0"><strong>'+pretty(d)+'</strong><div class="grid">'+personDayInputs(aid,d)+'</div></div>').join('');else{{const saved=dayValues[String(aid)]||{{}};box.innerHTML='<strong>Selected days</strong><div class="grid">'+allDates.map(d=>'<div><label>'+pretty(d)+'</label><input class="addon-day-qty" type="number" min="0" name="addon_day_'+aid+'_'+d+'" value="'+Number(saved[d]||0)+'"></div>').join('')+'</div>';}}}}else{{main.style.display='block';box.innerHTML='';}}updateState(aid);}}
+function selectAddon(aid,on){{const d=document.querySelector('.addon-detail[data-addon-id="'+aid+'"]'),h=d.querySelector('.addon-selected-hidden'),c=document.querySelector('.addon-picker-check[data-addon-id="'+aid+'"]');h.value=on?'1':'0';d.style.display=on?'block':'none';if(c)c.checked=on;if(on){{document.getElementById('selected-addons').appendChild(d);renderDays(aid);}}else d.querySelectorAll('input[type=number]').forEach(i=>i.value='0');document.getElementById('no-addons').style.display=document.querySelectorAll('.addon-detail[style*="block"]').length?'none':'block';}}
+function updatePicker(){{const year=arrival.value?arrival.value.slice(0,4):'',eid=elementSel.value,ename=elementSel.selectedOptions[0]?elementSel.selectedOptions[0].textContent:'selected Element',box=document.getElementById('addon-picker');box.innerHTML='';addons.forEach(function(a){{const r=(((rules[year]||{{}})[eid]||{{}})[String(a.id)]),allowed=Boolean(r&&r.allowed),selected=document.querySelector('.addon-selected-hidden[name="addon_selected_'+a.id+'"]').value==='1';const row=document.createElement('label');row.style.cssText='display:block;padding:7px 0;border-bottom:1px solid #eee';if(allowed)row.innerHTML='<input style="width:auto" class="addon-picker-check" data-addon-id="'+a.id+'" type="checkbox" '+(selected?'checked':'')+'> '+a.name;else row.innerHTML='<span style="color:#b42318">'+a.name+' ✕ — N/A: '+ename+'</span>';box.appendChild(row);}});box.querySelectorAll('.addon-picker-check').forEach(c=>c.addEventListener('change',()=>selectAddon(c.dataset.addonId,c.checked)));}}
+function updateState(aid){{const year=arrival.value?arrival.value.slice(0,4):'',eid=elementSel.value,r=(((rules[year]||{{}})[eid]||{{}})[String(aid)]),detail=document.querySelector('.addon-detail[data-addon-id="'+aid+'"]'),text=document.getElementById('addon-rule-'+aid),sel=detail.querySelector('.addon-when'),selectedDays=sel.value==='selected_days',mode=addonModes[String(aid)]||'single';if(r&&r.allowed){{text.textContent=r.source+'; min '+r.min+', max '+r.max+(mode==='person_type'?'; Person Type prices':'; €'+Number(r.rate).toFixed(2));detail.querySelectorAll('.addon-main-qty input').forEach(i=>i.disabled=selectedDays);}}else{{detail.querySelectorAll('input,select').forEach(i=>{{if(!i.classList.contains('addon-selected-hidden'))i.disabled=true;}});if(r)text.textContent='N/A: '+(elementSel.selectedOptions[0]?.textContent||'selected Element');}}const rateSet=((addonPersonRates[String(aid)]||{{}})[year]||{{}});detail.querySelectorAll('.addon-person-wrap').forEach(w=>{{const pid=w.dataset.personId;w.style.display=count(pid)>0?'block':'none';const input=w.querySelector('input');input.max=String(count(pid));if(count(pid)<=0)input.value='0';}});document.querySelectorAll('.addon-person-rate[data-addon="'+aid+'"],.addon-person-day-rate[data-addon="'+aid+'"]').forEach(s=>{{const rate=rateSet[String(s.dataset.person)];s.textContent=rate===undefined?'':'€'+Number(rate).toFixed(2);}});}}
+function applyRules(){{const year=arrival.value?arrival.value.slice(0,4):'',eid=elementSel.value;document.querySelectorAll('.person-input').forEach(i=>{{const rate=((personRates[year]||{{}})[eid]||{{}})[i.dataset.personId];document.getElementById('person-rate-'+i.dataset.personId).textContent=rate===undefined?'':'€'+Number(rate).toFixed(2);}});updatePicker();document.querySelectorAll('.addon-detail').forEach(d=>{{if(d.style.display!=='none')renderDays(d.dataset.addonId);}});}}
+function rebuildElements(){{const wanted=typeSel.value,old=elementSel.value||originalElement;elementSel.innerHTML='<option value="">-- no specific Element yet --</option>';elements.filter(e=>e.type===wanted).forEach(e=>{{const o=document.createElement('option');o.value=String(e.id);o.textContent=e.name;if(String(e.id)===old)o.selected=true;elementSel.appendChild(o);}});applyRules();}}
+document.querySelectorAll('.addon-remove').forEach(b=>b.addEventListener('click',()=>selectAddon(b.dataset.addonId,false)));document.querySelectorAll('.addon-when').forEach(s=>s.addEventListener('change',()=>renderDays(s.dataset.addonId)));document.querySelectorAll('.person-input').forEach(i=>i.addEventListener('input',applyRules));typeSel.addEventListener('change',()=>{{elementSel.value='';rebuildElements();}});elementSel.addEventListener('change',applyRules);arrival.addEventListener('change',applyRules);departure.addEventListener('change',applyRules);rebuildElements();
 }})();</script>'''
-    return layout(title, body, context)
+    return layout(title,body,context)
 
 
-def _basic_values(data: dict[str, str]) -> dict[str, str]:
-    return {key: data.get(key, '').strip() for key in ('arrival_date','departure_date','party_size','source','notes','element_type','element_id')}
+def _basic_values(data: dict[str,str]) -> dict[str,str]: return {k:data.get(k,'').strip() for k in ('arrival_date','departure_date','party_size','source','notes','element_type','element_id')}
 
 
-def _save(database, context, company_id: int, customer_id: int, values: dict[str, str], calculation, enquiry_id: int | None = None) -> int:
-    now = iso_now(); selected_type = values.get('element_type', '').strip(); element_id = _int_or_zero(values.get('element_id')) or None
+def _save(database, context, company_id:int, customer_id:int, values:dict[str,str], calculation, enquiry_id:int|None=None)->int:
+    now=iso_now(); selected_type=values.get('element_type','').strip(); element_id=_int_or_zero(values.get('element_id')) or None
     if calculation:
-        party_size = int(calculation['people_total']); provisional_total = float(calculation['total']); snapshot_json = json.dumps({'element_type': calculation['element_type'], 'element_id': calculation['element_id'], 'element_name': calculation['element_name'], 'year': calculation['year'], 'nights': calculation['nights'], 'people_total': calculation['people_total'], 'addon_when': calculation['addon_when'], 'addon_days': calculation['addon_days'], 'addon_people': calculation['addon_people'], 'addon_person_days': calculation['addon_person_days'], 'lines': calculation['lines'], 'total': calculation['total']}, separators=(',', ':'))
-    else:
-        party_size = _int_or_zero(values.get('party_size')) or None; provisional_total = None; snapshot_json = '{}'
-    created = enquiry_id is None
-    with database.connect() as connection:
-        if created:
-            enquiry_id = int(connection.execute('''INSERT INTO enquiries(company_id,customer_id,status,source,arrival_date,departure_date,party_size,notes,created_at,updated_at) VALUES (?,?,?,?,?,?,?,?,?,?)''', (company_id, customer_id, 'new', values.get('source',''), values.get('arrival_date') or None, values.get('departure_date') or None, party_size, values.get('notes',''), now, now)).lastrowid)
-        else:
-            connection.execute('UPDATE enquiries SET source=?,arrival_date=?,departure_date=?,party_size=?,notes=?,updated_at=? WHERE id=? AND company_id=?', (values.get('source',''), values.get('arrival_date') or None, values.get('departure_date') or None, party_size, values.get('notes',''), now, enquiry_id, company_id))
-        connection.execute('DELETE FROM enquiry_people WHERE enquiry_id=? AND company_id=?', (enquiry_id, company_id))
-        connection.execute('DELETE FROM enquiry_addons WHERE enquiry_id=? AND company_id=?', (enquiry_id, company_id))
-        connection.execute('DELETE FROM enquiry_addon_days WHERE enquiry_id=? AND company_id=?', (enquiry_id, company_id))
-        connection.execute('DELETE FROM enquiry_addon_people WHERE enquiry_id=? AND company_id=?', (enquiry_id, company_id))
-        connection.execute('DELETE FROM enquiry_addon_person_days WHERE enquiry_id=? AND company_id=?', (enquiry_id, company_id))
-        if selected_type:
-            connection.execute('''INSERT INTO enquiry_requests(enquiry_id,company_id,element_type,element_id,provisional_total,pricing_snapshot_json,updated_at) VALUES (?,?,?,?,?,?,?) ON CONFLICT(enquiry_id) DO UPDATE SET element_type=excluded.element_type,element_id=excluded.element_id,provisional_total=excluded.provisional_total,pricing_snapshot_json=excluded.pricing_snapshot_json,updated_at=excluded.updated_at''', (enquiry_id, company_id, selected_type, element_id, provisional_total, snapshot_json, now))
-        else:
-            connection.execute('DELETE FROM enquiry_requests WHERE enquiry_id=? AND company_id=?', (enquiry_id, company_id))
+        party_size=int(calculation['people_total']); provisional_total=float(calculation['total']); snapshot_json=json.dumps({'element_type':calculation['element_type'],'element_id':calculation['element_id'],'element_name':calculation['element_name'],'year':calculation['year'],'nights':calculation['nights'],'people_total':calculation['people_total'],'addon_when':calculation['addon_when'],'addon_days':calculation['addon_days'],'addon_people':calculation['addon_people'],'addon_person_days':calculation['addon_person_days'],'selected_addons':calculation['selected_addons'],'lines':calculation['lines'],'total':calculation['total']},separators=(',',':'))
+    else: party_size=_int_or_zero(values.get('party_size')) or None; provisional_total=None; snapshot_json='{}'
+    created=enquiry_id is None
+    with database.connect() as c:
+        if created: enquiry_id=int(c.execute('''INSERT INTO enquiries(company_id,customer_id,status,source,arrival_date,departure_date,party_size,notes,created_at,updated_at) VALUES (?,?,?,?,?,?,?,?,?,?)''',(company_id,customer_id,'new',values.get('source',''),values.get('arrival_date') or None,values.get('departure_date') or None,party_size,values.get('notes',''),now,now)).lastrowid)
+        else: c.execute('UPDATE enquiries SET source=?,arrival_date=?,departure_date=?,party_size=?,notes=?,updated_at=? WHERE id=? AND company_id=?',(values.get('source',''),values.get('arrival_date') or None,values.get('departure_date') or None,party_size,values.get('notes',''),now,enquiry_id,company_id))
+        for table in ('enquiry_people','enquiry_addons','enquiry_addon_days','enquiry_addon_people','enquiry_addon_person_days','enquiry_selected_addons'): c.execute(f'DELETE FROM {table} WHERE enquiry_id=? AND company_id=?',(enquiry_id,company_id))
+        if selected_type: c.execute('''INSERT INTO enquiry_requests(enquiry_id,company_id,element_type,element_id,provisional_total,pricing_snapshot_json,updated_at) VALUES (?,?,?,?,?,?,?) ON CONFLICT(enquiry_id) DO UPDATE SET element_type=excluded.element_type,element_id=excluded.element_id,provisional_total=excluded.provisional_total,pricing_snapshot_json=excluded.pricing_snapshot_json,updated_at=excluded.updated_at''',(enquiry_id,company_id,selected_type,element_id,provisional_total,snapshot_json,now))
+        else: c.execute('DELETE FROM enquiry_requests WHERE enquiry_id=? AND company_id=?',(enquiry_id,company_id))
         if calculation:
-            for person_id, qty in calculation['people_counts'].items():
-                if qty: connection.execute('INSERT INTO enquiry_people(enquiry_id,company_id,person_type_id,quantity) VALUES (?,?,?,?)', (enquiry_id, company_id, person_id, qty))
-            for addon_id, qty in calculation['addon_counts'].items():
-                if qty: connection.execute('INSERT INTO enquiry_addons(enquiry_id,company_id,addon_id,quantity) VALUES (?,?,?,?)', (enquiry_id, company_id, addon_id, qty))
-            for addon_id, daily in calculation['addon_days'].items():
-                for service_date, qty in daily.items():
-                    if qty: connection.execute('INSERT INTO enquiry_addon_days(enquiry_id,company_id,addon_id,service_date,quantity) VALUES (?,?,?,?,?)', (enquiry_id, company_id, addon_id, service_date, qty))
-            for addon_id, per_person in calculation['addon_people'].items():
-                for person_id, qty in per_person.items():
-                    if qty: connection.execute('INSERT INTO enquiry_addon_people(enquiry_id,company_id,addon_id,person_type_id,quantity) VALUES (?,?,?,?,?)', (enquiry_id, company_id, addon_id, person_id, qty))
-            for addon_id, by_date in calculation['addon_person_days'].items():
-                for service_date, per_person in by_date.items():
-                    for person_id, qty in per_person.items():
-                        if qty: connection.execute('INSERT INTO enquiry_addon_person_days(enquiry_id,company_id,addon_id,person_type_id,service_date,quantity) VALUES (?,?,?,?,?,?)', (enquiry_id, company_id, addon_id, person_id, service_date, qty))
-    audit(database, context, company_id, 'ENQUIRY_CREATED' if created else 'ENQUIRY_UPDATED', 'enquiry', enquiry_id, after={'customer_id': customer_id, 'element_type': selected_type, 'element_id': element_id, 'provisional_total': provisional_total})
-    return int(enquiry_id)
+            for pid,qty in calculation['people_counts'].items():
+                if qty:c.execute('INSERT INTO enquiry_people(enquiry_id,company_id,person_type_id,quantity) VALUES (?,?,?,?)',(enquiry_id,company_id,pid,qty))
+            for order,aid in enumerate(calculation['selected_addons'],1): c.execute('INSERT INTO enquiry_selected_addons(enquiry_id,company_id,addon_id,sort_order) VALUES (?,?,?,?)',(enquiry_id,company_id,aid,order))
+            for aid,qty in calculation['addon_counts'].items():
+                if qty:c.execute('INSERT INTO enquiry_addons(enquiry_id,company_id,addon_id,quantity) VALUES (?,?,?,?)',(enquiry_id,company_id,aid,qty))
+            for aid,daily in calculation['addon_days'].items():
+                for d,qty in daily.items():
+                    if qty:c.execute('INSERT INTO enquiry_addon_days(enquiry_id,company_id,addon_id,service_date,quantity) VALUES (?,?,?,?,?)',(enquiry_id,company_id,aid,d,qty))
+            for aid,pp in calculation['addon_people'].items():
+                for pid,qty in pp.items():
+                    if qty:c.execute('INSERT INTO enquiry_addon_people(enquiry_id,company_id,addon_id,person_type_id,quantity) VALUES (?,?,?,?,?)',(enquiry_id,company_id,aid,pid,qty))
+            for aid,bydate in calculation['addon_person_days'].items():
+                for d,pp in bydate.items():
+                    for pid,qty in pp.items():
+                        if qty:c.execute('INSERT INTO enquiry_addon_person_days(enquiry_id,company_id,addon_id,person_type_id,service_date,quantity) VALUES (?,?,?,?,?,?)',(enquiry_id,company_id,aid,pid,d,qty))
+    audit(database,context,company_id,'ENQUIRY_CREATED' if created else 'ENQUIRY_UPDATED','enquiry',enquiry_id,after={'customer_id':customer_id,'element_type':selected_type,'element_id':element_id,'provisional_total':provisional_total}); return int(enquiry_id)
 
 
-def register_enquiry_builder_routes(app) -> None:
-    database = app.state.database
-
-    @app.get('/operations/customers/{customer_id}/enquiries/new', response_class=HTMLResponse)
-    def integrated_enquiry_new(customer_id: int, request: Request):
-        context = context_for(database, request); company_id = working_company(context); customer = _customer(database, company_id, customer_id)
-        if customer is None: return HTMLResponse(layout('Customer not found', '<div class="error">Customer not found.</div>', context), 404)
-        return _form_page(database, context, customer, {})
-
-    @app.post('/operations/customers/{customer_id}/enquiries/new', response_class=HTMLResponse)
-    async def integrated_enquiry_create(customer_id: int, request: Request):
-        context = context_for(database, request); company_id = working_company(context); customer = _customer(database, company_id, customer_id)
-        if customer is None: return HTMLResponse(layout('Customer not found', '<div class="error">Customer not found.</div>', context), 404)
-        data = await form_data(request); require_csrf(context, data); values = dict(data); basic = _basic_values(data); start, end, date_error = _validate_dates(basic)
-        if date_error: return HTMLResponse(_form_page(database, context, customer, values, errors={'arrival_date','departure_date'}, message=date_error), 400)
+def register_enquiry_builder_routes(app)->None:
+    database=app.state.database
+    @app.get('/operations/customers/{customer_id}/enquiries/new',response_class=HTMLResponse)
+    def new(customer_id:int,request:Request):
+        context=context_for(database,request); cid=working_company(context); customer=_customer(database,cid,customer_id)
+        if customer is None:return HTMLResponse(layout('Customer not found','<div class="error">Customer not found.</div>',context),404)
+        return _form_page(database,context,customer,{})
+    @app.post('/operations/customers/{customer_id}/enquiries/new',response_class=HTMLResponse)
+    async def create(customer_id:int,request:Request):
+        context=context_for(database,request); cid=working_company(context); customer=_customer(database,cid,customer_id)
+        if customer is None:return HTMLResponse(layout('Customer not found','<div class="error">Customer not found.</div>',context),404)
+        data=await form_data(request); require_csrf(context,data); values=dict(data); basic=_basic_values(data); _,_,date_error=_validate_dates(basic)
+        if date_error:return HTMLResponse(_form_page(database,context,customer,values,errors={'arrival_date','departure_date'},message=date_error),400)
         if basic['party_size']:
             try:
-                if int(basic['party_size']) < 1: raise ValueError
-            except ValueError: return HTMLResponse(_form_page(database, context, customer, values, errors={'party_size'}, message='Party size must be a whole number of at least 1.'), 400)
-        if basic['element_type'] and one(database, 'SELECT id FROM setup_element_types WHERE company_id=? AND active=1 AND name=? COLLATE NOCASE', (company_id, basic['element_type'])) is None:
-            return HTMLResponse(_form_page(database, context, customer, values, message='Choose a valid Element Type.'), 400)
-        calculation = None; action = data.get('action', 'save')
-        if action == 'calculate' or _int_or_zero(basic['element_id']):
-            calculation, calc_errors, calc_message = _calculate(database, company_id, values)
-            if calc_message: return HTMLResponse(_form_page(database, context, customer, values, errors=calc_errors, message=calc_message), 400 if action == 'save' or _int_or_zero(basic['element_id']) else 200)
-        if action == 'calculate': return HTMLResponse(_form_page(database, context, customer, values, result=calculation), 200)
-        enquiry_id = _save(database, context, company_id, customer_id, basic | values, calculation)
-        return RedirectResponse(f'/operations/enquiries/{enquiry_id}?saved=1', 303)
-
-    @app.get('/operations/enquiries/{enquiry_id}/edit', response_class=HTMLResponse)
-    def integrated_enquiry_edit(enquiry_id: int, request: Request):
-        context = context_for(database, request); company_id = working_company(context); enquiry = _enquiry(database, company_id, enquiry_id)
-        if enquiry is None: return HTMLResponse(layout('Enquiry not found', '<div class="error">Enquiry not found.</div>', context), 404)
-        return _form_page(database, context, _customer(database, company_id, int(enquiry['customer_id'])), _saved_values(database, company_id, enquiry), enquiry_id=enquiry_id)
-
-    @app.post('/operations/enquiries/{enquiry_id}/edit', response_class=HTMLResponse)
-    async def integrated_enquiry_update(enquiry_id: int, request: Request):
-        context = context_for(database, request); company_id = working_company(context); enquiry = _enquiry(database, company_id, enquiry_id)
-        if enquiry is None: return HTMLResponse(layout('Enquiry not found', '<div class="error">Enquiry not found.</div>', context), 404)
-        customer = _customer(database, company_id, int(enquiry['customer_id'])); data = await form_data(request); require_csrf(context, data); values = dict(data); basic = _basic_values(data); start, end, date_error = _validate_dates(basic)
-        if date_error: return HTMLResponse(_form_page(database, context, customer, values, enquiry_id=enquiry_id, errors={'arrival_date','departure_date'}, message=date_error), 400)
-        calculation = None; action = data.get('action', 'save')
-        if action == 'calculate' or _int_or_zero(basic['element_id']):
-            calculation, calc_errors, calc_message = _calculate(database, company_id, values)
-            if calc_message: return HTMLResponse(_form_page(database, context, customer, values, enquiry_id=enquiry_id, errors=calc_errors, message=calc_message), 400)
-        if action == 'calculate': return HTMLResponse(_form_page(database, context, customer, values, enquiry_id=enquiry_id, result=calculation), 200)
-        _save(database, context, company_id, int(enquiry['customer_id']), basic | values, calculation, enquiry_id=enquiry_id)
-        return RedirectResponse(f'/operations/enquiries/{enquiry_id}?saved=1', 303)
-
-    @app.get('/operations/enquiries/{enquiry_id}/build', response_class=HTMLResponse)
-    def old_builder_redirect(enquiry_id: int, request: Request, element_type: str = '', element: str = ''):
-        context = context_for(database, request); company_id = working_company(context)
-        if _enquiry(database, company_id, enquiry_id) is None: return HTMLResponse(layout('Enquiry not found', '<div class="error">Enquiry not found.</div>', context), 404)
-        return RedirectResponse(f'/operations/enquiries/{enquiry_id}/edit', 303)
+                if int(basic['party_size'])<1:raise ValueError
+            except ValueError:return HTMLResponse(_form_page(database,context,customer,values,errors={'party_size'},message='Party size must be a whole number of at least 1.'),400)
+        if basic['element_type'] and one(database,'SELECT id FROM setup_element_types WHERE company_id=? AND active=1 AND name=? COLLATE NOCASE',(cid,basic['element_type'])) is None:return HTMLResponse(_form_page(database,context,customer,values,message='Choose a valid Element Type.'),400)
+        calculation=None; action=data.get('action','save')
+        if action=='calculate' or _int_or_zero(basic['element_id']):
+            calculation,calc_errors,calc_message=_calculate(database,cid,values)
+            if calc_message:return HTMLResponse(_form_page(database,context,customer,values,errors=calc_errors,message=calc_message),400 if action=='save' or _int_or_zero(basic['element_id']) else 200)
+        if action=='calculate':return HTMLResponse(_form_page(database,context,customer,values,result=calculation),200)
+        eid=_save(database,context,cid,customer_id,basic|values,calculation); return RedirectResponse(f'/operations/enquiries/{eid}?saved=1',303)
+    @app.get('/operations/enquiries/{enquiry_id}/edit',response_class=HTMLResponse)
+    def edit(enquiry_id:int,request:Request):
+        context=context_for(database,request); cid=working_company(context); enquiry=_enquiry(database,cid,enquiry_id)
+        if enquiry is None:return HTMLResponse(layout('Enquiry not found','<div class="error">Enquiry not found.</div>',context),404)
+        return _form_page(database,context,_customer(database,cid,int(enquiry['customer_id'])),_saved_values(database,cid,enquiry),enquiry_id=enquiry_id)
+    @app.post('/operations/enquiries/{enquiry_id}/edit',response_class=HTMLResponse)
+    async def update(enquiry_id:int,request:Request):
+        context=context_for(database,request); cid=working_company(context); enquiry=_enquiry(database,cid,enquiry_id)
+        if enquiry is None:return HTMLResponse(layout('Enquiry not found','<div class="error">Enquiry not found.</div>',context),404)
+        customer=_customer(database,cid,int(enquiry['customer_id'])); data=await form_data(request); require_csrf(context,data); values=dict(data); basic=_basic_values(data); _,_,date_error=_validate_dates(basic)
+        if date_error:return HTMLResponse(_form_page(database,context,customer,values,enquiry_id=enquiry_id,errors={'arrival_date','departure_date'},message=date_error),400)
+        calculation=None; action=data.get('action','save')
+        if action=='calculate' or _int_or_zero(basic['element_id']):
+            calculation,calc_errors,calc_message=_calculate(database,cid,values)
+            if calc_message:return HTMLResponse(_form_page(database,context,customer,values,enquiry_id=enquiry_id,errors=calc_errors,message=calc_message),400)
+        if action=='calculate':return HTMLResponse(_form_page(database,context,customer,values,enquiry_id=enquiry_id,result=calculation),200)
+        _save(database,context,cid,int(enquiry['customer_id']),basic|values,calculation,enquiry_id=enquiry_id); return RedirectResponse(f'/operations/enquiries/{enquiry_id}?saved=1',303)
+    @app.get('/operations/enquiries/{enquiry_id}/build',response_class=HTMLResponse)
+    def old(enquiry_id:int,request:Request,element_type:str='',element:str=''):
+        context=context_for(database,request); cid=working_company(context)
+        if _enquiry(database,cid,enquiry_id) is None:return HTMLResponse(layout('Enquiry not found','<div class="error">Enquiry not found.</div>',context),404)
+        return RedirectResponse(f'/operations/enquiries/{enquiry_id}/edit',303)
