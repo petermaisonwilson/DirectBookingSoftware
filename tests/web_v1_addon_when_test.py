@@ -54,26 +54,16 @@ def main() -> None:
         assert 'Add-on Timings' in addons_page.text
         assert '/setup/addons/when' in addons_page.text
 
-        r = client.post(
-            '/setup/addons/when',
-            data={
-                'csrf': csrf,
-                'addon_id': str(breakfast_id),
-                'every_active': '1',
-                'every_label': 'Every day',
-                'selected_active': '1',
-                'selected_label': 'Selected days',
-            },
-            follow_redirects=False,
-        )
+        r = client.post('/setup/addons/when', data={'csrf': csrf, 'addon_id': str(breakfast_id), 'every_active': '1', 'every_label': 'Every day', 'selected_active': '1', 'selected_label': 'Selected days'}, follow_redirects=False)
         assert r.status_code == 303
 
         page = client.get(f'/operations/customers/{customer_id}/enquiries/new')
         assert page.status_code == 200
         assert 'When?' in page.text
         assert page.text.index('Every day') < page.text.index('Selected days')
-        assert 'addon-day-check' in page.text
-        assert 'Quantities start at 0' in page.text
+        assert 'addon-day-check' not in page.text
+        assert 'Leave a date at 0 if none are required.' in page.text
+        assert "box.innerHTML='';row.style.display='none'" in page.text
 
         payload = {
             'csrf': csrf,
@@ -85,14 +75,15 @@ def main() -> None:
             'element_type': 'Camping Pitch',
             'element_id': str(element_id),
             f'person_{adult_id}': '4',
-            f'addon_{breakfast_id}': '4',
+            f'addon_{breakfast_id}': '0',
             f'addon_when_{breakfast_id}': 'selected_days',
             f'addon_day_{breakfast_id}_2026-09-10': '2',
+            f'addon_day_{breakfast_id}_2026-09-11': '0',
             f'addon_day_{breakfast_id}_2026-09-12': '4',
+            f'addon_day_{breakfast_id}_2026-09-13': '0',
         }
         calc = client.post(f'/operations/customers/{customer_id}/enquiries/new', data=payload | {'action': 'calculate'})
         assert calc.status_code == 200
-        # 4 nights x 25 = 100; 4 adults x 5 x 4 = 80; selected breakfasts 2+4 x 10 = 60.
         assert 'Calculated provisional total: €240.00' in calc.text
         assert '2026-09-10: 2' in calc.text
         assert '2026-09-12: 4' in calc.text
@@ -110,7 +101,7 @@ def main() -> None:
         edit = client.get(f'/operations/enquiries/{enquiry_id}/edit')
         assert edit.status_code == 200
         assert 'Selected days' in edit.text
-        assert 'Quantities start at 0' in edit.text
+        assert 'addon-day-check' not in edit.text
 
         client.post('/logout', follow_redirects=False)
         login(client, 'customer@forestview.test', 'Customer013!')
@@ -120,9 +111,9 @@ def main() -> None:
         assert 'Breakfast' in preview.text
         assert 'When?' in preview.text
         assert preview.text.index('Every day') < preview.text.index('Selected days')
-        assert 'preview-day-check' in preview.text
-        assert 'value="0" disabled' in preview.text
-        assert 'All stay dates are included.' in preview.text
+        assert 'preview-day-check' not in preview.text
+        assert 'Leave a date at 0 if none are required.' in preview.text
+        assert "box.innerHTML=''" in preview.text
 
     print('Direct Booking Web V1 Add-on Timing UX test: passed')
 
