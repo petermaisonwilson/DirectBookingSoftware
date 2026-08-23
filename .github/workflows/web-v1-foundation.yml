@@ -12,6 +12,7 @@ on:
       - web-v1-addon-when
       - web-v1-persistent-data
       - web-v1-addon-person-pricing
+      - web-v1-addon-picker
   pull_request:
     branches:
       - main
@@ -53,6 +54,7 @@ jobs:
             "tests/web_v1_full_enquiry_test.py",
             "tests/web_v1_addon_when_test.py",
             "tests/web_v1_addon_person_pricing_test.py",
+            "tests/web_v1_addon_picker_test.py",
             "tests/web_v1_persistent_data_test.py",
             "tests/online_setup015_test.py",
             "WEB_V1_FOUNDATION.md"
@@ -128,6 +130,12 @@ jobs:
           python tests/web_v1_addon_person_pricing_test.py
           if ($LASTEXITCODE -ne 0) { throw "Add-on Person Type pricing test failed" }
 
+      - name: Run Add-on picker test
+        shell: pwsh
+        run: |
+          python tests/web_v1_addon_picker_test.py
+          if ($LASTEXITCODE -ne 0) { throw "Add-on picker test failed" }
+
       - name: Run persistent local data test
         shell: pwsh
         run: |
@@ -168,7 +176,7 @@ jobs:
       - name: Upload Web V1 artifact
         uses: actions/upload-artifact@v4
         with:
-          name: DirectBookingSoftware-Web-V1-Addon-Person-Pricing
+          name: DirectBookingSoftware-Web-V1-Addon-Picker
           path: artifact/
           if-no-files-found: error
           retention-days: 30
