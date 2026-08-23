@@ -38,6 +38,14 @@ CREATE TABLE IF NOT EXISTS enquiry_addon_person_days (
     quantity INTEGER NOT NULL DEFAULT 0 CHECK(quantity >= 0),
     PRIMARY KEY(enquiry_id, addon_id, person_type_id, service_date)
 );
+
+CREATE TABLE IF NOT EXISTS enquiry_selected_addons (
+    enquiry_id INTEGER NOT NULL,
+    company_id INTEGER NOT NULL,
+    addon_id INTEGER NOT NULL,
+    sort_order INTEGER NOT NULL DEFAULT 0,
+    PRIMARY KEY(enquiry_id, addon_id)
+);
 """
 
 
