@@ -156,7 +156,7 @@ def register_addon_when_routes(app) -> None:
                 if not opts:
                     continue
                 option_html = ''.join(f'<option value="{esc(o["option_code"])}">{esc(o["label"])}</option>' for o in opts)
-                body += f'''<div style="border-top:1px solid #dde3e9;padding:12px 0"><div class="grid"><div><strong>{esc(addon['name'])}</strong><br><span class="muted">{esc(addon['pricing_method'])}</span></div><div><label>Quantity</label><input class="preview-qty" data-addon="{int(addon['id'])}" type="number" min="0" value="0"></div><div><label>When?</label><select class="preview-when" data-addon="{int(addon['id'])}">{option_html}</select></div></div><div class="preview-days" id="preview-days-{int(addon['id'])}" style="margin-top:10px"></div></div>'''
+                body += f'''<div style="border-top:1px solid #dde3e9;padding:12px 0"><div class="grid"><div><strong>{esc(addon['name'])}</strong><br><span class="muted">{esc(addon['pricing_method'])}</span></div><div class="preview-main-qty" data-addon="{int(addon['id'])}"><label>Quantity</label><input class="preview-qty" data-addon="{int(addon['id'])}" type="number" min="0" value="0"></div><div><label>When?</label><select class="preview-when" data-addon="{int(addon['id'])}">{option_html}</select></div></div><div class="preview-days" id="preview-days-{int(addon['id'])}" style="margin-top:10px"></div></div>'''
         body += '</div>'
         if dates:
             dates_json = json.dumps(dates)
@@ -164,15 +164,15 @@ def register_addon_when_routes(app) -> None:
 const dates={dates_json};
 function pretty(s){{const p=s.split('-');return new Date(Date.UTC(Number(p[0]),Number(p[1])-1,Number(p[2]))).toLocaleDateString(undefined,{{weekday:'short',day:'numeric',month:'short'}});}}
 function render(sel){{
- const aid=sel.dataset.addon;const box=document.getElementById('preview-days-'+aid);const qty=document.querySelector('.preview-qty[data-addon="'+aid+'"]');const base=String(Math.max(0,Number(qty.value||0)));
+ const aid=sel.dataset.addon;const box=document.getElementById('preview-days-'+aid);const qtyWrap=document.querySelector('.preview-main-qty[data-addon="'+aid+'"]');
  if(sel.value==='selected_days'){{
-   box.innerHTML='<strong>Selected days</strong><p class="muted">Tick only the dates required, then enter the quantity for each selected date.</p><div class="grid">'+dates.map(function(d){{return '<div><label style="display:flex;gap:8px;align-items:center"><input class="preview-day-check" data-addon="'+aid+'" data-date="'+d+'" type="checkbox" style="width:auto"> '+pretty(d)+'</label><input class="preview-day-qty" data-addon="'+aid+'" data-date="'+d+'" type="number" min="0" value="0" disabled></div>';}}).join('')+'</div>';
-   box.querySelectorAll('.preview-day-check').forEach(function(check){{check.addEventListener('change',function(){{const input=box.querySelector('.preview-day-qty[data-date="'+check.dataset.date+'"]');input.disabled=!check.checked;if(!check.checked)input.value='0';}});}});
+   qtyWrap.style.display='none';
+   box.innerHTML='<strong>Selected days</strong><p class="muted">Enter the quantity wanted on each date. Leave a date at 0 if none are required.</p><div class="grid">'+dates.map(function(d){{return '<div><label>'+pretty(d)+'</label><input class="preview-day-qty" data-addon="'+aid+'" data-date="'+d+'" type="number" min="0" value="0"></div>';}}).join('')+'</div>';
  }} else {{
-   box.innerHTML='<strong>Every day</strong><p class="muted">All stay dates are included.</p><div class="grid">'+dates.map(function(d){{return '<div><label style="display:flex;gap:8px;align-items:center"><input type="checkbox" checked disabled style="width:auto"> '+pretty(d)+'</label><input type="number" min="0" value="'+base+'" readonly></div>';}}).join('')+'</div>';
+   qtyWrap.style.display='block';
+   box.innerHTML='';
  }}
 }}
 document.querySelectorAll('.preview-when').forEach(function(s){{s.addEventListener('change',function(){{render(s);}});render(s);}});
-document.querySelectorAll('.preview-qty').forEach(function(q){{q.addEventListener('input',function(){{const s=document.querySelector('.preview-when[data-addon="'+q.dataset.addon+'"]');if(s&&s.value==='every_day')render(s);}});}});
 }})();</script>'''
         return layout('Direct booking preview', body, context)
