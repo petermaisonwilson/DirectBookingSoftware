@@ -63,7 +63,9 @@ def main() -> None:
         assert page.text.index('Every day') < page.text.index('Selected days')
         assert 'addon-day-check' not in page.text
         assert 'Leave a date at 0 if none are required.' in page.text
-        assert "box.innerHTML='';row.style.display='none'" in page.text
+        assert 'addon-picker' in page.text
+        assert '✕ N/A:' in page.text
+        assert "row.style.display='none'" not in page.text
 
         payload = {
             'csrf': csrf,
