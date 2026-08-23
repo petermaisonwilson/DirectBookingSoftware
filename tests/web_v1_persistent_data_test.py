@@ -9,9 +9,22 @@ from pathlib import Path
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
 
+def create_marker_database(path: Path, value: str) -> None:
+    connection = sqlite3.connect(path)
+    try:
+        connection.execute('CREATE TABLE persistence_marker(value TEXT NOT NULL)')
+        connection.execute('INSERT INTO persistence_marker(value) VALUES (?)', (value,))
+        connection.commit()
+    finally:
+        connection.close()
+
+
 def marker_value(path: Path) -> str:
-    with sqlite3.connect(path) as connection:
+    connection = sqlite3.connect(path)
+    try:
         return str(connection.execute('SELECT value FROM persistence_marker').fetchone()[0])
+    finally:
+        connection.close()
 
 
 def main() -> None:
@@ -30,9 +43,7 @@ def main() -> None:
             build_two.mkdir()
 
             legacy_db = legacy_dir / 'direct_booking_online_dev.db'
-            with sqlite3.connect(legacy_db) as connection:
-                connection.execute('CREATE TABLE persistence_marker(value TEXT NOT NULL)')
-                connection.execute("INSERT INTO persistence_marker(value) VALUES ('keep-me')")
+            create_marker_database(legacy_db, 'keep-me')
 
             os.environ['LOCALAPPDATA'] = str(local_app_data)
             os.environ.pop('DIRECTBOOKING_DB', None)
@@ -51,9 +62,7 @@ def main() -> None:
             os.chdir(build_two)
             conflicting_legacy = build_two / 'online_data' / 'direct_booking_online_dev.db'
             conflicting_legacy.parent.mkdir()
-            with sqlite3.connect(conflicting_legacy) as connection:
-                connection.execute('CREATE TABLE persistence_marker(value TEXT NOT NULL)')
-                connection.execute("INSERT INTO persistence_marker(value) VALUES ('do-not-use')")
+            create_marker_database(conflicting_legacy, 'do-not-use')
 
             os.environ.pop('DIRECTBOOKING_DB', None)
             second_path = online.configure_default_database()
@@ -66,6 +75,8 @@ def main() -> None:
             os.environ['DIRECTBOOKING_DB'] = str(override)
             assert online.configure_default_database() == override
             assert os.environ['DIRECTBOOKING_DB'] == str(override)
+
+            os.chdir(old_cwd)
 
     finally:
         os.chdir(old_cwd)
