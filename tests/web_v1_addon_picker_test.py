@@ -59,6 +59,7 @@ def main():
         assert page.status_code == 200
         assert 'Available Add-ons' in page.text
         assert '✕ N/A = Not available for selected Element.' in page.text
+        assert '✕ N/A:' in page.text
         assert 'ChildU16' in page.text
         assert 'addon-picker-check' in page.text
         assert 'activePeople()' in page.text
@@ -90,7 +91,7 @@ def main():
         assert preview.status_code == 200
         assert 'Available Add-ons' in preview.text
         assert 'Dogs' in preview.text
-        assert '✕ — N/A:' in preview.text
+        assert '✕ N/A:' in preview.text
         assert 'ChildU16' not in preview.text.split('preview-detail')[1] or 'activePeople' in preview.text
 
     print('Direct Booking Web V1 Add-on picker test: passed')
