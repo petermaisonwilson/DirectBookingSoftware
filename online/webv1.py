@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from .setup015 import register_setup015
+from .webv1_addon_person import initialise_addon_person
 from .webv1_addon_when import initialise_addon_when, register_addon_when_routes
 from .webv1_core import initialise_web_v1
 from .webv1_customers import register_customer_routes
@@ -16,6 +17,7 @@ def register_web_v1(app) -> None:
     register_setup015(app)
     initialise_web_v1(app.state.database)
     initialise_addon_when(app.state.database)
+    initialise_addon_person(app.state.database)
     register_web_v1_routes(app)
     register_customer_routes(app)
     register_enquiry_routes(app)
