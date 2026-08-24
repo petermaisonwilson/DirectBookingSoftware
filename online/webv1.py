@@ -4,6 +4,7 @@ from .setup015 import register_setup015
 from .webv1_addon_person import initialise_addon_person
 from .webv1_addon_when import initialise_addon_when, register_addon_when_routes
 from .webv1_availability import initialise_availability, register_availability_routes
+from .webv1_calendar import register_calendar_routes
 from .webv1_core import initialise_web_v1
 from .webv1_customers import register_customer_routes
 from .webv1_enquiries import register_enquiry_routes
@@ -26,3 +27,4 @@ def register_web_v1(app) -> None:
     register_enquiry_builder_routes(app)
     register_addon_when_routes(app)
     register_availability_routes(app)
+    register_calendar_routes(app)
