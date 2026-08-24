@@ -11,6 +11,7 @@ from .webv1_addon_when import initialise_addon_when, register_addon_when_routes
 from .webv1_availability import initialise_availability, register_availability_routes
 from .webv1_booking_status import initialise_booking_statuses, register_booking_status_routes
 from . import webv1_calendar_v2
+from .webv1_calendar_v3 import register_calendar_v3_routes
 from .webv1_core import initialise_web_v1
 from .webv1_customers import register_customer_routes
 from .webv1_enquiries import register_enquiry_routes
@@ -39,6 +40,9 @@ def register_web_v1(app) -> None:
     register_addon_when_routes(app)
     register_booking_status_routes(app)
     register_availability_routes(app)
+    # v3 is the active calendar; v2 remains registered afterwards only as a safe fallback
+    # and to retain the existing booking-detail route during this milestone.
+    register_calendar_v3_routes(app)
     webv1_calendar_v2.register_calendar_v2_routes(app)
 
     @app.get('/availability/calendar')
