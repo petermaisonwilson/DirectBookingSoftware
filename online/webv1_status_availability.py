@@ -3,7 +3,6 @@ from __future__ import annotations
 from datetime import date, timedelta
 from typing import Any
 
-from .database import iso_now
 from .setup015_calculator import _addon_rule
 from .setup015_core import rows
 from . import webv1_availability as legacy
@@ -37,10 +36,10 @@ def _enquiry_conflict(connection, company_id: int, element_id: int, start: str, 
         WHERE e.company_id=? AND er.element_id=?
           AND e.status NOT IN ('closed','converted')
           AND s.blocks_availability=1
-          AND (e.availability_expires_at IS NULL OR e.availability_expires_at>?)
+          AND (e.availability_expires_at IS NULL OR datetime(e.availability_expires_at)>datetime('now'))
           AND date(e.arrival_date)<date(?) AND date(e.departure_date)>date(?)
     '''
-    params: list[Any] = [company_id, element_id, iso_now(), end, start]
+    params: list[Any] = [company_id, element_id, end, start]
     if exclude_enquiry_id is not None:
         sql += ' AND e.id<>?'; params.append(exclude_enquiry_id)
     sql += ' ORDER BY e.arrival_date LIMIT 1'
