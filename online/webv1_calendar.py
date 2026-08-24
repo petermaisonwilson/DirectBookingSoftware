@@ -7,7 +7,8 @@ from fastapi import HTTPException, Request
 from fastapi.responses import HTMLResponse
 
 from .app import COOKIE_NAME, esc, layout
-from .setup015_core import context_for, rows, working_company
+from .database import iso_now
+from .setup015_core import rows, working_company
 from .webv1_availability import available_elements, operating_window
 
 CALENDAR_DAYS = 28
@@ -26,6 +27,16 @@ def _fmt(value: str | date) -> str:
         return d.strftime('%d/%m/%Y')
     except (TypeError, ValueError):
         return str(value or '')
+
+
+def _calendar_context(database, request: Request):
+    context = database.session_context(request.cookies.get(COOKIE_NAME))
+    if context is None:
+        raise HTTPException(status_code=401, detail='Login required')
+    cid = context['acting_company_id'] if context['role'] == 'supervisor' else context['company_id']
+    if not cid:
+        raise HTTPException(status_code=403, detail='Select a Client first')
+    return context, int(cid)
 
 
 def _overlaps(start_a: str, end_a: str, start_b: date, end_b: date) -> bool:
@@ -68,10 +79,10 @@ def _calendar_records(database, company_id: int, element_id: int, visible_start:
         ''', (company_id, element_id, visible_end.isoformat(), visible_start.isoformat())).fetchall()
         holds = c.execute('''
             SELECT * FROM element_holds
-            WHERE company_id=? AND element_id=? AND expires_at>datetime('now')
+            WHERE company_id=? AND element_id=? AND expires_at>?
               AND date(arrival_date)<date(?) AND date(departure_date)>date(?)
             ORDER BY arrival_date
-        ''', (company_id, element_id, visible_end.isoformat(), visible_start.isoformat())).fetchall()
+        ''', (company_id, element_id, iso_now(), visible_end.isoformat(), visible_start.isoformat())).fetchall()
     return bookings, closures, holds
 
 
@@ -98,7 +109,7 @@ def _bar(label: str, css_class: str, columns: tuple[int, int] | None, *, href: s
     content = esc(label)
     title_attr = f' title="{esc(title)}"' if title else ''
     inner = f'<a href="{esc(href)}"{title_attr}>{content}</a>' if href else f'<span{title_attr}>{content}</span>'
-    return f'<div class="cal-bar {css_class}" style="grid-column:{start_col}/{end_col}">{inner}</div>'
+    return f'<div class="cal-bar {css_class}" style="grid-row:1;grid-column:{start_col}/{end_col}">{inner}</div>'
 
 
 def register_calendar_routes(app) -> None:
@@ -106,11 +117,7 @@ def register_calendar_routes(app) -> None:
 
     @app.get('/availability/calendar', response_class=HTMLResponse)
     def availability_calendar(request: Request, element_type: str = '', start: str = '', arrival: str = '', departure: str = ''):
-        context = context_for(database, request)
-        cid = working_company(context)
-        if not cid:
-            raise HTTPException(status_code=403, detail='Select a Client first')
-        cid = int(cid)
+        context, cid = _calendar_context(database, request)
         staff = str(context['role']) in {'operator', 'supervisor'}
         type_rows = rows(database, 'SELECT name FROM setup_element_types WHERE company_id=? AND active=1 ORDER BY name COLLATE NOCASE', (cid,))
         types = [str(r['name']) for r in type_rows]
@@ -142,7 +149,7 @@ def register_calendar_routes(app) -> None:
         preserve = f'element_type={quote_plus(selected_type)}&arrival={quote_plus(selected_arrival)}&departure={quote_plus(selected_departure)}'
 
         body = f'''<h1>Availability Calendar</h1>
-        <div class="card"><form method="get" action="/availability/calendar">
+        <div class="card"><form method="get" action="/availability/calendar" id="availability-form">
           <div class="grid">
             <div><label>Element Type</label><select name="element_type" id="calendar-type">{type_options}</select></div>
             <div><label>Arrival</label><input type="date" name="arrival" id="calendar-arrival" value="{esc(selected_arrival)}"></div>
@@ -162,7 +169,6 @@ def register_calendar_routes(app) -> None:
             for element in elements:
                 eid = int(element['id'])
                 bookings, closures, holds = _calendar_records(database, cid, eid, visible_start, visible_end, session_token)
-                # Use the same configured operating-season bounds as the availability engine.
                 windows = {d.year: operating_window(database, cid, d.year) for d in dates}
                 cells = ''
                 for d in dates:
@@ -209,17 +215,17 @@ def register_calendar_routes(app) -> None:
         .calendar-grid{{min-width:calc(170px + (var(--days) * 48px));background:white}}
         .cal-row{{display:grid;grid-template-columns:170px repeat(var(--days),48px);position:relative;min-height:48px;border-bottom:1px solid #e1e6eb}}
         .cal-head{{min-height:52px;position:sticky;top:0;z-index:8;background:#f4f6f8}}
-        .cal-name{{grid-column:1;padding:10px 8px;position:sticky;left:0;z-index:6;background:white;border-right:1px solid #d6dde5}}
+        .cal-name{{grid-column:1;grid-row:1;padding:10px 8px;position:sticky;left:0;z-index:6;background:white;border-right:1px solid #d6dde5}}
         .cal-head .cal-name{{background:#f4f6f8}}
-        .cal-date{{padding:6px 2px;text-align:center;border-right:1px solid #e5e9ee;font-size:12px}}
+        .cal-date{{padding:6px 2px;text-align:center;border-right:1px solid #e5e9ee;font-size:12px;grid-row:1}}
         .cal-date small{{display:block;color:#66717f}}
-        .cal-cell{{min-height:48px;border-right:1px solid #eef1f4;display:block;z-index:1}}
+        .cal-cell{{min-height:48px;border-right:1px solid #eef1f4;display:block;z-index:1;grid-row:1}}
         .cal-cell.available{{background:white}}
         .cal-cell.out{{background:#eef1f4}}
         .cal-cell.closed{{background:#e4e7eb}}
         .cal-cell.held,.cal-cell.held-own{{background:#fff0c2}}
         .cal-cell.booked{{background:#f8d7da}}
-        .cal-bar{{z-index:4;align-self:center;height:30px;margin:0 2px;border-radius:5px;overflow:hidden;white-space:nowrap;text-overflow:ellipsis;display:flex;align-items:center}}
+        .cal-bar{{grid-row:1;z-index:4;align-self:center;height:30px;margin:0 2px;border-radius:5px;overflow:hidden;white-space:nowrap;text-overflow:ellipsis;display:flex;align-items:center}}
         .cal-bar a,.cal-bar span{{display:block;padding:6px 8px;color:#26313d;text-decoration:none;width:100%;overflow:hidden;text-overflow:ellipsis}}
         .cal-bar.booked,.legend.booked{{background:#f3c5c9}}
         .cal-bar.closed,.legend.closed{{background:#cfd4da}}
@@ -239,6 +245,7 @@ def register_calendar_routes(app) -> None:
         <script>(function(){{
           const csrf={repr(str(context['csrf_token']))};
           const arrival=document.getElementById('calendar-arrival'), departure=document.getElementById('calendar-departure');
+          const typeSel=document.getElementById('calendar-type'), form=document.getElementById('availability-form');
           const holdList=document.getElementById('hold-list'), modal=document.getElementById('hold-modal'), modalNames=document.getElementById('hold-modal-names'), modalSeconds=document.getElementById('hold-modal-seconds');
           let releaseTimer=null, tickTimer=null, prompted=false;
           async function post(url,data){{const body=new URLSearchParams(Object.assign({{csrf:csrf}},data||{{}}));const r=await fetch(url,{{method:'POST',headers:{{'Content-Type':'application/x-www-form-urlencoded'}},body}});return await r.json();}}
@@ -246,7 +253,7 @@ def register_calendar_routes(app) -> None:
           async function refreshHolds(){{
             const r=await fetch('/availability/holds'); if(!r.ok)return; const data=await r.json();
             if(!data.holds.length){{holdList.textContent='No Elements currently held.';modal.hidden=true;prompted=false;clearTimeout(releaseTimer);clearInterval(tickTimer);return;}}
-            const now=Date.now(); holdList.innerHTML=data.holds.map(h=>'<div><strong>'+h.element_name+'</strong> — '+fmtDate(h.arrival_date)+' to '+fmtDate(h.departure_date)+' · hold expires '+new Date(h.expires_at).toLocaleTimeString([],{{hour:'2-digit',minute:'2-digit'}})+'</div>').join('');
+            holdList.innerHTML=data.holds.map(h=>'<div><strong>'+h.element_name+'</strong> — '+fmtDate(h.arrival_date)+' to '+fmtDate(h.departure_date)+' · hold expires '+new Date(h.expires_at).toLocaleTimeString([],{{hour:'2-digit',minute:'2-digit'}})+'</div>').join('');
             const needs=data.holds.some(h=>h.needs_confirmation);
             if(needs&&!prompted){{prompted=true;modalNames.textContent=data.holds.map(h=>h.element_name).join(', ');modal.hidden=false;let left=60;modalSeconds.textContent=left;tickTimer=setInterval(()=>{{left=Math.max(0,left-1);modalSeconds.textContent=left;}},1000);releaseTimer=setTimeout(async()=>{{await post('/availability/holds/release');location.reload();}},60000);}}
           }}
@@ -258,18 +265,16 @@ def register_calendar_routes(app) -> None:
           }}));
           document.getElementById('hold-yes').addEventListener('click',async()=>{{await post('/availability/holds/renew');modal.hidden=true;prompted=false;clearTimeout(releaseTimer);clearInterval(tickTimer);await refreshHolds();}});
           document.getElementById('hold-release').addEventListener('click',async()=>{{await post('/availability/holds/release');location.reload();}});
+          if(typeSel)typeSel.addEventListener('change',()=>form.submit());
           refreshHolds();setInterval(refreshHolds,15000);
         }})();</script>'''
         return HTMLResponse(layout('Availability Calendar', body, context))
 
     @app.get('/operations/bookings/{booking_id}', response_class=HTMLResponse)
     def booking_detail(request: Request, booking_id: int):
-        context = context_for(database, request)
+        context, cid = _calendar_context(database, request)
         if str(context['role']) not in {'operator', 'supervisor'}:
             raise HTTPException(status_code=403, detail='Booking details are staff-only')
-        cid = working_company(context)
-        if not cid:
-            raise HTTPException(status_code=403, detail='Select a Client first')
         with database.connect() as c:
             booking = c.execute('''SELECT b.*,c.first_name,c.last_name,c.email,c.phone FROM bookings b LEFT JOIN customer_records c ON c.id=b.customer_id AND c.company_id=b.company_id WHERE b.id=? AND b.company_id=?''', (booking_id, cid)).fetchone()
             if booking is None:
