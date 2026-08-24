@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import json
 
+from fastapi import Request
 from fastapi.responses import RedirectResponse
 
 from .setup015 import register_setup015
@@ -41,5 +42,8 @@ def register_web_v1(app) -> None:
     webv1_calendar_v2.register_calendar_v2_routes(app)
 
     @app.get('/availability/calendar')
-    def availability_calendar_compat():
-        return RedirectResponse('/availability/calendar-v2', 303)
+    def availability_calendar_compat(request: Request):
+        target = '/availability/calendar-v2'
+        if request.url.query:
+            target += '?' + request.url.query
+        return RedirectResponse(target, 303)
