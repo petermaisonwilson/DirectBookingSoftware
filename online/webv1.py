@@ -10,6 +10,7 @@ from .webv1_addon_person import initialise_addon_person
 from .webv1_addon_when import initialise_addon_when, register_addon_when_routes
 from .webv1_availability import initialise_availability, register_availability_routes
 from .webv1_booking_status import initialise_booking_statuses, register_booking_status_routes
+from .webv1_hold_settings import initialise_hold_settings, install_hold_timing, register_hold_settings_routes
 from . import webv1_calendar_v2
 from .webv1_calendar_v3 import register_calendar_v3_routes
 from .webv1_core import initialise_web_v1
@@ -30,7 +31,9 @@ def register_web_v1(app) -> None:
     initialise_addon_person(app.state.database)
     initialise_availability(app.state.database)
     initialise_booking_statuses(app.state.database)
+    initialise_hold_settings(app.state.database)
     install_status_aware_availability()
+    install_hold_timing()
     # Calendar v2 uses json.dumps while rendering safe JavaScript literals.
     webv1_calendar_v2.json = json
     register_web_v1_routes(app)
@@ -39,6 +42,9 @@ def register_web_v1(app) -> None:
     register_enquiry_builder_routes(app)
     register_addon_when_routes(app)
     register_booking_status_routes(app)
+    # Register the client-defined renewal endpoint before the legacy availability
+    # routes so FastAPI resolves this version first.
+    register_hold_settings_routes(app)
     register_availability_routes(app)
     # v3 is the active calendar; v2 remains registered afterwards only as a safe fallback
     # and to retain the existing booking-detail route during this milestone.
