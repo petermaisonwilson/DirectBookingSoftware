@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+import json
+
 from fastapi.responses import RedirectResponse
 
 from .setup015 import register_setup015
@@ -7,7 +9,7 @@ from .webv1_addon_person import initialise_addon_person
 from .webv1_addon_when import initialise_addon_when, register_addon_when_routes
 from .webv1_availability import initialise_availability, register_availability_routes
 from .webv1_booking_status import initialise_booking_statuses, register_booking_status_routes
-from .webv1_calendar_v2 import register_calendar_v2_routes
+from . import webv1_calendar_v2
 from .webv1_core import initialise_web_v1
 from .webv1_customers import register_customer_routes
 from .webv1_enquiries import register_enquiry_routes
@@ -27,6 +29,8 @@ def register_web_v1(app) -> None:
     initialise_availability(app.state.database)
     initialise_booking_statuses(app.state.database)
     install_status_aware_availability()
+    # Calendar v2 uses json.dumps while rendering safe JavaScript literals.
+    webv1_calendar_v2.json = json
     register_web_v1_routes(app)
     register_customer_routes(app)
     register_enquiry_routes(app)
@@ -34,7 +38,7 @@ def register_web_v1(app) -> None:
     register_addon_when_routes(app)
     register_booking_status_routes(app)
     register_availability_routes(app)
-    register_calendar_v2_routes(app)
+    webv1_calendar_v2.register_calendar_v2_routes(app)
 
     @app.get('/availability/calendar')
     def availability_calendar_compat():
