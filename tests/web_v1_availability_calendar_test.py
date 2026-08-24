@@ -72,26 +72,42 @@ def main() -> None:
         assert all(text in page.text for text in ('Availability Calendar', 'Pitch 1', 'Pitch 2', 'Alice Smith', 'BK2035-101', 'Deposit Paid', 'Pitch damaged', 'Enquiry / Held', 'Available = clear'))
         assert f'/operations/bookings/{booking}' in page.text
 
-        # Every day remains locked to its explicit column: regression for the shifted grey cells.
         cells = re.findall(r'class="cal-cell [^"]+"([^>]*)', page.text)
         assert cells and all('grid-column:' in attrs and 'grid-row:1' in attrs for attrs in cells)
 
-        # Calendar usability: no submit button, both-axis scrolling, sticky row/column headings,
-        # automatic second-date refresh, clickable date cells, and selected-stay highlighting.
         assert 'Check availability' not in page.text
         assert 'overflow:auto' in page.text and 'max-height:520px' in page.text
         assert 'position:sticky;top:0' in page.text and 'position:sticky;left:0' in page.text
         assert 'class="cal-cell available date-pick' in page.text and 'data-date="2035-07-16"' in page.text
         assert "departureInput.addEventListener('change',goToSelection)" in page.text
         assert "departureInput.value=chosen" in page.text
-        assert "if(!arrivalInput.value || departureInput.value)" in page.text
         assert 'selected-date' in page.text and 'selected-start' in page.text
-        assert "q.set('start',a)" in page.text
         assert 'Available for your selected dates' in page.text and '✕ Electric hook up' in page.text
 
-        # Long selected stays expand the strip beyond 28 days so the whole selected period is scrollable.
+        # Real browser POSTs must use the URL-encoded format consumed by app.form_data.
+        assert "new URLSearchParams()" in page.text
+        assert "application/x-www-form-urlencoded;charset=UTF-8" in page.text
+        assert "new FormData()" not in page.text
+        assert "data.error||data.detail||'Unable to hold that Element'" in page.text
+
+        # With no explicit manual start, the selected stay is centred with dates on both sides.
+        centred = operator.get('/availability/calendar', params={'element_type': 'Camping', 'arrival': '2035-10-10', 'departure': '2035-10-13'})
+        assert centred.status_code == 200
+        assert 'id="calendar-start" type="date" name="start" value="2035-09-28"' in centred.text
+        assert 'data-date="2035-10-01"' in centred.text and 'data-date="2035-10-20"' in centred.text
+        assert 'scrollBox.clientWidth/2' in centred.text
+
+        # Anything displayed as available must be accepted by the hold endpoint in the same session.
+        assert 'Pitch 1' in centred.text and 'Select &amp; hold' in centred.text
+        hold = operator.post('/availability/hold', data={'csrf': csrf, 'element_id': str(p1), 'arrival_date': '2035-10-10', 'departure_date': '2035-10-13'})
+        assert hold.status_code == 200 and hold.json()['ok'] is True
+        held = operator.get('/availability/holds').json()['holds']
+        assert any(item['element_id'] == p1 for item in held)
+        assert operator.post('/availability/holds/release', data={'csrf': csrf}).status_code == 200
+
+        # Long stays retain useful context before and after the selected period.
         long_page = operator.get('/availability/calendar', params={'element_type': 'Camping', 'start': '2035-08-01', 'arrival': '2035-08-01', 'departure': '2035-09-15'})
-        assert long_page.status_code == 200 and '--days:48' in long_page.text and 'data-date="2035-09-15"' in long_page.text
+        assert long_page.status_code == 200 and '--days:59' in long_page.text and 'data-date="2035-09-15"' in long_page.text
 
         blocked_by_enquiry = operator.get('/availability/search', params={'element_type': 'Camping', 'arrival': '2035-07-20', 'departure': '2035-07-22'}).json()['elements']
         assert 'Pitch 2' not in {e['name'] for e in blocked_by_enquiry}
@@ -124,6 +140,7 @@ def main() -> None:
         customer_page = customer_view.get('/availability/calendar', params={'element_type': 'Camping', 'start': '2035-07-08'})
         assert customer_page.status_code == 200
         assert 'Alice Smith' not in customer_page.text and 'BK2035-101' not in customer_page.text and 'Balance Paid' not in customer_page.text
+        assert 'Unavailable' in customer_page.text
         assert customer_view.get(f'/operations/bookings/{booking}').status_code == 403
 
         statuses_page = operator.get('/setup/booking-statuses')
