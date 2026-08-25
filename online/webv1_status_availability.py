@@ -5,6 +5,7 @@ from typing import Any
 
 from .setup015_calculator import _addon_rule
 from .setup015_core import rows
+from .setup015_readiness import element_available_setup_ready
 from . import webv1_availability as legacy
 
 
@@ -64,6 +65,18 @@ def availability_state(database, company_id: int, element_id: int, arrival: str,
         element = c.execute('SELECT * FROM setup_elements WHERE id=? AND company_id=?', (element_id, company_id)).fetchone()
         if element is None or not int(element['active']):
             return {'available': False, 'state': 'INACTIVE', 'reason': 'Element is inactive.'}
+
+    # Setup is a gate before inventory. Existing Seasons may be extended safely
+    # because their stored Season price continues to apply to the new dates.
+    # A brand-new Season has no Element rates, so only those new dates remain
+    # off sale until pricing is completed.
+    setup_ready, setup_reason = element_available_setup_ready(
+        database, company_id, element_id, start, end
+    )
+    if not setup_ready:
+        return {'available': False, 'state': 'SETUP_INCOMPLETE', 'reason': setup_reason}
+
+    with database.connect() as c:
         closed = legacy._closure_conflict(c, company_id, element_id, arrival, departure)
         if closed:
             return {'available': False, 'state': 'CLOSED', 'reason': str(closed['reason'] or 'Closed'), 'closure_id': int(closed['id'])}
@@ -102,8 +115,9 @@ def available_elements(database, company_id: int, element_type: str, arrival: st
 
 
 def install_status_aware_availability() -> None:
-    # Keep the proven #74 routes and hold/closure code, but make every one of them
-    # resolve booking/enquiry conflicts through the new shared status-aware rules.
+    # Keep the proven availability/hold/closure routes, but make every one of
+    # them resolve inventory conflicts and Setup readiness through this shared
+    # status-aware path.
     legacy._booking_conflict = _booking_conflict
     legacy.availability_state = availability_state
     legacy.available_elements = available_elements
