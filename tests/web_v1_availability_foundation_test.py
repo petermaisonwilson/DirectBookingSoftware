@@ -48,6 +48,31 @@ def main() -> None:
             c.execute('INSERT OR REPLACE INTO setup_type_addons VALUES (?,?,?,?,?,?,?,?)', (company, 2035, 'Camping', breakfast, 1, 0, 10, 8.0))
             c.execute('INSERT OR REPLACE INTO setup_element_addons VALUES (?,?,?,?,?,?,?,?)', (company, 2035, p2, electric, 'N', None, None, None))
 
+            # Availability now deliberately requires complete setup. Give both test pitches
+            # valid Seasonal Pricing, occupancy, person limits and explicit person prices.
+            seasons = c.execute('SELECT id FROM setup_seasons WHERE company_id=? AND year=?', (company, 2035)).fetchall()
+            people = c.execute('SELECT id FROM setup_person_types WHERE company_id=? AND active=1', (company,)).fetchall()
+            for element_id in (p1, p2):
+                for season in seasons:
+                    c.execute(
+                        'INSERT OR REPLACE INTO setup_element_rates(company_id,year,element_id,season_id,rate) VALUES (?,?,?,?,?)',
+                        (company, 2035, element_id, int(season['id']), 25.0),
+                    )
+                c.execute(
+                    'INSERT OR REPLACE INTO setup_occupancy(company_id,year,element_id,max_total) VALUES (?,?,?,?)',
+                    (company, 2035, element_id, 6),
+                )
+                for person in people:
+                    pid = int(person['id'])
+                    c.execute(
+                        'INSERT OR REPLACE INTO setup_person_limits(company_id,year,element_id,person_type_id,max_count) VALUES (?,?,?,?,?)',
+                        (company, 2035, element_id, pid, 6),
+                    )
+                    c.execute(
+                        'INSERT OR REPLACE INTO setup_person_prices(company_id,year,element_id,person_type_id,rate) VALUES (?,?,?,?,?)',
+                        (company, 2035, element_id, pid, 0.0),
+                    )
+
         elements_page = client.get('/setup/elements')
         assert elements_page.status_code == 200 and 'Availability' in elements_page.text
         availability_page = client.get(f'/setup/elements/availability?element_id={p1}')
