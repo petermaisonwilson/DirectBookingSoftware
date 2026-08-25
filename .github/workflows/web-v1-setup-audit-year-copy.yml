@@ -29,10 +29,15 @@ jobs:
       - name: Verify new feature imports
         shell: pwsh
         run: |
-          python -c "from online.setup015_year_audit import register_year_audit_routes, _audit_items, _clone_year; assert register_year_audit_routes and _audit_items and _clone_year; print('Setup audit imports: passed')"
+          python -c "from online.setup015_year_audit import register_year_audit_routes, _audit_items, _clone_year; from online.setup015_year_delete_page import register_year_delete_page; from online.setup015_elements_no_base_price import register_elements_no_base_price; assert register_year_audit_routes and _audit_items and _clone_year and register_year_delete_page and register_elements_no_base_price; print('Setup audit imports: passed')"
           if ($LASTEXITCODE -ne 0) { throw "Setup audit import verification failed" }
       - name: Run Setup Audit and Year Copy regression
         shell: pwsh
         run: |
           python tests/web_v1_setup_year_audit_test.py
           if ($LASTEXITCODE -ne 0) { throw "Setup Audit / Year Copy regression failed" }
+      - name: Run Element and Year cleanup regression
+        shell: pwsh
+        run: |
+          python tests/web_v1_element_year_cleanup_test.py
+          if ($LASTEXITCODE -ne 0) { throw "Element / Year cleanup regression failed" }
