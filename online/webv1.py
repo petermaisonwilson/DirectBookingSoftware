@@ -7,6 +7,7 @@ from fastapi.responses import RedirectResponse
 
 from .setup015 import register_setup015
 from .webv1_addon_person import initialise_addon_person
+from .webv1_addon_popup import initialise_addon_popup, register_addon_popup_routes
 from .webv1_addon_when import initialise_addon_when, register_addon_when_routes
 from .webv1_availability import initialise_availability, register_availability_routes
 from .webv1_basket import register_basket_routes
@@ -42,6 +43,7 @@ def register_web_v1(app) -> None:
     initialise_booking_workflow(app.state.database)
     initialise_hold_settings(app.state.database)
     initialise_pricing_usability(app.state.database)
+    initialise_addon_popup(app.state.database)
     install_status_aware_availability()
     install_hold_timing()
     install_pricing_calculation_transparency()
@@ -57,6 +59,7 @@ def register_web_v1(app) -> None:
     register_hold_settings_routes(app)
     register_availability_routes(app)
     register_basket_routes(app)
+    register_addon_popup_routes(app)
     register_calendar_v4_routes(app)
     webv1_calendar_v2.register_calendar_v2_routes(app)
     install_calendar_expiry_refresh(app)
