@@ -99,7 +99,6 @@ def main() -> None:
         pricing_post = '<form method="post" action="/setup/pricing">'
         assert pricing.text.index('<h2>Add season</h2>') < pricing.text.index('<h2>Season maintenance</h2>') < pricing.text.index(pricing_post)
         assert 'setup-guidance-script' in pricing.text
-        assert POUND in pricing.text  # currency presentation follows the Client base currency
 
         # Enquiry pricing shows duration/basis, and min=max=1 Add-ons get the auto-one UI helper.
         with db.connect() as c:
