@@ -26,10 +26,8 @@ def main() -> None:
         page = client.get('/setup/elements')
         assert page.status_code == 200
         assert 'Base price' not in page.text
-        with db.connect() as c:
-            type_row = c.execute('SELECT name FROM setup_element_types WHERE company_id=? AND active=1 ORDER BY name LIMIT 1', (company,)).fetchone()
-            assert type_row is not None
-            element_type = str(type_row['name'])
+        element_type = 'Cleanup Test Type'
+        assert client.post('/setup/element-types', data={'csrf': csrf, 'id': '', 'name': element_type}, follow_redirects=False).status_code == 303
         assert client.post('/setup/elements', data={
             'csrf': csrf,
             'id': '',
