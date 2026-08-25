@@ -30,7 +30,7 @@ def main() -> None:
 
         with db.connect() as c:
             c.execute("INSERT OR IGNORE INTO setup_element_types(company_id,name,active) VALUES (?,?,1)", (cid, 'Lodge'))
-            element_id = int(c.execute("INSERT INTO setup_elements(company_id,name,element_type,pricing_method,base_price,active) VALUES (?,?,?,?,?,1)", (cid, 'Lake Lodge 1', 'Lodge', 'Per night', 100)).lastrowid)
+            element_id = int(c.execute("INSERT INTO setup_elements(company_id,name,element_type,pricing_method,base_price,active) VALUES (?,?,?,?,?,1)", (cid, 'Lake Lodge 1', 'Lodge', 'Per night', 0)).lastrowid)
             c.execute("INSERT OR IGNORE INTO setup_years(company_id,year) VALUES (?,?)", (cid, 2035))
             season_id = int(c.execute("INSERT INTO setup_seasons(company_id,year,name,start_date,end_date) VALUES (?,?,?,?,?)", (cid, 2035, 'Summer', '2035-01-01', '2035-12-31')).lastrowid)
             c.execute("INSERT INTO setup_element_rates(company_id,year,element_id,season_id,rate) VALUES (?,?,?,?,?)", (cid, 2035, element_id, season_id, 100))
@@ -38,6 +38,18 @@ def main() -> None:
             c.execute("INSERT INTO setup_person_prices(company_id,year,element_id,person_type_id,rate) VALUES (?,?,?,?,?)", (cid, 2035, element_id, person_id, 10))
             addon_id = int(c.execute("INSERT INTO setup_addons(company_id,name,pricing_method,active) VALUES (?,?,?,1)", (cid, 'Breakfast', 'Fixed once')).lastrowid)
             c.execute("INSERT INTO setup_type_addons(company_id,year,element_type,addon_id,allowed,min_qty,max_qty,rate) VALUES (?,?,?,?,?,?,?,?)", (cid, 2035, 'Lodge', addon_id, 1, 1, 4, 20))
+
+            # Complete the year-wide readiness data. Every active Person Type must have an
+            # explicit limit and price, and the Element must have a total occupancy value.
+            c.execute('INSERT OR REPLACE INTO setup_occupancy(company_id,year,element_id,max_total) VALUES (?,?,?,?)', (cid, 2035, element_id, 6))
+            people = c.execute('SELECT id FROM setup_person_types WHERE company_id=? AND active=1', (cid,)).fetchall()
+            for person in people:
+                pid = int(person['id'])
+                c.execute('INSERT OR REPLACE INTO setup_person_limits(company_id,year,element_id,person_type_id,max_count) VALUES (?,?,?,?,?)', (cid, 2035, element_id, pid, 6))
+                existing_price = c.execute('SELECT rate FROM setup_person_prices WHERE company_id=? AND year=? AND element_id=? AND person_type_id=?', (cid, 2035, element_id, pid)).fetchone()
+                if existing_price is None:
+                    c.execute('INSERT INTO setup_person_prices(company_id,year,element_id,person_type_id,rate) VALUES (?,?,?,?,?)', (cid, 2035, element_id, pid, 0.0))
+
             customer_id = int(c.execute("INSERT INTO customer_records(company_id,first_name,last_name,email,phone,created_at,updated_at) VALUES (?,?,?,?,?,?,?)", (cid, 'Workflow', 'Tester', 'workflow@example.test', '123', now, now)).lastrowid)
             enquiry_id = int(c.execute("INSERT INTO enquiries(company_id,customer_id,status,source,arrival_date,departure_date,party_size,notes,created_at,updated_at) VALUES (?,?,?,?,?,?,?,?,?,?)", (cid, customer_id, 'new', 'Test', '2035-06-10', '2035-06-13', 2, 'Booking workflow test', now, now)).lastrowid)
             snapshot = {
