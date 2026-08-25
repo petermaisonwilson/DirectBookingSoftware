@@ -13,6 +13,8 @@ from online.app import COOKIE_NAME, create_app
 from online.setup015_readiness import element_available_setup_ready
 from online.webv1 import register_web_v1
 
+POUND = '\u00a3'
+
 
 def login(client: TestClient, email: str, password: str) -> None:
     r = client.post('/login', data={'email': email, 'password': password}, follow_redirects=False)
@@ -41,7 +43,7 @@ def main() -> None:
         assert changed.status_code == 303
         with db.connect() as c:
             assert c.execute('SELECT base_currency FROM companies WHERE id=?', (forest,)).fetchone()['base_currency'] == 'GBP'
-        assert '£' in client.get('/company/settings').text
+        assert POUND in client.get('/company/settings').text
 
         client.post('/logout')
         login(client, 'operator@forestview.test', 'Operator013!')
@@ -97,7 +99,7 @@ def main() -> None:
         pricing_post = '<form method="post" action="/setup/pricing">'
         assert pricing.text.index('<h2>Add season</h2>') < pricing.text.index('<h2>Season maintenance</h2>') < pricing.text.index(pricing_post)
         assert 'setup-guidance-script' in pricing.text
-        assert '£' in pricing.text  # currency presentation follows the Client base currency
+        assert POUND in pricing.text  # currency presentation follows the Client base currency
 
         # Enquiry pricing shows duration/basis, and min=max=1 Add-ons get the auto-one UI helper.
         with db.connect() as c:
@@ -114,7 +116,7 @@ def main() -> None:
         })
         assert calc.status_code == 200
         assert 'Duration: 3 night(s)' in calc.text
-        assert '£' in calc.text
+        assert POUND in calc.text
 
     print('Direct Booking pricing usability / Season extension regression: passed')
 
