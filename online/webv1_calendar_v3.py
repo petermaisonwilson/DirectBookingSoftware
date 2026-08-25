@@ -173,7 +173,11 @@ def register_calendar_v3_routes(app) -> None:
                     body += f'<div class="availability-result"><div><h3>{esc(item["name"])}</h3><div class="addon-list">{chips}</div></div><button type="button" class="hold-button" data-element="{int(item["id"])}" data-name="{esc(item["name"])}">Select &amp; hold</button></div>'
             body += '</div>'
 
-        body += f'''<div class="card"><h2>Held Elements</h2><div id="hold-list" class="muted">No Elements currently held.</div></div>
+        basket_title = 'Booking in progress' if staff else 'Your booking'
+        body += f'''<aside id="booking-basket" class="booking-basket" hidden aria-live="polite">
+          <div class="basket-head"><div><strong>{basket_title}</strong><div id="basket-count" class="muted">0 items</div></div><button id="basket-clear" type="button" class="secondary basket-clear">Clear all</button></div>
+          <div id="basket-list"></div>
+        </aside>
         <div id="hold-modal" class="hold-modal" hidden><div class="hold-dialog"><h2>Still want to hold these Elements?</h2><p id="hold-names"></p><p>If Yes is not clicked before the hold expires, everything is released automatically.</p><p><button id="hold-yes" type="button">Yes — keep holding</button> <button id="hold-release" type="button" class="secondary">Release now</button></p></div></div>
         <style>
         .calendar-scroll{{overflow:auto;max-height:520px;border:1px solid #d6dde5;border-radius:8px;position:relative;scrollbar-gutter:stable both-edges}}
@@ -190,7 +194,14 @@ def register_calendar_v3_routes(app) -> None:
         .cal-bar{{z-index:4;align-self:center;height:30px;margin:0 2px;border-radius:5px;overflow:hidden;white-space:nowrap;text-overflow:ellipsis;display:flex;align-items:center}} .cal-bar a,.cal-bar span{{display:block;padding:6px 8px;color:#26313d;text-decoration:none;width:100%;overflow:hidden;text-overflow:ellipsis}}
         .legend-row{{display:flex;gap:10px;flex-wrap:wrap;align-items:center}} .legend{{padding:4px 9px;border-radius:4px;border:1px solid rgba(0,0,0,.08)}} .legend.closed{{background:#cfd4da}} .legend.booked{{background:#f3c5c9}} .legend.held{{background:#ffe39a}}
         .availability-result{{display:flex;justify-content:space-between;gap:16px;align-items:center;border-top:1px solid #e1e6eb;padding:14px 0}} .addon-list{{display:flex;gap:7px;flex-wrap:wrap}} .addon-chip{{padding:5px 8px;border-radius:5px;background:#edf2f7}} .addon-chip.no{{text-decoration:none;color:#8a2731}}
+        .booking-basket{{position:fixed;top:86px;right:18px;z-index:40;width:min(340px,calc(100vw - 36px));max-height:58vh;overflow:auto;background:white;border:2px solid #6d8196;border-radius:10px;box-shadow:0 8px 24px rgba(0,0,0,.18);padding:12px}}
+        .basket-head{{display:flex;justify-content:space-between;align-items:flex-start;gap:10px;padding-bottom:8px;border-bottom:1px solid #dfe5eb}}
+        .basket-clear{{padding:6px 9px;font-size:12px;white-space:nowrap}}
+        .basket-item{{padding:10px 0;border-bottom:1px solid #edf0f3}} .basket-item:last-child{{border-bottom:0}}
+        .basket-item-title{{display:flex;justify-content:space-between;gap:10px}} .basket-dates{{font-size:13px;color:#596675;margin:3px 0 7px}}
+        .basket-actions{{display:flex;gap:7px;flex-wrap:wrap}} .basket-actions a,.basket-actions button{{font-size:12px;padding:5px 8px}}
         .hold-modal{{position:fixed;inset:0;background:rgba(0,0,0,.35);z-index:100;display:flex;align-items:center;justify-content:center}} .hold-modal[hidden]{{display:none}} .hold-dialog{{background:white;padding:24px;border-radius:10px;max-width:520px;width:90%}}
+        @media(max-width:760px){{.booking-basket{{position:static;width:auto;max-height:none;margin:12px 0}}}}
         </style>
         <script>
         const csrf={json.dumps(str(context['csrf_token']))};
@@ -203,8 +214,19 @@ def register_calendar_v3_routes(app) -> None:
         document.querySelectorAll('.date-pick').forEach(cell=>cell.addEventListener('click',()=>{{const chosen=cell.dataset.date;if(!arrivalInput.value||departureInput.value||chosen<=arrivalInput.value){{arrivalInput.value=chosen;departureInput.value='';document.querySelectorAll('.selected-date,.selected-start').forEach(x=>x.classList.remove('selected-date','selected-start'));document.querySelectorAll('[data-date="'+chosen+'"]').forEach(x=>x.classList.add('selected-start'));return;}}departureInput.value=chosen;goToSelection();}}));
         if(arr&&dep&&scrollBox){{const first=document.querySelector('.cal-date[data-date="'+arr+'"]');const last=document.querySelector('.cal-date[data-date="'+dep+'"]');if(first){{const middle=last?(first.offsetLeft+last.offsetLeft)/2:first.offsetLeft;scrollBox.scrollLeft=Math.max(0,middle-(scrollBox.clientWidth/2));}}}}
         async function post(url,data={{}}){{const body=new URLSearchParams();body.set('csrf',csrf);Object.entries(data).forEach(([k,v])=>body.set(k,v));return fetch(url,{{method:'POST',headers:{{'Content-Type':'application/x-www-form-urlencoded;charset=UTF-8'}},body:body.toString()}})}}
-        async function refreshHolds(){{const r=await fetch('/availability/holds');if(!r.ok)return;const data=await r.json();const list=document.getElementById('hold-list');if(!data.holds.length){{list.textContent='No Elements currently held.';document.getElementById('hold-modal').hidden=true;return;}}list.innerHTML=data.holds.map(h=>'<strong>'+h.element_name+'</strong> '+h.arrival_date+' → '+h.departure_date).join('<br>');if(data.holds.some(h=>h.needs_confirmation)){{document.getElementById('hold-names').textContent=data.holds.map(h=>h.element_name).join(', ');document.getElementById('hold-modal').hidden=false;}}}}
-        document.querySelectorAll('.hold-button').forEach(btn=>btn.addEventListener('click',async()=>{{if(!arr||!dep){{alert('Choose Arrival and Departure first.');return;}}const r=await post('/availability/hold',{{element_id:btn.dataset.element,arrival_date:arr,departure_date:dep}});let data={{}};try{{data=await r.json();}}catch(e){{}}if(!r.ok){{alert(data.error||data.detail||'Unable to hold that Element');return;}}await refreshHolds();window.location.reload();}}));
-        document.getElementById('hold-yes').addEventListener('click',async()=>{{await post('/availability/holds/renew');document.getElementById('hold-modal').hidden=true;await refreshHolds();}}); document.getElementById('hold-release').addEventListener('click',async()=>{{await post('/availability/holds/release');document.getElementById('hold-modal').hidden=true;await refreshHolds();}}); refreshHolds();setInterval(refreshHolds,5000);
+        function safe(value){{return String(value).replace(/[&<>"']/g,ch=>({{'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}}[ch]));}}
+        function niceDate(value){{const p=String(value).split('-');return p.length===3?p[2]+'/'+p[1]+'/'+p[0]:value;}}
+        function editUrl(item){{const q=new URLSearchParams();q.set('element_type',item.element_type);q.set('arrival',item.arrival_date);q.set('departure',item.departure_date);return '/availability/calendar-v2?'+q.toString();}}
+        async function refreshBasket(){{
+          const r=await fetch('/availability/basket');if(!r.ok)return;const data=await r.json();const basket=document.getElementById('booking-basket');const list=document.getElementById('basket-list');const count=document.getElementById('basket-count');
+          if(!data.items.length){{basket.hidden=true;list.innerHTML='';count.textContent='0 items';document.getElementById('hold-modal').hidden=true;return;}}
+          basket.hidden=false;count.textContent=data.items.length+(data.items.length===1?' item held':' items held');
+          list.innerHTML=data.items.map(item=>'<div class="basket-item"><div class="basket-item-title"><strong>'+safe(item.element_name)+'</strong><span class="muted">'+safe(item.element_type)+'</span></div><div class="basket-dates">'+niceDate(item.arrival_date)+' → '+niceDate(item.departure_date)+'</div><div class="basket-actions"><a class="button secondary" href="'+editUrl(item)+'">Edit</a><button type="button" class="secondary basket-remove" data-hold="'+item.id+'" data-name="'+safe(item.element_name)+'">Remove</button></div></div>').join('');
+          document.querySelectorAll('.basket-remove').forEach(btn=>btn.addEventListener('click',async()=>{{if(!confirm('Remove '+btn.dataset.name+' from this booking?'))return;const response=await post('/availability/basket/remove',{{hold_id:btn.dataset.hold}});let result={{}};try{{result=await response.json();}}catch(e){{}}if(!response.ok){{alert(result.error||'Unable to remove that item.');return;}}window.location.reload();}}));
+          if(data.items.some(item=>item.needs_confirmation)){{document.getElementById('hold-names').textContent=data.items.map(item=>item.element_name).join(', ');document.getElementById('hold-modal').hidden=false;}}
+        }}
+        document.querySelectorAll('.hold-button').forEach(btn=>btn.addEventListener('click',async()=>{{if(!arr||!dep){{alert('Choose Arrival and Departure first.');return;}}const r=await post('/availability/hold',{{element_id:btn.dataset.element,arrival_date:arr,departure_date:dep}});let data={{}};try{{data=await r.json();}}catch(e){{}}if(!r.ok){{alert(data.error||data.detail||'Unable to hold that Element');return;}}await refreshBasket();window.location.reload();}}));
+        document.getElementById('basket-clear').addEventListener('click',async()=>{{if(!confirm('Remove all held items from this booking?'))return;await post('/availability/holds/release');window.location.reload();}});
+        document.getElementById('hold-yes').addEventListener('click',async()=>{{await post('/availability/holds/renew');document.getElementById('hold-modal').hidden=true;await refreshBasket();}}); document.getElementById('hold-release').addEventListener('click',async()=>{{await post('/availability/holds/release');document.getElementById('hold-modal').hidden=true;window.location.reload();}}); refreshBasket();setInterval(refreshBasket,5000);
         </script>'''
         return HTMLResponse(layout('Availability Calendar', body, context))
