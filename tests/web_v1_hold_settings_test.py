@@ -28,12 +28,20 @@ def main() -> None:
         csrf = str(ctx['csrf_token'])
         with db.connect() as c:
             company = int(c.execute("SELECT id FROM companies WHERE name='Forest View Campsite'").fetchone()['id'])
-            # Minimal operating inventory for the hold test.
+            # Complete operating inventory for the hold test. Availability now deliberately
+            # requires Seasonal Pricing, occupancy and explicit Person setup before sale.
             c.execute("INSERT OR IGNORE INTO setup_element_types(company_id,name,active) VALUES (?,?,1)", (company, 'Camping'))
-            c.execute("INSERT INTO setup_elements(company_id,name,element_type,pricing_method,base_price,active) VALUES (?,?,?,?,?,1)", (company, 'Hold Pitch', 'Camping', 'Per night', 20))
+            c.execute("INSERT INTO setup_elements(company_id,name,element_type,pricing_method,base_price,active) VALUES (?,?,?,?,?,1)", (company, 'Hold Pitch', 'Camping', 'Per night', 0))
             pitch = int(c.execute("SELECT id FROM setup_elements WHERE company_id=? AND name='Hold Pitch'", (company,)).fetchone()['id'])
             c.execute("INSERT OR IGNORE INTO setup_years(company_id,year) VALUES (?,?)", (company, 2035))
-            c.execute("INSERT INTO setup_seasons(company_id,year,name,start_date,end_date) VALUES (?,?,?,?,?)", (company, 2035, 'Season', '2035-01-01', '2035-12-31'))
+            season_id = int(c.execute("INSERT INTO setup_seasons(company_id,year,name,start_date,end_date) VALUES (?,?,?,?,?)", (company, 2035, 'Season', '2035-01-01', '2035-12-31')).lastrowid)
+            c.execute('INSERT INTO setup_element_rates(company_id,year,element_id,season_id,rate) VALUES (?,?,?,?,?)', (company, 2035, pitch, season_id, 20.0))
+            c.execute('INSERT INTO setup_occupancy(company_id,year,element_id,max_total) VALUES (?,?,?,?)', (company, 2035, pitch, 6))
+            people = c.execute('SELECT id FROM setup_person_types WHERE company_id=? AND active=1', (company,)).fetchall()
+            for person in people:
+                pid = int(person['id'])
+                c.execute('INSERT OR REPLACE INTO setup_person_limits(company_id,year,element_id,person_type_id,max_count) VALUES (?,?,?,?,?)', (company, 2035, pitch, pid, 6))
+                c.execute('INSERT OR REPLACE INTO setup_person_prices(company_id,year,element_id,person_type_id,rate) VALUES (?,?,?,?,?)', (company, 2035, pitch, pid, 0.0))
 
         # Defaults are the agreed production values.
         page = operator.get('/company/hold-settings')
