@@ -8,6 +8,16 @@ from .setup015_core import audit, require_csrf
 from . import webv1_availability as availability
 
 
+def _basket_row(connection, company_id: int, token: str, hold_id: int):
+    return connection.execute(
+        '''SELECT h.*,e.name AS element_name,e.element_type
+           FROM element_holds h
+           JOIN setup_elements e ON e.id=h.element_id AND e.company_id=h.company_id
+           WHERE h.id=? AND h.company_id=? AND h.session_token=?''',
+        (hold_id, company_id, token),
+    ).fetchone()
+
+
 def register_basket_routes(app) -> None:
     database = app.state.database
 
@@ -23,7 +33,7 @@ def register_basket_routes(app) -> None:
                    FROM element_holds h
                    JOIN setup_elements e ON e.id=h.element_id AND e.company_id=h.company_id
                    WHERE h.company_id=? AND h.session_token=?
-                   ORDER BY h.created_at, e.name COLLATE NOCASE''',
+                   ORDER BY h.created_at, h.id''',
                 (company_id, token),
             ).fetchall()
         items = []
@@ -39,7 +49,10 @@ def register_basket_routes(app) -> None:
                 'expires_at': str(row['expires_at']),
                 'needs_confirmation': now >= availability._utc(str(row['renewal_required_at'])),
             })
-        return JSONResponse({'items': items, 'count': len(items)})
+        anchor = None
+        if items:
+            anchor = {'arrival_date': items[0]['arrival_date'], 'departure_date': items[0]['departure_date']}
+        return JSONResponse({'items': items, 'count': len(items), 'anchor': anchor})
 
     @app.post('/availability/basket/remove')
     async def basket_remove(request: Request):
@@ -53,25 +66,62 @@ def register_basket_routes(app) -> None:
             return JSONResponse({'ok': False, 'error': 'Invalid basket item.'}, status_code=400)
         with database.connect() as c:
             availability._purge_expired_holds(c)
-            row = c.execute(
-                '''SELECT h.*,e.name AS element_name,e.element_type
-                   FROM element_holds h
-                   JOIN setup_elements e ON e.id=h.element_id AND e.company_id=h.company_id
-                   WHERE h.id=? AND h.company_id=? AND h.session_token=?''',
-                (hold_id, company_id, token),
-            ).fetchone()
+            row = _basket_row(c, company_id, token, hold_id)
             if row is None:
                 return JSONResponse({'ok': False, 'error': 'That basket item has already expired or been removed.'}, status_code=404)
             before = dict(row)
             c.execute('DELETE FROM element_holds WHERE id=? AND company_id=? AND session_token=?', (hold_id, company_id, token))
-        audit(
-            database,
-            context,
-            company_id,
-            'ELEMENT_HOLD_REMOVED',
-            'element_hold',
-            hold_id,
-            before,
-            {'removed': True},
-        )
+        audit(database, context, company_id, 'ELEMENT_HOLD_REMOVED', 'element_hold', hold_id, before, {'removed': True})
         return JSONResponse({'ok': True, 'removed': 1, 'hold_id': hold_id})
+
+    @app.post('/availability/basket/update')
+    async def basket_update(request: Request):
+        context, company_id = availability._session_company(database, request)
+        data = await form_data(request)
+        require_csrf(context, data)
+        token = request.cookies.get(COOKIE_NAME, '')
+        try:
+            hold_id = int(data.get('hold_id', ''))
+            element_id = int(data.get('element_id', ''))
+        except (TypeError, ValueError):
+            return JSONResponse({'ok': False, 'error': 'Invalid booking item.'}, status_code=400)
+        arrival = data.get('arrival_date', '')
+        departure = data.get('departure_date', '')
+        with database.connect() as c:
+            availability._purge_expired_holds(c)
+            current = _basket_row(c, company_id, token, hold_id)
+            if current is None:
+                return JSONResponse({'ok': False, 'error': 'That booking item has expired or been removed.'}, status_code=404)
+            before = dict(current)
+            # Temporarily remove the old hold while validating the replacement. This is inside
+            # one database transaction, so a failed replacement restores the original row.
+            c.execute('DELETE FROM element_holds WHERE id=?', (hold_id,))
+            state = availability.availability_state(database, company_id, element_id, arrival, departure, session_token=token)
+            if not state['available']:
+                c.rollback()
+                return JSONResponse({'ok': False, 'error': state['reason']}, status_code=409)
+            hold_seconds = 600
+            grace_seconds = 60
+            settings = c.execute('SELECT hold_seconds,grace_seconds FROM company_hold_settings WHERE company_id=?', (company_id,)).fetchone()
+            if settings:
+                hold_seconds = int(settings['hold_seconds']); grace_seconds = int(settings['grace_seconds'])
+            now = availability._now()
+            from datetime import timedelta
+            prompt = now + timedelta(seconds=hold_seconds)
+            expires = prompt + timedelta(seconds=grace_seconds)
+            element = c.execute('SELECT name,element_type FROM setup_elements WHERE id=? AND company_id=? AND active=1', (element_id, company_id)).fetchone()
+            if element is None:
+                c.rollback()
+                return JSONResponse({'ok': False, 'error': 'That Element is no longer active.'}, status_code=409)
+            c.execute(
+                '''INSERT INTO element_holds(id,company_id,element_id,session_token,holder_user_id,arrival_date,departure_date,renewal_required_at,expires_at,created_at,updated_at)
+                   VALUES (?,?,?,?,?,?,?,?,?,?,?)''',
+                (hold_id, company_id, element_id, token, context['user_id'], arrival, departure,
+                 prompt.isoformat(timespec='seconds'), expires.isoformat(timespec='seconds'), before['created_at'], now.isoformat(timespec='seconds')),
+            )
+        after = {
+            'element_id': element_id, 'element_name': str(element['name']), 'element_type': str(element['element_type']),
+            'arrival_date': arrival, 'departure_date': departure, 'expires_at': expires.isoformat(timespec='seconds'),
+        }
+        audit(database, context, company_id, 'ELEMENT_HOLD_UPDATED', 'element_hold', hold_id, before, after)
+        return JSONResponse({'ok': True, 'hold_id': hold_id, 'item': after})
