@@ -35,8 +35,10 @@ def main() -> None:
             assert int(held_status['blocks_availability']) == 1 and int(held_status['expiry_minutes']) == 10
 
         assert operator.post('/setup/element-types', data={'csrf': csrf, 'name': 'Camping', 'id': ''}, follow_redirects=False).status_code == 303
+        assert operator.post('/setup/element-types', data={'csrf': csrf, 'name': 'B&B', 'id': ''}, follow_redirects=False).status_code == 303
         for name in ('Pitch 1', 'Pitch 2'):
             assert operator.post('/setup/elements', data={'csrf': csrf, 'id': '', 'name': name, 'element_type': 'Camping', 'pricing_method': 'Per night', 'base_price': '25'}, follow_redirects=False).status_code == 303
+        assert operator.post('/setup/elements', data={'csrf': csrf, 'id': '', 'name': 'Room 1', 'element_type': 'B&B', 'pricing_method': 'Per night', 'base_price': '80'}, follow_redirects=False).status_code == 303
         assert operator.post('/setup/years/new', data={'csrf': csrf, 'year': '2035'}, follow_redirects=False).status_code == 303
         assert operator.post('/setup/maintenance/catalog/save', data={'csrf': csrf, 'kind': 'addon', 'id': '', 'name': 'Electric hook up', 'pricing_method': 'Per night'}, follow_redirects=False).status_code == 303
         with db.connect() as c:
@@ -45,19 +47,20 @@ def main() -> None:
                 c.execute("INSERT INTO setup_seasons(company_id,year,name,start_date,end_date) VALUES (?,?,?,?,?)", (company, 2035, 'Season', '2035-01-01', '2035-12-31'))
             p1 = int(c.execute("SELECT id FROM setup_elements WHERE company_id=? AND name='Pitch 1'", (company,)).fetchone()['id'])
             p2 = int(c.execute("SELECT id FROM setup_elements WHERE company_id=? AND name='Pitch 2'", (company,)).fetchone()['id'])
+            room1 = int(c.execute("SELECT id FROM setup_elements WHERE company_id=? AND name='Room 1'", (company,)).fetchone()['id'])
             electric = int(c.execute("SELECT id FROM setup_addons WHERE company_id=? AND name='Electric hook up'", (company,)).fetchone()['id'])
             c.execute('INSERT OR REPLACE INTO setup_type_addons VALUES (?,?,?,?,?,?,?,?)', (company, 2035, 'Camping', electric, 1, 1, 1, 5.0))
             c.execute('INSERT OR REPLACE INTO setup_element_addons VALUES (?,?,?,?,?,?,?,?)', (company, 2035, p2, electric, 'N', None, None, None))
 
-            # Availability now requires complete setup. Give both test pitches
-            # valid Seasonal Pricing, occupancy, person limits and explicit prices.
+            # Availability requires complete setup. Give all inventory valid pricing,
+            # occupancy, person limits and explicit person prices.
             seasons = c.execute('SELECT id FROM setup_seasons WHERE company_id=? AND year=?', (company, 2035)).fetchall()
             people = c.execute('SELECT id FROM setup_person_types WHERE company_id=? AND active=1', (company,)).fetchall()
-            for element_id in (p1, p2):
+            for element_id, rate in ((p1, 25.0), (p2, 25.0), (room1, 80.0)):
                 for season_row in seasons:
                     c.execute(
                         'INSERT OR REPLACE INTO setup_element_rates(company_id,year,element_id,season_id,rate) VALUES (?,?,?,?,?)',
-                        (company, 2035, element_id, int(season_row['id']), 25.0),
+                        (company, 2035, element_id, int(season_row['id']), rate),
                     )
                 c.execute(
                     'INSERT OR REPLACE INTO setup_occupancy(company_id,year,element_id,max_total) VALUES (?,?,?,?)',
@@ -108,6 +111,8 @@ def main() -> None:
         assert "departureInput.value=chosen" in page.text
         assert 'selected-date' in page.text and 'selected-start' in page.text
         assert 'Available for your selected dates' in page.text and '✕ Electric hook up' in page.text
+        assert 'Booking in progress' in page.text and 'id="booking-basket"' in page.text
+        assert '/availability/basket/remove' in page.text and 'basket-remove' in page.text
 
         # Real browser POSTs must use the URL-encoded format consumed by app.form_data.
         assert "new URLSearchParams()" in page.text
@@ -122,12 +127,34 @@ def main() -> None:
         assert 'data-date="2035-10-01"' in centred.text and 'data-date="2035-10-20"' in centred.text
         assert 'scrollBox.clientWidth/2' in centred.text
 
-        # Anything displayed as available must be accepted by the hold endpoint in the same session.
-        assert 'Pitch 1' in centred.text and 'Select &amp; hold' in centred.text
-        hold = operator.post('/availability/hold', data={'csrf': csrf, 'element_id': str(p1), 'arrival_date': '2035-10-10', 'departure_date': '2035-10-13'})
-        assert hold.status_code == 200 and hold.json()['ok'] is True
-        held = operator.get('/availability/holds').json()['holds']
-        assert any(item['element_id'] == p1 for item in held)
+        # A booking-in-progress basket can hold inventory from different Element Types.
+        hold_pitch = operator.post('/availability/hold', data={'csrf': csrf, 'element_id': str(p1), 'arrival_date': '2035-10-10', 'departure_date': '2035-10-20'})
+        assert hold_pitch.status_code == 200 and hold_pitch.json()['ok'] is True
+        room_search = operator.get('/availability/search', params={'element_type': 'B&B', 'arrival': '2035-10-12', 'departure': '2035-10-17'}).json()['elements']
+        assert 'Room 1' in {item['name'] for item in room_search}
+        hold_room = operator.post('/availability/hold', data={'csrf': csrf, 'element_id': str(room1), 'arrival_date': '2035-10-12', 'departure_date': '2035-10-17'})
+        assert hold_room.status_code == 200 and hold_room.json()['ok'] is True
+
+        basket = operator.get('/availability/basket')
+        assert basket.status_code == 200 and basket.json()['count'] == 2
+        basket_items = {item['element_name']: item for item in basket.json()['items']}
+        assert basket_items['Pitch 1']['element_type'] == 'Camping'
+        assert basket_items['Room 1']['element_type'] == 'B&B'
+        assert basket_items['Pitch 1']['arrival_date'] == '2035-10-10' and basket_items['Room 1']['departure_date'] == '2035-10-17'
+
+        # Switching Element Type leaves the other held items in the basket, while the selected
+        # Element Type still displays its own hold on the calendar.
+        room_page = operator.get('/availability/calendar', params={'element_type': 'B&B', 'arrival': '2035-10-12', 'departure': '2035-10-17'})
+        assert room_page.status_code == 200 and 'Room 1' in room_page.text and 'Held by you' in room_page.text and 'Booking in progress' in room_page.text
+
+        # One basket item can be removed without releasing the rest.
+        remove_room = operator.post('/availability/basket/remove', data={'csrf': csrf, 'hold_id': str(basket_items['Room 1']['id'])})
+        assert remove_room.status_code == 200 and remove_room.json()['ok'] is True
+        remaining = operator.get('/availability/basket').json()['items']
+        assert [item['element_name'] for item in remaining] == ['Pitch 1']
+        pitch_state = operator.get('/availability/holds').json()['holds']
+        assert any(item['element_id'] == p1 for item in pitch_state)
+        assert all(item['element_id'] != room1 for item in pitch_state)
         assert operator.post('/availability/holds/release', data={'csrf': csrf}).status_code == 200
 
         # Long stays retain useful context before and after the selected period.
@@ -165,16 +192,16 @@ def main() -> None:
         customer_page = customer_view.get('/availability/calendar', params={'element_type': 'Camping', 'start': '2035-07-08'})
         assert customer_page.status_code == 200
         assert 'Alice Smith' not in customer_page.text and 'BK2035-101' not in customer_page.text and 'Balance Paid' not in customer_page.text
-        assert 'Unavailable' in customer_page.text
+        assert 'Unavailable' in customer_page.text and 'Your booking' in customer_page.text
         assert customer_view.get(f'/operations/bookings/{booking}').status_code == 403
 
         statuses_page = operator.get('/setup/booking-statuses')
         assert statuses_page.status_code == 200 and all(x in statuses_page.text for x in ('Booking Statuses', 'Calendar colour', 'Blocks availability', 'Future email automation'))
         with db.connect() as c:
             actions = {str(r['action']) for r in c.execute('SELECT action FROM audit_log WHERE company_id=?', (company,)).fetchall()}
-        assert {'BOOKING_STATUS_SAVED', 'BOOKING_STATUS_CHANGED'}.issubset(actions)
+        assert {'BOOKING_STATUS_SAVED', 'BOOKING_STATUS_CHANGED', 'ELEMENT_HOLD_REMOVED'}.issubset(actions)
 
-    print('Direct Booking Web V1 calendar usability + status workflow test: passed')
+    print('Direct Booking Web V1 calendar usability + status workflow + multi-element basket test: passed')
 
 
 if __name__ == '__main__':
