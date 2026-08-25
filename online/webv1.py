@@ -13,6 +13,11 @@ from .webv1_booking_status import initialise_booking_statuses, register_booking_
 from .webv1_bookings import initialise_booking_workflow, register_booking_routes
 from .webv1_calendar_refresh import install_calendar_expiry_refresh
 from .webv1_hold_settings import initialise_hold_settings, install_hold_timing, register_hold_settings_routes
+from .webv1_pricing_usability import (
+    initialise_pricing_usability,
+    install_pricing_calculation_transparency,
+    register_pricing_usability_routes,
+)
 from . import webv1_calendar_v2
 from .webv1_calendar_v3 import register_calendar_v3_routes
 from .webv1_core import initialise_web_v1
@@ -35,8 +40,11 @@ def register_web_v1(app) -> None:
     initialise_booking_statuses(app.state.database)
     initialise_booking_workflow(app.state.database)
     initialise_hold_settings(app.state.database)
+    initialise_pricing_usability(app.state.database)
     install_status_aware_availability()
     install_hold_timing()
+    install_pricing_calculation_transparency()
+    register_pricing_usability_routes(app)
     webv1_calendar_v2.json = json
     register_web_v1_routes(app)
     register_customer_routes(app)
