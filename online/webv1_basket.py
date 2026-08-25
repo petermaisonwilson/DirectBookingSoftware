@@ -1,9 +1,12 @@
 from __future__ import annotations
 
+from datetime import timedelta
+
 from fastapi import Request
 from fastapi.responses import JSONResponse
 
 from .app import COOKIE_NAME, form_data
+from .database import iso_now
 from .setup015_core import audit, require_csrf
 from . import webv1_availability as availability
 
@@ -87,41 +90,87 @@ def register_basket_routes(app) -> None:
             return JSONResponse({'ok': False, 'error': 'Invalid booking item.'}, status_code=400)
         arrival = data.get('arrival_date', '')
         departure = data.get('departure_date', '')
+
+        # Validate before opening the write transaction. availability_state opens its own
+        # database connection, so calling it while a write connection is already active
+        # can lock SQLite on Windows.
+        state = availability.availability_state(
+            database, company_id, element_id, arrival, departure, session_token=token
+        )
+        if not state['available']:
+            return JSONResponse({'ok': False, 'error': state['reason']}, status_code=409)
+
+        now = availability._now()
         with database.connect() as c:
             availability._purge_expired_holds(c)
             current = _basket_row(c, company_id, token, hold_id)
             if current is None:
                 return JSONResponse({'ok': False, 'error': 'That booking item has expired or been removed.'}, status_code=404)
             before = dict(current)
-            # Temporarily remove the old hold while validating the replacement. This is inside
-            # one database transaction, so a failed replacement restores the original row.
-            c.execute('DELETE FROM element_holds WHERE id=?', (hold_id,))
-            state = availability.availability_state(database, company_id, element_id, arrival, departure, session_token=token)
-            if not state['available']:
-                c.rollback()
-                return JSONResponse({'ok': False, 'error': state['reason']}, status_code=409)
+
+            element = c.execute(
+                'SELECT name,element_type FROM setup_elements WHERE id=? AND company_id=? AND active=1',
+                (element_id, company_id),
+            ).fetchone()
+            if element is None:
+                return JSONResponse({'ok': False, 'error': 'That Element is no longer active.'}, status_code=409)
+
+            # Re-check conflicts inside this same write transaction so there is no race
+            # between the initial validation and saving the replacement. Ignore this
+            # session's own holds; they are the booking currently being edited.
+            competing_hold = c.execute(
+                '''SELECT id FROM element_holds
+                   WHERE company_id=? AND element_id=? AND session_token<>?
+                     AND date(arrival_date)<date(?) AND date(departure_date)>date(?)
+                     AND expires_at>? LIMIT 1''',
+                (company_id, element_id, token, departure, arrival, iso_now()),
+            ).fetchone()
+            booking_conflict = availability._booking_conflict(c, company_id, element_id, arrival, departure)
+            closure_conflict = availability._closure_conflict(c, company_id, element_id, arrival, departure)
+            if competing_hold or booking_conflict or closure_conflict:
+                return JSONResponse(
+                    {'ok': False, 'error': 'That Element has just become unavailable. Please choose another.'},
+                    status_code=409,
+                )
+
             hold_seconds = 600
             grace_seconds = 60
-            settings = c.execute('SELECT hold_seconds,grace_seconds FROM company_hold_settings WHERE company_id=?', (company_id,)).fetchone()
+            settings = c.execute(
+                'SELECT hold_seconds,grace_seconds FROM company_hold_settings WHERE company_id=?',
+                (company_id,),
+            ).fetchone()
             if settings:
-                hold_seconds = int(settings['hold_seconds']); grace_seconds = int(settings['grace_seconds'])
-            now = availability._now()
-            from datetime import timedelta
+                hold_seconds = int(settings['hold_seconds'])
+                grace_seconds = int(settings['grace_seconds'])
             prompt = now + timedelta(seconds=hold_seconds)
             expires = prompt + timedelta(seconds=grace_seconds)
-            element = c.execute('SELECT name,element_type FROM setup_elements WHERE id=? AND company_id=? AND active=1', (element_id, company_id)).fetchone()
-            if element is None:
-                c.rollback()
-                return JSONResponse({'ok': False, 'error': 'That Element is no longer active.'}, status_code=409)
+
             c.execute(
-                '''INSERT INTO element_holds(id,company_id,element_id,session_token,holder_user_id,arrival_date,departure_date,renewal_required_at,expires_at,created_at,updated_at)
-                   VALUES (?,?,?,?,?,?,?,?,?,?,?)''',
-                (hold_id, company_id, element_id, token, context['user_id'], arrival, departure,
-                 prompt.isoformat(timespec='seconds'), expires.isoformat(timespec='seconds'), before['created_at'], now.isoformat(timespec='seconds')),
+                '''UPDATE element_holds
+                   SET element_id=?,holder_user_id=?,arrival_date=?,departure_date=?,
+                       renewal_required_at=?,expires_at=?,updated_at=?
+                   WHERE id=? AND company_id=? AND session_token=?''',
+                (
+                    element_id,
+                    context['user_id'],
+                    arrival,
+                    departure,
+                    prompt.isoformat(timespec='seconds'),
+                    expires.isoformat(timespec='seconds'),
+                    now.isoformat(timespec='seconds'),
+                    hold_id,
+                    company_id,
+                    token,
+                ),
             )
+
         after = {
-            'element_id': element_id, 'element_name': str(element['name']), 'element_type': str(element['element_type']),
-            'arrival_date': arrival, 'departure_date': departure, 'expires_at': expires.isoformat(timespec='seconds'),
+            'element_id': element_id,
+            'element_name': str(element['name']),
+            'element_type': str(element['element_type']),
+            'arrival_date': arrival,
+            'departure_date': departure,
+            'expires_at': expires.isoformat(timespec='seconds'),
         }
         audit(database, context, company_id, 'ELEMENT_HOLD_UPDATED', 'element_hold', hold_id, before, after)
         return JSONResponse({'ok': True, 'hold_id': hold_id, 'item': after})
