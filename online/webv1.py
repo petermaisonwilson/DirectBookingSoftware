@@ -9,6 +9,7 @@ from .setup015 import register_setup015
 from .webv1_addon_person import initialise_addon_person
 from .webv1_addon_when import initialise_addon_when, register_addon_when_routes
 from .webv1_availability import initialise_availability, register_availability_routes
+from .webv1_basket import register_basket_routes
 from .webv1_booking_status import initialise_booking_statuses, register_booking_status_routes
 from .webv1_bookings import initialise_booking_workflow, register_booking_routes
 from .webv1_calendar_refresh import install_calendar_expiry_refresh
@@ -55,6 +56,7 @@ def register_web_v1(app) -> None:
     register_booking_status_routes(app)
     register_hold_settings_routes(app)
     register_availability_routes(app)
+    register_basket_routes(app)
     register_calendar_v3_routes(app)
     webv1_calendar_v2.register_calendar_v2_routes(app)
     install_calendar_expiry_refresh(app)
