@@ -7,6 +7,7 @@ from .setup015_core import copy_previous_year, initialise_setup015
 from .setup015_element_availability_page import register_element_availability_page
 from .setup015_elements_no_base_price import register_elements_no_base_price
 from .setup015_maintenance import register_setup_maintenance_routes
+from .setup015_season_flex import register_flexible_season_routes
 from .setup015_year_actions import register_year_action_routes
 from .setup015_year_audit import register_year_audit_routes
 from .setup015_year_delete_page import register_year_delete_page
@@ -27,6 +28,9 @@ def register_setup015(app) -> None:
     # explicitly maintained in Seasonal Pricing; the legacy DB column remains
     # only for backwards compatibility and is not used by the booking engine.
     register_elements_no_base_price(app)
+    # A Season may be extended mid-year without re-entering prices: the same
+    # Season ID keeps its stored rates and they automatically cover the new dates.
+    register_flexible_season_routes(app)
     # Legacy/enhanced routes remain registered underneath for compatibility.
     register_element_availability_page(app)
     register_setup_maintenance_routes(app)
