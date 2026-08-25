@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import sys
 import tempfile
+from datetime import date
 from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
@@ -51,7 +52,7 @@ def main() -> None:
 
         # Build a self-contained Element/Season setup.
         with db.connect() as c:
-            type_id = int(c.execute("INSERT INTO setup_element_types(company_id,name,active) VALUES (?,?,1)", (company, 'Test Type')).lastrowid)
+            c.execute("INSERT INTO setup_element_types(company_id,name,active) VALUES (?,?,1)", (company, 'Test Type'))
             element_id = int(c.execute("INSERT INTO setup_elements(company_id,name,element_type,pricing_method,base_price,active) VALUES (?,?,?,?,0,1)", (company, 'Test Cabin', 'Test Type', 'Per night')).lastrowid)
             person_id = int(c.execute("INSERT INTO setup_person_types(company_id,name,short_name,active) VALUES (?,?,?,1)", (company, 'Adult', 'Adult')).lastrowid)
             c.execute('INSERT INTO setup_years(company_id,year) VALUES (?,?)', (company, 2041))
@@ -62,7 +63,7 @@ def main() -> None:
             c.execute('INSERT INTO setup_person_prices(company_id,year,element_id,person_type_id,rate) VALUES (?,?,?,?,?)', (company, 2041, element_id, person_id, 0.0))
 
         # Existing Season extension inherits the stored Season price automatically.
-        ready, _ = element_available_setup_ready(db, company, element_id, __import__('datetime').date(2041, 9, 20), __import__('datetime').date(2041, 9, 22))
+        ready, _ = element_available_setup_ready(db, company, element_id, date(2041, 9, 20), date(2041, 9, 22))
         assert ready
         from online.webv1_status_availability import availability_state
         assert availability_state(db, company, element_id, '2041-10-05', '2041-10-06')['state'] == 'OUT_OF_SEASON'
@@ -93,7 +94,8 @@ def main() -> None:
         # Season Maintenance is now immediately below Add Season, not at the bottom.
         pricing = client.get('/setup/pricing?year=2041')
         assert pricing.status_code == 200
-        assert pricing.text.index('<h2>Add season</h2>') < pricing.text.index('<h2>Season maintenance</h2>') < pricing.text.index('action="/setup/pricing"')
+        pricing_post = '<form method="post" action="/setup/pricing">'
+        assert pricing.text.index('<h2>Add season</h2>') < pricing.text.index('<h2>Season maintenance</h2>') < pricing.text.index(pricing_post)
         assert 'setup-guidance-script' in pricing.text
         assert '£' in pricing.text  # currency presentation follows the Client base currency
 
