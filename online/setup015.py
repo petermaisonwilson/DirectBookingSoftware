@@ -6,6 +6,7 @@ from .setup015_catalogue import register_catalogue_routes
 from .setup015_core import copy_previous_year, initialise_setup015
 from .setup015_element_availability_page import register_element_availability_page
 from .setup015_maintenance import register_setup_maintenance_routes
+from .setup015_year_actions import register_year_action_routes
 from .setup015_year_audit import register_year_audit_routes
 
 __all__ = ["copy_previous_year", "initialise_setup015", "register_setup015"]
@@ -13,6 +14,9 @@ __all__ = ["copy_previous_year", "initialise_setup015", "register_setup015"]
 
 def register_setup015(app) -> None:
     initialise_setup015(app.state.database)
+    # Canonical year actions preserve the old "copy latest previous year" call
+    # while also supporting explicit source-year selection and price adjustment.
+    register_year_action_routes(app)
     # Register the enhanced Year / Setup Audit workflow before the legacy Year
     # routes so blank-year and adjusted copy-year behaviour has one safe source.
     register_year_audit_routes(app)
