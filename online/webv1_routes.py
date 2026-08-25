@@ -27,7 +27,7 @@ def register_web_v1_routes(app) -> None:
           <div class="card"><h2>Enquiries</h2><p><strong>{counts['enquiries']}</strong> enquiry record(s)</p><p><a class="button" href="/operations/enquiries">Open Enquiry Search</a></p><p><a class="button secondary" href="/operations/customers">Find Customer / New Enquiry</a></p></div>
           <div class="card"><h2>Offers</h2><p><strong>{counts['offers']}</strong> offer record(s)</p><p>Draft, sent, accepted, declined and expired offers with frozen price snapshots.</p></div>
           <div class="card"><h2>Bookings</h2><p><strong>{counts['bookings']}</strong> booking record(s)</p><p>Confirmed bookings, payments, workflow status and permanent history.</p><p><a class="button" href="/operations/bookings">Open Bookings</a></p></div>
-          <div class="card"><h2>Arrivals / Self Check-in</h2><p><strong>{counts['arrivals']}</strong> arrival record(s)</p><p>Supports booked arrivals and future walk-in/self check-in.</p></div>
+          <div class="card"><h2>Arrivals / Self Check-in</h2><p><strong>{counts['arrivals']}</strong> arrival record(s)</p><p>Supports both booked arrivals and walk-in/unbooked arrivals. Self check-in will build on this same Booking record.</p></div>
           <div class="card"><h2>Setup</h2><p>Elements, seasons, Person pricing, Add-on rules, Booking Statuses and closures.</p><p><a class="button" href="/setup">Open Setup</a></p></div>
         </div>'''
         return layout('Operations', body, context)
