@@ -88,13 +88,14 @@ def main() -> None:
         assert f'/operations/bookings/{booking}' in page.text
         assert 'Electric option' in page.text and 'Pets' in page.text
         assert 'featureHtml' in page.text
+        assert 'preview-selected' in page.text and "cell.classList.add('preview-selected')" in page.text
 
         day_page = operator.get('/availability/calendar', params={'element_type': 'Fishing', 'start': '2035-05-01'})
         assert day_page.status_code == 200
         assert 'Peg A' in day_page.text
         assert 'data-pricing-method="Per day"' in day_page.text
-        assert 'dayMode?dayAfter(picked):picked' in day_page.text
-        assert 'last booked day' in day_page.text
+        assert 'const internalEnd=dayAfter(picked);' in day_page.text
+        assert 'last full day' in day_page.text
         assert "· '+ms+' day'" in day_page.text
 
         first = operator.post('/availability/hold', data={'csrf': csrf, 'element_id': str(p1), 'arrival_date': '2035-10-10', 'departure_date': '2035-10-20'})
@@ -121,7 +122,9 @@ def main() -> None:
         assert edit.status_code == 200
         assert all(x in edit.text for x in ('Editing Room 1', 'Room 1', 'Room 2', 'selection-action', 'RESERVE CHANGES', 'CANCEL EDIT', 'editable-own date-pick', 'calendar-edit-semantics'))
         assert '>UPDATE</button>' not in edit.text
-        assert "if(editMode) document.querySelectorAll('.selection-action').forEach(b=>b.hidden=true);" in edit.text
+        assert "document.querySelectorAll('.selection-action').forEach(b=>b.hidden=true);" in edit.text
+        assert "document.querySelectorAll('.cal-cell.editable-own').forEach(cell=>{cell.style.pointerEvents='auto'" in edit.text
+        assert 'edit-original-suppressed' in edit.text and 'suppressEditedOriginal()' in edit.text
         assert '.selection-action{justify-self:center;width:max-content' in edit.text
         assert 'night-departure' in edit.text and "addDeparture(row,internalEnd,true)" in edit.text
         assert 'availability-result' not in edit.text
