@@ -15,6 +15,8 @@ from .webv1_booking_status import initialise_booking_statuses, register_booking_
 from .webv1_bookings import initialise_booking_workflow, register_booking_routes
 from .webv1_calendar_edit_semantics import install_calendar_edit_semantics
 from .webv1_calendar_refresh import install_calendar_expiry_refresh
+from .webv1_calendar_row_isolation import install_calendar_row_isolation
+from .webv1_duration_display import install_duration_display
 from .webv1_edit_action_box import install_edit_action_box
 from .webv1_hold_settings import initialise_hold_settings, install_hold_timing, register_hold_settings_routes
 from .webv1_pricing_usability import (
@@ -69,6 +71,8 @@ def register_web_v1(app) -> None:
     install_calendar_expiry_refresh(app)
     install_user_display_rules(app)
     install_edit_action_box(app)
+    install_duration_display(app)
+    install_calendar_row_isolation(app)
 
     @app.get('/availability/calendar')
     def availability_calendar_compat(request: Request):
