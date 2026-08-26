@@ -10,14 +10,16 @@ from .setup015_core import rows
 
 
 def install_calendar_edit_semantics(app) -> None:
-    """Human-facing calendar corrections layered over the visual selector.
+    """Human-facing calendar selection and edit behaviour.
 
-    * EDIT enters edit mode without releasing the existing hold.
-    * Existing yellow cells remain clickable while editing.
-    * A changed selection is committed with RESERVE CHANGES; CANCEL EDIT leaves it untouched.
-    * Per-day Elements treat the second clicked date as the final occupied day.
-      Per-night Elements treat it as the departure date.
-    * Night bookings show the departure morning as the top half of the departure-day cell.
+    * Initial selections turn yellow before they are reserved.
+    * EDIT opens with the original yellow hold visible but no action button.
+    * The edited hold's own yellow cells stay clickable.
+    * A new selection visually replaces the old yellow range.
+    * RESERVE CHANGES appears only after a new range has been chosen.
+    * CANCEL EDIT leaves the original hold untouched.
+    * Per-day and per-night selection both use first booked day + last booked day.
+      Storage remains end-exclusive; night bookings add a departure-morning half cell.
     """
     database = app.state.database
 
@@ -47,23 +49,22 @@ def install_calendar_edit_semantics(app) -> None:
             return Response(content=text, status_code=response.status_code, headers=headers, media_type='text/html')
         company_id = int(company_id)
 
-        # Give each calendar row its own booking basis so the browser can interpret
-        # the second click correctly without hard-coding campsite/activity types.
         for element in rows(database, 'SELECT id,pricing_method FROM setup_elements WHERE company_id=? AND active=1', (company_id,)):
             marker = f'<div class="cal-row element-row" data-element="{int(element["id"])}"'
             replacement = marker + f' data-pricing-method="{esc(element["pricing_method"])}"'
             text = text.replace(marker, replacement, 1)
 
-        # Existing night-priced holds in this booking need a visible departure morning.
         night_holds = [
             {
+                'hold_id': int(r['hold_id']),
                 'element_id': int(r['element_id']),
                 'element_name': str(r['element_name']),
+                'arrival_date': str(r['arrival_date']),
                 'departure_date': str(r['departure_date']),
             }
             for r in rows(
                 database,
-                '''SELECT h.element_id,h.departure_date,e.name AS element_name
+                '''SELECT h.id AS hold_id,h.element_id,h.arrival_date,h.departure_date,e.name AS element_name
                    FROM element_holds h
                    JOIN setup_elements e ON e.id=h.element_id AND e.company_id=h.company_id
                    WHERE h.company_id=? AND h.session_token=?
@@ -91,26 +92,29 @@ def install_calendar_edit_semantics(app) -> None:
                     cancel += '&departure=' + quote_plus(d)
                 text = text.replace(
                     '<strong>UPDATE</strong> on the coloured selection.</div>',
-                    '<strong>RESERVE CHANGES</strong> on the coloured selection. '
+                    'Choose a new range on this or another Element. '
                     f'<a class="button secondary" href="{esc(cancel)}">CANCEL EDIT</a></div>',
                     1,
                 )
 
         text = text.replace(
             'Click a start day and then a later day on the same Element.',
-            'Click the first booked day, then choose the end. For night-priced Elements the second click is the departure date; for day-priced Elements it is the last booked day. Night bookings show the departure morning as half a square.',
+            'Click the first day you want and then the last full day you want. Your selected range turns yellow immediately. Night-priced Elements add a half-square on the following departure morning.',
             1,
         )
 
         script = f"""<style>
         .selection-action{{justify-self:center;width:max-content;max-width:90%;}}
         .cal-cell.editable-own:hover{{outline:2px solid #9a7a1f;outline-offset:-2px;}}
+        .cal-cell.preview-selected{{background:#ffe39a !important;box-shadow:inset 0 0 0 2px #c59a2a;}}
+        .cal-cell.edit-original-suppressed{{background:#dff2df !important;}}
         .night-departure{{align-self:start;height:50%;z-index:5;pointer-events:none;background:#ffe39a;border-left:1px solid rgba(255,255,255,.65);border-right:1px solid rgba(255,255,255,.65);box-sizing:border-box;}}
         .progress-row .night-departure{{z-index:5;}}
         </style>
         <script id="calendar-edit-semantics">
         (()=>{{
           const editMode={str(editing).lower()};
+          const editedHold={int(edit_hold or 0)};
           const nightHolds={json.dumps(night_holds)};
           const arrival=document.getElementById('arrival-date');
           const departure=document.getElementById('departure-date');
@@ -123,7 +127,10 @@ def install_calendar_edit_semantics(app) -> None:
           const isDay=(row)=>String(row?.dataset.pricingMethod||'').toLowerCase()==='per day';
           const dates=()=>[...calendar.querySelectorAll('.cal-date')].map(x=>x.dataset.date);
           const clearTempDeparture=()=>document.querySelectorAll('.night-departure.temp').forEach(x=>x.remove());
+          const clearPreview=()=>document.querySelectorAll('.cal-cell.preview-selected').forEach(x=>x.classList.remove('preview-selected'));
           const clearBars=()=>{{document.querySelectorAll('.selection-action').forEach(b=>b.hidden=true);clearTempDeparture();}};
+          const editedNight=nightHolds.find(h=>h.hold_id===editedHold);
+
           const addDeparture=(row,iso,temp=false)=>{{
             if(!row||!iso)return;
             const ds=dates(),idx=ds.indexOf(iso); if(idx<0)return;
@@ -134,8 +141,34 @@ def install_calendar_edit_semantics(app) -> None:
             m.style.gridColumn=String(idx+2); m.style.gridRow='1';
             row.appendChild(m);
           }};
-          const showBar=(row,a,internalEnd)=>{{
-            clearBars(); const ds=dates(),s=ds.indexOf(a),e=ds.indexOf(internalEnd);
+
+          const paintRange=(row,a,lastDay)=>{{
+            clearPreview();
+            const ds=dates(),s=ds.indexOf(a),e=ds.indexOf(lastDay);
+            if(s<0||e<0||e<s)return;
+            [...row.querySelectorAll('.cal-cell[data-date]')].forEach(cell=>{{
+              const idx=ds.indexOf(cell.dataset.date);
+              if(idx>=s&&idx<=e)cell.classList.add('preview-selected');
+            }});
+          }};
+
+          const suppressEditedOriginal=()=>{{
+            if(!editMode)return;
+            document.querySelectorAll('.cal-cell.editable-own').forEach(x=>x.classList.add('edit-original-suppressed'));
+            if(editedNight)document.querySelectorAll('.night-departure:not(.temp)').forEach(x=>{{
+              if(x.dataset.date===editedNight.departure_date&&x.closest('.element-row')?.dataset.element===String(editedNight.element_id))x.style.display='none';
+            }});
+          }};
+
+          const restoreEditedOriginal=()=>{{
+            document.querySelectorAll('.cal-cell.edit-original-suppressed').forEach(x=>x.classList.remove('edit-original-suppressed'));
+            document.querySelectorAll('.night-departure:not(.temp)').forEach(x=>x.style.display='');
+          }};
+
+          const showBar=(row,a,lastDay,internalEnd)=>{{
+            clearBars();
+            paintRange(row,a,lastDay);
+            const ds=dates(),s=ds.indexOf(a),e=ds.indexOf(internalEnd);
             if(s<0||e<0||e<=s)return;
             const b=row.querySelector('.selection-action'); if(!b)return;
             b.style.gridColumn=(s+2)+' / '+(e+2); b.style.gridRow='1';
@@ -143,9 +176,6 @@ def install_calendar_edit_semantics(app) -> None:
             if(!isDay(row))addDeparture(row,internalEnd,true);
           }};
 
-          // Existing night holds show full occupied nights plus the top half of the
-          // departure date, making "departs on the 3rd" visually distinct from a
-          // day booking that simply ends on the 2nd.
           nightHolds.forEach(h=>{{
             const lower=document.querySelector('.element-row[data-element="'+h.element_id+'"]');
             addDeparture(lower,h.departure_date,false);
@@ -159,7 +189,11 @@ def install_calendar_edit_semantics(app) -> None:
             }}
           }});
 
-          if(editMode) document.querySelectorAll('.selection-action').forEach(b=>b.hidden=true);
+          if(editMode){{
+            document.querySelectorAll('.selection-action').forEach(b=>b.hidden=true);
+            // Make the currently edited hold's own yellow cells genuine click targets.
+            document.querySelectorAll('.cal-cell.editable-own').forEach(cell=>{{cell.style.pointerEvents='auto';cell.style.cursor='pointer';}});
+          }}
 
           document.addEventListener('click',(ev)=>{{
             const cell=ev.target.closest('.date-pick');
@@ -167,19 +201,27 @@ def install_calendar_edit_semantics(app) -> None:
             ev.preventDefault(); ev.stopImmediatePropagation();
             const row=cell.closest('.element-row'); if(!row)return;
             const eid=Number(row.dataset.element), picked=cell.dataset.date;
+
             if(!first||chosenElement!==eid){{
-              first=picked; chosenElement=eid; arrival.value=picked; departure.value=''; clearBars(); return;
+              suppressEditedOriginal();
+              clearBars(); clearPreview();
+              first=picked; chosenElement=eid; arrival.value=picked; departure.value='';
+              cell.classList.add('preview-selected');
+              return;
             }}
-            const dayMode=isDay(row);
-            if((dayMode&&picked<first)||(!dayMode&&picked<=first)){{
-              first=picked; arrival.value=picked; departure.value=''; clearBars(); return;
+
+            if(picked<first){{
+              first=picked; arrival.value=picked; departure.value=''; clearBars(); clearPreview(); cell.classList.add('preview-selected'); return;
             }}
-            const internalEnd=dayMode?dayAfter(picked):picked;
+
+            // Both pricing bases use the same human selection: first booked day + last booked day.
+            // Storage remains end-exclusive, so 1+2 October stores departure/end as 3 October.
+            const internalEnd=dayAfter(picked);
             arrival.value=first; departure.value=internalEnd;
-            showBar(row,first,internalEnd); first='';
+            showBar(row,first,picked,internalEnd); first='';
           }},true);
 
-          document.querySelectorAll('.cal-cell.available').forEach(cell=>cell.addEventListener('mouseenter',()=>{{
+          document.querySelectorAll('.cal-cell.available,.cal-cell.editable-own').forEach(cell=>cell.addEventListener('mouseenter',()=>{{
             setTimeout(()=>{{
               const row=cell.closest('.element-row');
               const qdates=document.getElementById('quick-dates'), qaction=document.getElementById('quick-action');
@@ -187,9 +229,12 @@ def install_calendar_edit_semantics(app) -> None:
               if(!qdates||!row||!arrival.value||!departure.value)return;
               const ms=(new Date(departure.value+'T12:00:00')-new Date(arrival.value+'T12:00:00'))/86400000;
               if(isDay(row))qdates.textContent=arrival.value+' to '+dayBefore(departure.value)+' · '+ms+' day'+(ms===1?'':'s');
-              else qdates.textContent=arrival.value+' to '+departure.value+' · '+ms+' night'+(ms===1?'':'s')+' · departs '+departure.value;
+              else qdates.textContent=arrival.value+' to '+dayBefore(departure.value)+' · '+ms+' night'+(ms===1?'':'s')+' · departs '+departure.value;
             }},0);
           }}));
+
+          // If edit is abandoned by navigation before a new selection, leave the original visual intact.
+          window.addEventListener('pageshow',()=>{{if(editMode&&!document.querySelector('.preview-selected'))restoreEditedOriginal();}});
         }})();
         </script>"""
         text = text.replace('</body>', script + '</body>', 1)
