@@ -42,10 +42,14 @@ def main() -> None:
         with db.connect() as c:
             company = int(c.execute("SELECT id FROM companies WHERE name='Forest View Campsite'").fetchone()['id'])
 
-        for type_name in ('Camping', 'B&B'):
+        for type_name in ('Camping', 'B&B', 'Fishing'):
             assert operator.post('/setup/element-types', data={'csrf': csrf, 'name': type_name, 'id': ''}, follow_redirects=False).status_code == 303
-        for name, type_name in (('Pitch 1', 'Camping'), ('Pitch 2', 'Camping'), ('Room 1', 'B&B'), ('Room 2', 'B&B')):
-            assert operator.post('/setup/elements', data={'csrf': csrf, 'id': '', 'name': name, 'element_type': type_name, 'pricing_method': 'Per night'}, follow_redirects=False).status_code == 303
+        for name, type_name, method in (
+            ('Pitch 1', 'Camping', 'Per night'), ('Pitch 2', 'Camping', 'Per night'),
+            ('Room 1', 'B&B', 'Per night'), ('Room 2', 'B&B', 'Per night'),
+            ('Peg A', 'Fishing', 'Per day'),
+        ):
+            assert operator.post('/setup/elements', data={'csrf': csrf, 'id': '', 'name': name, 'element_type': type_name, 'pricing_method': method}, follow_redirects=False).status_code == 303
         assert operator.post('/setup/years/new', data={'csrf': csrf, 'year': '2035'}, follow_redirects=False).status_code == 303
 
         with db.connect() as c:
@@ -53,8 +57,8 @@ def main() -> None:
             if season is None:
                 c.execute("INSERT INTO setup_seasons(company_id,year,name,start_date,end_date) VALUES (?,?,?,?,?)", (company, 2035, 'Season', '2035-01-01', '2035-12-31'))
             ids = {str(r['name']): int(r['id']) for r in c.execute('SELECT id,name FROM setup_elements WHERE company_id=?', (company,)).fetchall()}
-        p1, p2, room1, room2 = ids['Pitch 1'], ids['Pitch 2'], ids['Room 1'], ids['Room 2']
-        complete_element_setup(db, company, 2035, [p1, p2, room1, room2])
+        p1, p2, room1, room2, peg_a = ids['Pitch 1'], ids['Pitch 2'], ids['Room 1'], ids['Room 2'], ids['Peg A']
+        complete_element_setup(db, company, 2035, [p1, p2, room1, room2, peg_a])
 
         # Popup display is per Element, but tick/cross still comes from Type default -> Element override.
         assert operator.post('/setup/maintenance/catalog/save', data={'csrf': csrf, 'kind': 'addon', 'id': '', 'name': 'Electric option', 'pricing_method': 'Per night'}, follow_redirects=False).status_code == 303
@@ -86,6 +90,16 @@ def main() -> None:
         assert 'Electric option' in page.text and 'Pets' in page.text
         assert 'featureHtml' in page.text
 
+        # The browser receives each Element's booking basis. A day-priced Element
+        # uses an inclusive second click, translated to an end-exclusive stored date.
+        day_page = operator.get('/availability/calendar', params={'element_type': 'Fishing', 'start': '2035-05-01'})
+        assert day_page.status_code == 200
+        assert 'Peg A' in day_page.text
+        assert 'data-pricing-method="Per day"' in day_page.text
+        assert 'dayMode?dayAfter(picked):picked' in day_page.text
+        assert 'last booked day' in day_page.text
+        assert "· '+ms+' day'" in day_page.text
+
         # First hold establishes the booking anchor window.
         first = operator.post('/availability/hold', data={'csrf': csrf, 'element_id': str(p1), 'arrival_date': '2035-10-10', 'departure_date': '2035-10-20'})
         assert first.status_code == 200 and first.json()['ok'] is True
@@ -106,10 +120,14 @@ def main() -> None:
         assert combined.text.count('progress-name') >= 2
         assert 'Edit</a>' in combined.text and 'progress-remove' in combined.text
 
-        # Edit mode puts UPDATE on the coloured calendar selection, not in a results list.
+        # EDIT keeps the original hold in place, exposes its yellow cells for clicking,
+        # and offers RESERVE CHANGES or CANCEL EDIT rather than the misleading UPDATE.
         edit = operator.get('/availability/calendar', params={'element_type': 'B&B', 'arrival': '2035-10-12', 'departure': '2035-10-17', 'edit_hold': items['Room 1']['id']})
         assert edit.status_code == 200
-        assert all(x in edit.text for x in ('Editing Room 1', 'Room 1', 'Room 2', 'selection-action', '>UPDATE</button>'))
+        assert all(x in edit.text for x in ('Editing Room 1', 'Room 1', 'Room 2', 'selection-action', 'RESERVE CHANGES', 'CANCEL EDIT', 'editable-own date-pick', 'calendar-edit-semantics'))
+        assert '>UPDATE</button>' not in edit.text
+        assert 'if(editMode) clearBars();' in edit.text
+        assert '.selection-action{justify-self:center;width:max-content' in edit.text
         assert 'availability-result' not in edit.text
 
         updated = operator.post('/availability/basket/update', data={'csrf': csrf, 'hold_id': str(items['Room 1']['id']), 'element_id': str(room2), 'arrival_date': '2035-10-13', 'departure_date': '2035-10-16'})
@@ -133,7 +151,7 @@ def main() -> None:
         assert 'Unavailable' in customer_page.text and 'More info' in customer_page.text
         assert customer_view.get(f'/operations/bookings/{booking}').status_code == 403
 
-    print('Direct Booking Web V1 visual availability selector + booking timeline test: passed')
+    print('Direct Booking Web V1 visual availability selector + edit/day-night semantics test: passed')
 
 
 if __name__ == '__main__':
