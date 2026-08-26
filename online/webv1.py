@@ -21,7 +21,7 @@ from .webv1_pricing_usability import (
     register_pricing_usability_routes,
 )
 from . import webv1_calendar_v2
-from .webv1_calendar_v4 import register_calendar_v4_routes
+from .webv1_calendar_v5 import register_calendar_v5_routes
 from .webv1_core import initialise_web_v1
 from .webv1_customers import register_customer_routes
 from .webv1_enquiries import register_enquiry_routes
@@ -60,7 +60,7 @@ def register_web_v1(app) -> None:
     register_availability_routes(app)
     register_basket_routes(app)
     register_addon_popup_routes(app)
-    register_calendar_v4_routes(app)
+    register_calendar_v5_routes(app)
     webv1_calendar_v2.register_calendar_v2_routes(app)
     install_calendar_expiry_refresh(app)
 
