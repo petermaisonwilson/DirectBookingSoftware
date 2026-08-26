@@ -60,7 +60,6 @@ def main() -> None:
         p1, p2, room1, room2, peg_a = ids['Pitch 1'], ids['Pitch 2'], ids['Room 1'], ids['Room 2'], ids['Peg A']
         complete_element_setup(db, company, 2035, [p1, p2, room1, room2, peg_a])
 
-        # Popup display is per Element, but tick/cross still comes from Type default -> Element override.
         assert operator.post('/setup/maintenance/catalog/save', data={'csrf': csrf, 'kind': 'addon', 'id': '', 'name': 'Electric option', 'pricing_method': 'Per night'}, follow_redirects=False).status_code == 303
         assert operator.post('/setup/maintenance/catalog/save', data={'csrf': csrf, 'kind': 'addon', 'id': '', 'name': 'Pets', 'pricing_method': 'Fixed once'}, follow_redirects=False).status_code == 303
         with db.connect() as c:
@@ -90,8 +89,6 @@ def main() -> None:
         assert 'Electric option' in page.text and 'Pets' in page.text
         assert 'featureHtml' in page.text
 
-        # The browser receives each Element's booking basis. A day-priced Element
-        # uses an inclusive second click, translated to an end-exclusive stored date.
         day_page = operator.get('/availability/calendar', params={'element_type': 'Fishing', 'start': '2035-05-01'})
         assert day_page.status_code == 200
         assert 'Peg A' in day_page.text
@@ -100,7 +97,6 @@ def main() -> None:
         assert 'last booked day' in day_page.text
         assert "· '+ms+' day'" in day_page.text
 
-        # First hold establishes the booking anchor window.
         first = operator.post('/availability/hold', data={'csrf': csrf, 'element_id': str(p1), 'arrival_date': '2035-10-10', 'departure_date': '2035-10-20'})
         assert first.status_code == 200 and first.json()['ok'] is True
         basket = operator.get('/availability/basket').json()
@@ -110,6 +106,7 @@ def main() -> None:
         assert browse_rooms.status_code == 200
         assert all(x in browse_rooms.text for x in ('Booking in progress', 'Pitch 1', 'progress-scroll', '>Availability</h2>', 'Room 1', 'Room 2'))
         assert 'progressScroll.scrollLeft=scrollBox.scrollLeft' in browse_rooms.text
+        assert 'night-departure' in browse_rooms.text and 'Departure morning' in browse_rooms.text
 
         room_hold = operator.post('/availability/hold', data={'csrf': csrf, 'element_id': str(room1), 'arrival_date': '2035-10-12', 'departure_date': '2035-10-17'})
         assert room_hold.status_code == 200 and room_hold.json()['ok'] is True
@@ -120,14 +117,13 @@ def main() -> None:
         assert combined.text.count('progress-name') >= 2
         assert 'Edit</a>' in combined.text and 'progress-remove' in combined.text
 
-        # EDIT keeps the original hold in place, exposes its yellow cells for clicking,
-        # and offers RESERVE CHANGES or CANCEL EDIT rather than the misleading UPDATE.
         edit = operator.get('/availability/calendar', params={'element_type': 'B&B', 'arrival': '2035-10-12', 'departure': '2035-10-17', 'edit_hold': items['Room 1']['id']})
         assert edit.status_code == 200
         assert all(x in edit.text for x in ('Editing Room 1', 'Room 1', 'Room 2', 'selection-action', 'RESERVE CHANGES', 'CANCEL EDIT', 'editable-own date-pick', 'calendar-edit-semantics'))
         assert '>UPDATE</button>' not in edit.text
-        assert 'if(editMode) clearBars();' in edit.text
+        assert "if(editMode) document.querySelectorAll('.selection-action').forEach(b=>b.hidden=true);" in edit.text
         assert '.selection-action{justify-self:center;width:max-content' in edit.text
+        assert 'night-departure' in edit.text and "addDeparture(row,internalEnd,true)" in edit.text
         assert 'availability-result' not in edit.text
 
         updated = operator.post('/availability/basket/update', data={'csrf': csrf, 'hold_id': str(items['Room 1']['id']), 'element_id': str(room2), 'arrival_date': '2035-10-13', 'departure_date': '2035-10-16'})
@@ -142,7 +138,6 @@ def main() -> None:
         assert [item['element_name'] for item in operator.get('/availability/basket').json()['items']] == ['Pitch 1']
         assert operator.post('/availability/holds/release', data={'csrf': csrf}).status_code == 200
 
-        # Customer sees only generic unavailability; booking identity stays private.
         customer_view = TestClient(app)
         login(customer_view, 'customer@forestview.test', 'Customer013!')
         customer_page = customer_view.get('/availability/calendar', params={'element_type': 'Camping', 'start': '2035-07-08'})
