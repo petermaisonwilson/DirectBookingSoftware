@@ -14,8 +14,8 @@ from .webv1_basket import register_basket_routes
 from .webv1_booking_status import initialise_booking_statuses, register_booking_status_routes
 from .webv1_bookings import initialise_booking_workflow, register_booking_routes
 from .webv1_calendar_edit_semantics import install_calendar_edit_semantics
-from .webv1_edit_action_guard import install_edit_action_guard
 from .webv1_calendar_refresh import install_calendar_expiry_refresh
+from .webv1_edit_action_box import install_edit_action_box
 from .webv1_hold_settings import initialise_hold_settings, install_hold_timing, register_hold_settings_routes
 from .webv1_pricing_usability import (
     initialise_pricing_usability,
@@ -66,9 +66,9 @@ def register_web_v1(app) -> None:
     register_calendar_v5_routes(app)
     webv1_calendar_v2.register_calendar_v2_routes(app)
     install_calendar_edit_semantics(app)
-    install_edit_action_guard(app)
     install_calendar_expiry_refresh(app)
     install_user_display_rules(app)
+    install_edit_action_box(app)
 
     @app.get('/availability/calendar')
     def availability_calendar_compat(request: Request):
