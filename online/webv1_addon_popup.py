@@ -39,6 +39,18 @@ def popup_addons_for_element(database, company_id: int, year: int, element) -> l
     return result
 
 
+def _remove_element_list(text: str) -> str:
+    """In edit mode hide the catalogue table so the user sees only the Element editor and its popup choices."""
+    marker = '<div class="card"><table><thead><tr><th>Name</th><th>Element Type</th>'
+    start = text.find(marker)
+    if start < 0:
+        return text
+    end = text.find('</div>', start)
+    if end < 0:
+        return text
+    return text[:start] + text[end + len('</div>'):]
+
+
 def register_addon_popup_routes(app) -> None:
     database = app.state.database
 
@@ -83,12 +95,18 @@ def register_addon_popup_routes(app) -> None:
                 company_id, element_id = int(company_id), int(raw_edit)
                 element = rows(database, 'SELECT * FROM setup_elements WHERE company_id=? AND id=?', (company_id, element_id))
                 if element:
-                    controls = '<div class="card"><h2>Calendar popup information</h2><p class="muted">Choose which existing Add-on rules appear in this Element\'s Availability Calendar popup. New items default to <strong>Yes</strong>. The displayed ✓ or ✕ is still taken automatically from the Element Type default and any Individual Element override.</p><table><thead><tr><th>Item</th><th>Show in popup</th></tr></thead><tbody>'
+                    controls = '<div class="card element-popup-settings"><h2>Calendar popup information</h2><p class="muted">Choose which existing Add-on rules appear in this Element\'s Availability Calendar popup. New items default to <strong>Yes</strong>. The displayed ✓ or ✕ is still taken automatically from the Element Type default and any Individual Element override.</p><table><thead><tr><th>Item</th><th>Show in popup</th></tr></thead><tbody>'
                     settings = {int(r['addon_id']): int(r['show_popup']) for r in rows(database, 'SELECT addon_id,show_popup FROM setup_element_popup_items WHERE company_id=? AND element_id=?', (company_id, element_id))}
                     for addon in rows(database, 'SELECT id,name FROM setup_addons WHERE company_id=? AND active=1 ORDER BY name COLLATE NOCASE', (company_id,)):
                         aid = int(addon['id']); shown = bool(settings.get(aid, 1))
                         controls += f'<tr><td>{esc(addon["name"])}</td><td><form method="post" action="/setup/elements/popup" style="display:inline"><input type="hidden" name="csrf" value="{esc(context["csrf_token"])}"><input type="hidden" name="element_id" value="{element_id}"><input type="hidden" name="addon_id" value="{aid}"><button class="secondary">{"✓ Yes" if shown else "No"}</button></form></td></tr>'
                     controls += '</tbody></table></div>'
-                    text = text.replace('</main>', controls + '</main>', 1)
+                    text = _remove_element_list(text)
+                    editor_end = text.find('</form></div>')
+                    if editor_end >= 0:
+                        insert_at = editor_end + len('</form></div>')
+                        text = text[:insert_at] + controls + text[insert_at:]
+                    else:
+                        text = text.replace('</main>', controls + '</main>', 1)
         headers = {k:v for k,v in response.headers.items() if k.lower() not in {'content-length','content-type'}}
         return Response(content=text, status_code=response.status_code, headers=headers, media_type='text/html')
