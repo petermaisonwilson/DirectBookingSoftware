@@ -29,6 +29,7 @@ from .webv1_enquiries import register_enquiry_routes
 from .webv1_enquiry_builder import register_enquiry_builder_routes
 from .webv1_routes import register_web_v1_routes
 from .webv1_status_availability import install_status_aware_availability
+from .webv1_user_display import install_user_display_rules
 
 __all__ = ['initialise_web_v1', 'register_web_v1']
 
@@ -65,6 +66,7 @@ def register_web_v1(app) -> None:
     webv1_calendar_v2.register_calendar_v2_routes(app)
     install_calendar_edit_semantics(app)
     install_calendar_expiry_refresh(app)
+    install_user_display_rules(app)
 
     @app.get('/availability/calendar')
     def availability_calendar_compat(request: Request):
