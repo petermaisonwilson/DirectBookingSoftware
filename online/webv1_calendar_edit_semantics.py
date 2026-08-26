@@ -45,8 +45,6 @@ def install_calendar_edit_semantics(app) -> None:
             return Response(content=text, status_code=response.status_code, headers=headers, media_type='text/html')
         company_id = int(company_id)
 
-        # Give each calendar row its own booking basis so the browser can interpret
-        # the second click correctly without hard-coding campsite/activity types.
         for element in rows(database, 'SELECT id,pricing_method FROM setup_elements WHERE company_id=? AND active=1', (company_id,)):
             marker = f'<div class="cal-row element-row" data-element="{int(element["id"])}"'
             replacement = marker + f' data-pricing-method="{esc(element["pricing_method"])}"'
@@ -59,7 +57,6 @@ def install_calendar_edit_semantics(app) -> None:
             text = text.replace("qaction.textContent=editingHold?'UPDATE':'RESERVE'", "qaction.textContent=editingHold?'RESERVE CHANGES':'RESERVE'")
             old = ' — select new dates and/or another '
             if old in text:
-                # Keep the existing held item safe until the replacement succeeds.
                 a = request.query_params.get('arrival', '')
                 d = request.query_params.get('departure', '')
                 et = request.query_params.get('element_type', '')
@@ -82,7 +79,6 @@ def install_calendar_edit_semantics(app) -> None:
         )
 
         script = f'''<style>
-        /* Keep the selected cells usable: the action no longer stretches across the whole selection. */
         .selection-action{{justify-self:center;width:max-content;max-width:90%;}}
         .cal-cell.editable-own:hover{{outline:2px solid #9a7a1f;outline-offset:-2px;}}
         </style>
@@ -108,9 +104,6 @@ def install_calendar_edit_semantics(app) -> None:
             b.textContent=editMode?'RESERVE CHANGES':'RESERVE'; b.hidden=false;
           }};
 
-          // The old EDIT view drew an action button over the whole yellow hold, which
-          // made those dates impossible to click. Editing now starts with the hold
-          // untouched and every own yellow date exposed for selection.
           if(editMode) clearBars();
 
           document.addEventListener('click',(ev)=>{{
@@ -126,15 +119,11 @@ def install_calendar_edit_semantics(app) -> None:
             if((dayMode&&picked<first)||(!dayMode&&picked<=first)){{
               first=picked; arrival.value=picked; departure.value=''; clearBars(); return;
             }}
-            // Storage stays end-exclusive. For a day booking, 1 May through 2 May is
-            // therefore stored as 1 May -> 3 May; for a night booking, 1 May -> 3 May
-            // naturally means two nights and departure on 3 May.
             const internalEnd=dayMode?dayAfter(picked):picked;
             arrival.value=first; departure.value=internalEnd;
             showBar(row,first,internalEnd); first='';
           }},true);
 
-          // Correct the quick popup wording after the original hover code has run.
           document.querySelectorAll('.cal-cell.available').forEach(cell=>cell.addEventListener('mouseenter',()=>{{
             setTimeout(()=>{{
               const row=cell.closest('.element-row');
@@ -152,4 +141,3 @@ def install_calendar_edit_semantics(app) -> None:
 
         headers = {k: v for k, v in response.headers.items() if k.lower() not in {'content-length', 'content-type'}}
         return Response(content=text, status_code=response.status_code, headers=headers, media_type='text/html')
-'''
