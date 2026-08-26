@@ -108,6 +108,7 @@ def install_calendar_edit_semantics(app) -> None:
         .cal-cell.editable-own:hover{{outline:2px solid #9a7a1f;outline-offset:-2px;}}
         .cal-cell.preview-selected{{background:#ffe39a !important;box-shadow:inset 0 0 0 2px #c59a2a;}}
         .cal-cell.edit-original-suppressed{{background:#dff2df !important;}}
+        .cal-cell.edit-original-suppressed.preview-selected{{background:#ffe39a !important;}}
         .night-departure{{align-self:start;height:50%;z-index:5;pointer-events:none;background:#ffe39a;border-left:1px solid rgba(255,255,255,.65);border-right:1px solid rgba(255,255,255,.65);box-sizing:border-box;}}
         .progress-row .night-departure{{z-index:5;}}
         </style>
@@ -148,7 +149,10 @@ def install_calendar_edit_semantics(app) -> None:
             if(s<0||e<0||e<s)return;
             [...row.querySelectorAll('.cal-cell[data-date]')].forEach(cell=>{{
               const idx=ds.indexOf(cell.dataset.date);
-              if(idx>=s&&idx<=e)cell.classList.add('preview-selected');
+              if(idx>=s&&idx<=e){{
+                cell.classList.remove('edit-original-suppressed');
+                cell.classList.add('preview-selected');
+              }}
             }});
           }};
 
@@ -191,6 +195,7 @@ def install_calendar_edit_semantics(app) -> None:
 
           if(editMode){{
             document.querySelectorAll('.selection-action').forEach(b=>b.hidden=true);
+            document.querySelectorAll('.element-row .cal-cell.selected-date,.element-row .cal-cell.selected-start').forEach(cell=>cell.classList.remove('selected-date','selected-start'));
             // Make the currently edited hold's own yellow cells genuine click targets.
             document.querySelectorAll('.cal-cell.editable-own').forEach(cell=>{{cell.style.pointerEvents='auto';cell.style.cursor='pointer';}});
           }}
@@ -206,12 +211,16 @@ def install_calendar_edit_semantics(app) -> None:
               suppressEditedOriginal();
               clearBars(); clearPreview();
               first=picked; chosenElement=eid; arrival.value=picked; departure.value='';
+              cell.classList.remove('edit-original-suppressed');
               cell.classList.add('preview-selected');
               return;
             }}
 
             if(picked<first){{
-              first=picked; arrival.value=picked; departure.value=''; clearBars(); clearPreview(); cell.classList.add('preview-selected'); return;
+              first=picked; arrival.value=picked; departure.value=''; clearBars(); clearPreview();
+              cell.classList.remove('edit-original-suppressed');
+              cell.classList.add('preview-selected');
+              return;
             }}
 
             // Both pricing bases use the same human selection: first booked day + last booked day.
