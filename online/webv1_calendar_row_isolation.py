@@ -4,7 +4,7 @@ from fastapi.responses import Response
 
 
 def install_calendar_row_isolation(app) -> None:
-    """Prevent the global date-range highlight from appearing on every Element row."""
+    """Keep calendar selection styling and geometry inside the chosen Element row."""
 
     @app.middleware('http')
     async def calendar_row_isolation(request, call_next):
@@ -27,7 +27,43 @@ def install_calendar_row_isolation(app) -> None:
           /* Header may show the requested window, but Element rows only show the
              actual tentative yellow selection on the Element being chosen. */
           .element-row .cal-cell.selected-date,
-          .element-row .cal-cell.selected-start { box-shadow:none !important; outline:none !important; }
+          .element-row .cal-cell.selected-start {
+            box-shadow:none !important;
+            outline:none !important;
+          }
+
+          /* Each Element is a visually separate lane.  Calendar cells are 52px
+             high and the row reserves a further 4px white separator below them.
+             This prevents a yellow selection/departure marker from visually
+             joining the pale-green availability of the next Element. */
+          #calendar-scroll .element-row {
+            min-height:56px !important;
+            height:56px;
+            border-bottom:4px solid #fff !important;
+            box-sizing:border-box;
+            overflow:hidden;
+          }
+          #calendar-scroll .element-row .cal-cell {
+            min-height:52px !important;
+            height:52px !important;
+            align-self:start;
+            box-sizing:border-box;
+          }
+          #calendar-scroll .element-row .cal-name {
+            height:52px;
+            box-sizing:border-box;
+            align-self:start;
+          }
+          #calendar-scroll .element-row .night-departure {
+            max-height:26px;
+          }
+
+          /* A selection action is valid only after JavaScript has positioned it
+             over a completed range.  Never allow an unpositioned action to fall
+             into the Element-name column or the following row. */
+          #calendar-scroll .element-row .selection-action:not([style*="grid-column"]) {
+            display:none !important;
+          }
         </style>
         <script id="calendar-row-isolation-script">
         (()=>{
