@@ -14,9 +14,9 @@ from .webv1_availability import initialise_availability, register_availability_r
 from .webv1_basket import register_basket_routes
 from .webv1_booking_requirements import (
     initialise_booking_requirements,
-    install_booking_requirements,
     register_booking_requirement_routes,
 )
+from .webv1_booking_requirements_ui import install_booking_requirements_ui
 from .webv1_booking_status import initialise_booking_statuses, register_booking_status_routes
 from .webv1_bookings import initialise_booking_workflow, register_booking_routes
 from .webv1_calendar_edit_semantics import install_calendar_edit_semantics
@@ -81,14 +81,14 @@ def register_web_v1(app) -> None:
     install_edit_action_box(app)
     install_duration_display(app)
     install_calendar_row_isolation(app)
-    install_booking_requirements(app)
+    install_booking_requirements_ui(app)
 
     @app.get('/availability/calendar')
     def availability_calendar_compat(request: Request):
         # /availability/calendar is the normal start of a NEW booking journey.
-        # Require the party/must-have form here.  /availability/calendar-v2 stays
-        # directly usable for operational calendar views (for example viewing an
-        # already-confirmed booking) without forcing staff through a new-booking form.
+        # Require the party/must-have form here. /availability/calendar-v2 stays
+        # directly usable for operational calendar views, such as inspecting an
+        # already-confirmed booking, without forcing staff through a new booking.
         token = request.cookies.get(COOKIE_NAME, '')
         context = app.state.database.session_context(token) if token else None
         company_id = None
