@@ -30,6 +30,16 @@ def complete_element_setup(db, company: int, year: int, element_ids: list[int]) 
                 c.execute('INSERT OR REPLACE INTO setup_person_prices(company_id,year,element_id,person_type_id,rate) VALUES (?,?,?,?,?)', (company, year, element_id, pid, 0.0))
 
 
+def mark_requirements_ready(db, company: int, client: TestClient) -> None:
+    token = client.cookies.get(COOKIE_NAME)
+    assert token
+    with db.connect() as c:
+        c.execute('''INSERT INTO booking_requirement_sessions(session_token,company_id,ready,updated_at)
+                     VALUES (?,?,1,CURRENT_TIMESTAMP)
+                     ON CONFLICT(session_token,company_id) DO UPDATE SET ready=1,updated_at=CURRENT_TIMESTAMP''',
+                  (token, company))
+
+
 def main() -> None:
     with tempfile.TemporaryDirectory() as temp_dir:
         app = create_app(Path(temp_dir) / 'calendar.db', seed_demo=True)
@@ -41,6 +51,16 @@ def main() -> None:
 
         with db.connect() as c:
             company = int(c.execute("SELECT id FROM companies WHERE name='Forest View Campsite'").fetchone()['id'])
+
+        # New booking journey deliberately gates Availability until the party /
+        # must-have requirements step has been completed.  Keep the established
+        # calendar regression below by marking that prerequisite complete after
+        # proving the gate itself.
+        gated = operator.get('/availability/calendar-v2', follow_redirects=False)
+        assert gated.status_code == 303 and gated.headers['location'] == '/availability/start'
+        start_page = operator.get('/availability/start')
+        assert start_page.status_code == 200 and 'Booking requirements' in start_page.text and 'Who is coming?' in start_page.text
+        mark_requirements_ready(db, company, operator)
 
         for type_name in ('Camping', 'B&B', 'Fishing'):
             assert operator.post('/setup/element-types', data={'csrf': csrf, 'name': type_name, 'id': ''}, follow_redirects=False).status_code == 303
@@ -143,13 +163,14 @@ def main() -> None:
 
         customer_view = TestClient(app)
         login(customer_view, 'customer@forestview.test', 'Customer013!')
+        mark_requirements_ready(db, company, customer_view)
         customer_page = customer_view.get('/availability/calendar', params={'element_type': 'Camping', 'start': '2035-07-08'})
         assert customer_page.status_code == 200
         assert 'Alice Smith' not in customer_page.text and 'BK2035-101' not in customer_page.text
         assert 'Unavailable' in customer_page.text and 'More info' in customer_page.text
         assert customer_view.get(f'/operations/bookings/{booking}').status_code == 403
 
-    print('Direct Booking Web V1 visual availability selector + edit/day-night semantics test: passed')
+    print('Direct Booking Web V1 visual availability selector + requirements gate + edit/day-night semantics test: passed')
 
 
 if __name__ == '__main__':
