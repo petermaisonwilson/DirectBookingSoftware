@@ -29,6 +29,7 @@ from .webv1_calendar_row_isolation import install_calendar_row_isolation
 from .webv1_duration_display import install_duration_display
 from .webv1_edit_action_box import install_edit_action_box
 from .webv1_feature_booking_ui import install_feature_booking_ui
+from .webv1_feature_wording import install_feature_wording
 from .webv1_features_extras_v2 import initialise_features_extras, register_features_extras_routes
 from .webv1_hold_settings import initialise_hold_settings, install_hold_timing, register_hold_settings_routes
 from .webv1_pricing_usability import (
@@ -93,6 +94,7 @@ def register_web_v1(app) -> None:
     install_booking_requirements_ui(app)
     install_booking_requirements_refinements(app)
     install_feature_booking_ui(app)
+    install_feature_wording(app)
 
     app.router.routes[:] = [
         route for route in app.router.routes
