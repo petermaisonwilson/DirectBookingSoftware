@@ -83,12 +83,18 @@ def register_web_v1(app) -> None:
     install_calendar_row_isolation(app)
     install_booking_requirements_ui(app)
 
+    # This is the single public entry point for starting a NEW booking journey.
+    # Older calendar modules may have registered the same compatibility path;
+    # remove those aliases so this requirements gate cannot be shadowed by
+    # FastAPI's first-match route ordering.  The operational calendar remains
+    # directly available at /availability/calendar-v2.
+    app.router.routes[:] = [
+        route for route in app.router.routes
+        if getattr(route, 'path', None) != '/availability/calendar'
+    ]
+
     @app.get('/availability/calendar')
     def availability_calendar_compat(request: Request):
-        # /availability/calendar is the normal start of a NEW booking journey.
-        # Require the party/must-have form here. /availability/calendar-v2 stays
-        # directly usable for operational calendar views, such as inspecting an
-        # already-confirmed booking, without forcing staff through a new booking.
         token = request.cookies.get(COOKIE_NAME, '')
         context = app.state.database.session_context(token) if token else None
         company_id = None
