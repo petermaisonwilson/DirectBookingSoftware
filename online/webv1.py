@@ -28,6 +28,7 @@ from .webv1_calendar_refresh import install_calendar_expiry_refresh
 from .webv1_calendar_row_isolation import install_calendar_row_isolation
 from .webv1_duration_display import install_duration_display
 from .webv1_edit_action_box import install_edit_action_box
+from .webv1_features_extras_v2 import initialise_features_extras, register_features_extras_routes
 from .webv1_hold_settings import initialise_hold_settings, install_hold_timing, register_hold_settings_routes
 from .webv1_pricing_usability import (
     initialise_pricing_usability,
@@ -60,6 +61,7 @@ def register_web_v1(app) -> None:
     initialise_pricing_usability(app.state.database)
     initialise_addon_popup(app.state.database)
     initialise_booking_requirements(app.state.database)
+    initialise_features_extras(app.state.database)
     install_status_aware_availability()
     install_hold_timing()
     install_pricing_calculation_transparency()
@@ -78,6 +80,9 @@ def register_web_v1(app) -> None:
     register_addon_popup_routes(app)
     register_booking_requirement_routes(app)
     register_booking_requirements_refinement_routes(app)
+    # Replace the old giant Add-on catalogue/rules routes with the focused
+    # Features & Extras editor and one-Element-Type-at-a-time rules screen.
+    register_features_extras_routes(app)
     register_calendar_v5_routes(app)
     webv1_calendar_v2.register_calendar_v2_routes(app)
     install_calendar_edit_semantics(app)
@@ -90,10 +95,10 @@ def register_web_v1(app) -> None:
     install_booking_requirements_refinements(app)
 
     # This is the single public entry point for starting a NEW booking journey.
-    # Older calendar modules may have registered the same compatibility path;
-    # remove those aliases so this requirements gate cannot be shadowed by
-    # FastAPI's first-match route ordering.  The operational calendar remains
-    # directly available at /availability/calendar-v2.
+    # A deliberate new start always clears the previous requirements answer so
+    # Operations -> Availability cannot silently skip "Who's coming?" because of
+    # an earlier session. Returning/editing an in-progress booking still uses the
+    # direct calendar-v2 route and therefore retains its saved requirements.
     app.router.routes[:] = [
         route for route in app.router.routes
         if getattr(route, 'path', None) != '/availability/calendar'
@@ -106,17 +111,12 @@ def register_web_v1(app) -> None:
         company_id = None
         if context:
             company_id = context['acting_company_id'] if context['role'] == 'supervisor' else context['company_id']
-        ready = False
-        if company_id:
+        if company_id and token:
+            cid = int(company_id)
             with app.state.database.connect() as c:
-                row = c.execute(
-                    'SELECT ready FROM booking_requirement_sessions WHERE session_token=? AND company_id=?',
-                    (token, int(company_id)),
-                ).fetchone()
-                ready = bool(row and int(row['ready']))
-        if not ready:
-            return RedirectResponse('/availability/start', 303)
-        target = '/availability/calendar-v2'
-        if request.url.query:
-            target += '?' + request.url.query
-        return RedirectResponse(target, 303)
+                c.execute('DELETE FROM booking_requirement_people WHERE session_token=? AND company_id=?', (token, cid))
+                c.execute('DELETE FROM booking_requirement_addons WHERE session_token=? AND company_id=?', (token, cid))
+                c.execute('''INSERT INTO booking_requirement_sessions(session_token,company_id,ready,updated_at)
+                             VALUES (?,?,0,CURRENT_TIMESTAMP)
+                             ON CONFLICT(session_token,company_id) DO UPDATE SET ready=0,updated_at=CURRENT_TIMESTAMP''', (token, cid))
+        return RedirectResponse('/availability/start', 303)
