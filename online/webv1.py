@@ -16,6 +16,10 @@ from .webv1_booking_requirements import (
     initialise_booking_requirements,
     register_booking_requirement_routes,
 )
+from .webv1_booking_requirements_refinements import (
+    install_booking_requirements_refinements,
+    register_booking_requirements_refinement_routes,
+)
 from .webv1_booking_requirements_ui import install_booking_requirements_ui
 from .webv1_booking_status import initialise_booking_statuses, register_booking_status_routes
 from .webv1_bookings import initialise_booking_workflow, register_booking_routes
@@ -73,6 +77,7 @@ def register_web_v1(app) -> None:
     register_basket_routes(app)
     register_addon_popup_routes(app)
     register_booking_requirement_routes(app)
+    register_booking_requirements_refinement_routes(app)
     register_calendar_v5_routes(app)
     webv1_calendar_v2.register_calendar_v2_routes(app)
     install_calendar_edit_semantics(app)
@@ -82,6 +87,7 @@ def register_web_v1(app) -> None:
     install_duration_display(app)
     install_calendar_row_isolation(app)
     install_booking_requirements_ui(app)
+    install_booking_requirements_refinements(app)
 
     # This is the single public entry point for starting a NEW booking journey.
     # Older calendar modules may have registered the same compatibility path;
