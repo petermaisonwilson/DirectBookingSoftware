@@ -28,6 +28,7 @@ from .webv1_calendar_refresh import install_calendar_expiry_refresh
 from .webv1_calendar_row_isolation import install_calendar_row_isolation
 from .webv1_duration_display import install_duration_display
 from .webv1_edit_action_box import install_edit_action_box
+from .webv1_feature_booking_ui import install_feature_booking_ui
 from .webv1_features_extras_v2 import initialise_features_extras, register_features_extras_routes
 from .webv1_hold_settings import initialise_hold_settings, install_hold_timing, register_hold_settings_routes
 from .webv1_pricing_usability import (
@@ -80,8 +81,6 @@ def register_web_v1(app) -> None:
     register_addon_popup_routes(app)
     register_booking_requirement_routes(app)
     register_booking_requirements_refinement_routes(app)
-    # Replace the old giant Add-on catalogue/rules routes with the focused
-    # Features & Extras editor and one-Element-Type-at-a-time rules screen.
     register_features_extras_routes(app)
     register_calendar_v5_routes(app)
     webv1_calendar_v2.register_calendar_v2_routes(app)
@@ -93,12 +92,8 @@ def register_web_v1(app) -> None:
     install_calendar_row_isolation(app)
     install_booking_requirements_ui(app)
     install_booking_requirements_refinements(app)
+    install_feature_booking_ui(app)
 
-    # This is the single public entry point for starting a NEW booking journey.
-    # A deliberate new start always clears the previous requirements answer so
-    # Operations -> Availability cannot silently skip "Who's coming?" because of
-    # an earlier session. Returning/editing an in-progress booking still uses the
-    # direct calendar-v2 route and therefore retains its saved requirements.
     app.router.routes[:] = [
         route for route in app.router.routes
         if getattr(route, 'path', None) != '/availability/calendar'
