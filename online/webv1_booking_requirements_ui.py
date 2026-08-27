@@ -6,7 +6,8 @@ from fastapi.responses import Response
 
 from .app import COOKIE_NAME, esc
 from .setup015_core import one, rows
-from .webv1_booking_requirements import _element_reasons, _saved_requirements
+from .webv1_booking_requirements import _saved_requirements
+from .webv1_booking_requirements_core import element_reasons
 
 
 def install_booking_requirements_ui(app) -> None:
@@ -89,7 +90,7 @@ def install_booking_requirements_ui(app) -> None:
 
             unsuitable = {}
             for element in rows(database, 'SELECT * FROM setup_elements WHERE company_id=? AND active=1', (cid,)):
-                reasons = _element_reasons(database, cid, year, element, people, addons)
+                reasons = element_reasons(database, cid, year, element, people, addons)
                 if reasons:
                     unsuitable[int(element['id'])] = reasons
 
