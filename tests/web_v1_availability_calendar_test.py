@@ -18,15 +18,16 @@ def login(client: TestClient, email: str, password: str) -> None:
 
 
 def main() -> None:
-    """Current Availability journey regression.
+    """Current Booking Requirements -> Availability regression.
 
-    This deliberately tests the CURRENT split:
-      /availability/calendar    = start a new booking and collect requirements
-      /availability/calendar-v2 = the working Availability calendar
-
-    It also proves that Person requirements can make one Element unsuitable while
-    leaving another Element of the same Type usable.  Old assumptions that the
-    public entry URL opens a pre-selected calendar are intentionally not tested.
+    Proves the authoritative rules path:
+      * a new booking starts at Booking Requirements;
+      * age-at-arrival is stored, never DOB;
+      * a single-choice Feature group saves exactly one member even if stale
+        hidden values try to submit two;
+      * Camping suitability uses Camping rules and individual Person limits;
+      * Fishing ignores Camping-only vehicle requirements;
+      * starting another new booking clears the requirement session.
     """
     with tempfile.TemporaryDirectory() as temp_dir:
         app = create_app(Path(temp_dir) / 'current-availability.db', seed_demo=True)
@@ -41,7 +42,6 @@ def main() -> None:
         company = int(context['company_id'])
         token = str(client.cookies.get(COOKIE_NAME))
 
-        # A deliberate new booking always starts with Booking Requirements.
         entry = client.get('/availability/calendar', follow_redirects=False)
         assert entry.status_code == 303
         assert entry.headers['location'] == '/availability/start'
@@ -54,6 +54,7 @@ def main() -> None:
 
         with db.connect() as c:
             c.execute("INSERT OR IGNORE INTO setup_element_types(company_id,name,active) VALUES (?,?,1)", (company, 'Current Camping'))
+            c.execute("INSERT OR IGNORE INTO setup_element_types(company_id,name,active) VALUES (?,?,1)", (company, 'Current Fishing'))
             pitch_one = int(c.execute(
                 "INSERT INTO setup_elements(company_id,name,element_type,pricing_method,base_price,active) VALUES (?,?,?,?,?,1)",
                 (company, 'Current Pitch 1', 'Current Camping', 'Per night', 0),
@@ -62,17 +63,22 @@ def main() -> None:
                 "INSERT INTO setup_elements(company_id,name,element_type,pricing_method,base_price,active) VALUES (?,?,?,?,?,1)",
                 (company, 'Current Pitch 2', 'Current Camping', 'Per night', 0),
             ).lastrowid)
+            peg = int(c.execute(
+                "INSERT INTO setup_elements(company_id,name,element_type,pricing_method,base_price,active) VALUES (?,?,?,?,?,1)",
+                (company, 'Current Peg A', 'Current Fishing', 'Per day', 0),
+            ).lastrowid)
 
             c.execute("INSERT OR IGNORE INTO setup_years(company_id,year) VALUES (?,?)", (company, 2035))
             season = int(c.execute(
                 "INSERT INTO setup_seasons(company_id,year,name,start_date,end_date) VALUES (?,?,?,?,?)",
                 (company, 2035, 'Current Season', '2035-01-01', '2035-12-31'),
             ).lastrowid)
-            for element_id in (pitch_one, pitch_two):
+            for element_id in (pitch_one, pitch_two, peg):
                 c.execute(
                     'INSERT INTO setup_element_rates(company_id,year,element_id,season_id,rate) VALUES (?,?,?,?,?)',
                     (company, 2035, element_id, season, 25.0),
                 )
+            for element_id in (pitch_one, pitch_two):
                 c.execute(
                     'INSERT INTO setup_occupancy(company_id,year,element_id,max_total) VALUES (?,?,?,?)',
                     (company, 2035, element_id, 6),
@@ -87,8 +93,6 @@ def main() -> None:
                 (company, 'Current Child U12', 'CC', 1, 1),
             ).lastrowid)
 
-            # Complete every active Person Type for these Elements so the test is
-            # checking suitability, not incomplete Setup warnings.
             people = c.execute('SELECT id FROM setup_person_types WHERE company_id=? AND active=1', (company,)).fetchall()
             for element_id in (pitch_one, pitch_two):
                 for person in people:
@@ -105,14 +109,45 @@ def main() -> None:
                         (company, 2035, element_id, pid, 0.0),
                     )
 
-        # Age is requested only for the child Person Type and is stored as age at arrival.
+        # Create two client-defined grouped Features using the actual Setup route.
+        for name in ('Current Motorhome', 'Current Caravan'):
+            response = client.post(
+                '/setup/addons',
+                data={
+                    'csrf': csrf,
+                    'name': name,
+                    'item_kind': 'Feature',
+                    'feature_group': 'Vehicle Type',
+                    'pricing_method': 'Fixed once',
+                    'ask_before_availability': 'on',
+                },
+                follow_redirects=False,
+            )
+            assert response.status_code == 303
+
+        with db.connect() as c:
+            motorhome = int(c.execute('SELECT id FROM setup_addons WHERE company_id=? AND name=?', (company, 'Current Motorhome')).fetchone()['id'])
+            caravan = int(c.execute('SELECT id FROM setup_addons WHERE company_id=? AND name=?', (company, 'Current Caravan')).fetchone()['id'])
+            for aid in (motorhome, caravan):
+                c.execute(
+                    '''INSERT OR REPLACE INTO setup_type_addons
+                       (company_id,year,element_type,addon_id,allowed,min_qty,max_qty,rate)
+                       VALUES (?,?,?,?,?,?,?,?)''',
+                    (company, 2035, 'Current Camping', aid, 1, 0, 1, 0.0),
+                )
+
+        # Submit deliberately conflicting hidden values. The explicit radio choice
+        # is authoritative and must zero every other member of Vehicle Type.
         saved = client.post(
-            '/availability/requirements',
+            '/availability/requirements-v2',
             data={
                 'csrf': csrf,
                 f'person_{adult}': '2',
                 f'person_{child}': '1',
                 f'age_{child}_1': '6',
+                'feature_group_Vehicle_Type': str(motorhome),
+                f'addon_{motorhome}': '1',
+                f'addon_{caravan}': '1',
             },
             follow_redirects=False,
         )
@@ -120,15 +155,22 @@ def main() -> None:
         assert saved.headers['location'] == '/availability/calendar-v2'
 
         with db.connect() as c:
-            row = c.execute(
+            age_row = c.execute(
                 'SELECT quantity,ages_json FROM booking_requirement_people WHERE session_token=? AND company_id=? AND person_type_id=?',
                 (token, company, child),
             ).fetchone()
-            assert row is not None
-            assert int(row['quantity']) == 1
-            assert str(row['ages_json']) == '[6]'
+            assert age_row is not None and int(age_row['quantity']) == 1 and str(age_row['ages_json']) == '[6]'
+            chosen = {
+                int(r['addon_id']): int(r['quantity'])
+                for r in c.execute(
+                    'SELECT addon_id,quantity FROM booking_requirement_addons WHERE session_token=? AND company_id=?',
+                    (token, company),
+                ).fetchall()
+            }
+            assert chosen.get(motorhome) == 1
+            assert chosen.get(caravan) == 0
 
-        calendar = client.get(
+        camping = client.get(
             '/availability/calendar-v2',
             params={
                 'element_type': 'Current Camping',
@@ -137,15 +179,29 @@ def main() -> None:
                 'departure': '2035-07-04',
             },
         )
-        assert calendar.status_code == 200
-        assert 'Availability Calendar' in calendar.text
-        assert 'Current Pitch 1' in calendar.text and 'Current Pitch 2' in calendar.text
-        assert 'Not suitable for your party' in calendar.text
-        assert 'Current Child U12 not allowed' in calendar.text
-        assert 'More info' in calendar.text
+        assert camping.status_code == 200
+        assert 'Current Pitch 1' in camping.text and 'Current Pitch 2' in camping.text
+        assert 'Current Motorhome 1' in camping.text
+        assert 'Current Caravan 1' not in camping.text
+        assert 'Current Child U12 not allowed' in camping.text
+        assert 'no Current Motorhome' not in camping.text
+        assert 'no Current Caravan' not in camping.text
 
-        # Starting another NEW booking must clear the previous requirements instead
-        # of silently reusing them from the session.
+        fishing = client.get(
+            '/availability/calendar-v2',
+            params={
+                'element_type': 'Current Fishing',
+                'start': '2035-07-01',
+                'arrival': '2035-07-01',
+                'departure': '2035-07-02',
+            },
+        )
+        assert fishing.status_code == 200
+        assert 'Current Peg A' in fishing.text
+        assert 'no Current Motorhome' not in fishing.text
+        assert 'no Current Caravan' not in fishing.text
+        assert 'maximum occupancy' not in fishing.text
+
         restart = client.get('/availability/calendar', follow_redirects=False)
         assert restart.status_code == 303 and restart.headers['location'] == '/availability/start'
         with db.connect() as c:
@@ -160,7 +216,7 @@ def main() -> None:
             assert ready is not None and int(ready['ready']) == 0
             assert int(people_left['n']) == 0
 
-    print('Direct Booking Web V1 current Booking Requirements -> Availability suitability test: passed')
+    print('Direct Booking Web V1 authoritative Booking Requirements -> Availability rules test: passed')
 
 
 if __name__ == '__main__':
