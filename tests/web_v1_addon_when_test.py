@@ -51,7 +51,7 @@ def main() -> None:
 
         addons_page = client.get('/setup/addons')
         assert addons_page.status_code == 200
-        assert 'Add-on Timings' in addons_page.text
+        assert 'Feature / Extra Timings' in addons_page.text
         assert '/setup/addons/when' in addons_page.text
 
         r = client.post('/setup/addons/when', data={'csrf': csrf, 'addon_id': str(breakfast_id), 'every_active': '1', 'every_label': 'Every day', 'selected_active': '1', 'selected_label': 'Selected days'}, follow_redirects=False)
@@ -116,7 +116,7 @@ def main() -> None:
         assert 'preview-day-check' not in preview.text
         assert "box.innerHTML=''" in preview.text
 
-    print('Direct Booking Web V1 Add-on Timing UX test: passed')
+    print('Direct Booking Web V1 Feature / Extra Timing UX test: passed')
 
 
 if __name__ == '__main__':
