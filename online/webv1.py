@@ -16,6 +16,7 @@ from .webv1_booking_requirements import (
     initialise_booking_requirements,
     register_booking_requirement_routes,
 )
+from .webv1_booking_requirements_core import register_booking_requirements_core
 from .webv1_booking_requirements_refinements import (
     install_booking_requirements_refinements,
     register_booking_requirements_refinement_routes,
@@ -45,7 +46,6 @@ from .webv1_enquiries import register_enquiry_routes
 from .webv1_enquiry_builder import register_enquiry_builder_routes
 from .webv1_routes import register_web_v1_routes
 from .webv1_status_availability import install_status_aware_availability
-from .webv1_suitability_scope import install_suitability_scope
 from .webv1_user_display import install_user_display_rules
 
 __all__ = ['initialise_web_v1', 'register_web_v1']
@@ -68,7 +68,6 @@ def register_web_v1(app) -> None:
     install_status_aware_availability()
     install_hold_timing()
     install_pricing_calculation_transparency()
-    install_suitability_scope()
     register_pricing_usability_routes(app)
     webv1_calendar_v2.json = json
     register_web_v1_routes(app)
@@ -84,6 +83,7 @@ def register_web_v1(app) -> None:
     register_addon_popup_routes(app)
     register_booking_requirement_routes(app)
     register_booking_requirements_refinement_routes(app)
+    register_booking_requirements_core(app)
     register_features_extras_routes(app)
     register_calendar_v5_routes(app)
     webv1_calendar_v2.register_calendar_v2_routes(app)
