@@ -45,6 +45,7 @@ from .webv1_enquiries import register_enquiry_routes
 from .webv1_enquiry_builder import register_enquiry_builder_routes
 from .webv1_routes import register_web_v1_routes
 from .webv1_status_availability import install_status_aware_availability
+from .webv1_suitability_scope import install_suitability_scope
 from .webv1_user_display import install_user_display_rules
 
 __all__ = ['initialise_web_v1', 'register_web_v1']
@@ -67,6 +68,7 @@ def register_web_v1(app) -> None:
     install_status_aware_availability()
     install_hold_timing()
     install_pricing_calculation_transparency()
+    install_suitability_scope()
     register_pricing_usability_routes(app)
     webv1_calendar_v2.json = json
     register_web_v1_routes(app)
