@@ -66,17 +66,35 @@ def install_feature_booking_ui(app) -> None:
               defs.forEach(d=>{{if(d.group){{(groups[d.group]??=[]).push(d)}}else singles.push(d)}});
               Object.entries(groups).forEach(([name,items])=>{{
                 const box=document.createElement('div');box.className='feature-group-box';box.innerHTML='<h3>'+name+'</h3>';
-                const none=document.createElement('label');none.className='feature-choice';none.innerHTML='<input type="radio" name="feature_group_'+name.replace(/[^a-z0-9]+/gi,'_')+'" value=""> None / not required';box.appendChild(none);
-                let selected=false;
+                const groupName='feature_group_'+name.replace(/[^a-z0-9]+/gi,'_').replace(/^_+|_+$/g,'');
+                const none=document.createElement('label');none.className='feature-choice';
+                const noneRadio=document.createElement('input');noneRadio.type='radio';noneRadio.name=groupName;noneRadio.value='';noneRadio.required=true;
+                none.append(noneRadio,document.createTextNode(' None / not required'));box.appendChild(none);
                 items.forEach(d=>{{
-                  const label=document.createElement('label');label.className='feature-choice';const radio=document.createElement('input');radio.type='radio';radio.name='feature_group_'+name.replace(/[^a-z0-9]+/gi,'_');radio.value=String(d.id);if(Number(oldValues[d.id]||0)>0){{radio.checked=true;selected=true;}}const hidden=document.createElement('input');hidden.type='hidden';hidden.name='addon_'+d.id;hidden.value=radio.checked?'1':'0';radio.addEventListener('change',()=>{{items.forEach(x=>{{const h=box.querySelector('input[type=hidden][name="addon_'+x.id+'"]');if(h)h.value=String(x.id===d.id?1:0);}});}});label.append(radio,document.createTextNode(' '+d.name),hidden);box.appendChild(label);
+                  const label=document.createElement('label');label.className='feature-choice';
+                  const radio=document.createElement('input');radio.type='radio';radio.name=groupName;radio.value=String(d.id);
+                  if(Number(oldValues[d.id]||0)>0)radio.checked=true;
+                  const hidden=document.createElement('input');hidden.type='hidden';hidden.name='addon_'+d.id;hidden.value='0';
+                  label.append(radio,document.createTextNode(' '+d.name),hidden);box.appendChild(label);
                 }});
-                if(!selected)none.querySelector('input').checked=true;
-                none.querySelector('input').addEventListener('change',()=>{{if(none.querySelector('input').checked)box.querySelectorAll('input[type=hidden][name^="addon_"]').forEach(h=>h.value='0');}});
+                const syncGroup=()=>{{
+                  const checked=box.querySelector('input[type=radio]:checked');
+                  const chosen=checked?checked.value:'';
+                  items.forEach(x=>{{const h=box.querySelector('input[type=hidden][name="addon_'+x.id+'"]');if(h)h.value=(chosen===String(x.id)?'1':'0');}});
+                }};
+                box.querySelectorAll('input[type=radio]').forEach(r=>r.addEventListener('change',syncGroup));
+                syncGroup();
                 card.appendChild(box);
               }});
               singles.forEach(d=>{{
-                const row=document.createElement('div');row.className='feature-single';const tick=document.createElement('input');tick.type='checkbox';tick.checked=Number(oldValues[d.id]||0)>0;tick.disabled=d.cap<=0;const label=document.createElement('strong');label.textContent=d.name;const qty=document.createElement('input');qty.type='number';qty.min='1';qty.max=String(Math.max(1,d.cap));qty.value=String(Math.max(1,Math.min(d.cap||1,Number(oldValues[d.id]||1))));qty.style.display=d.cap>1?'inline-block':'none';const hidden=document.createElement('input');hidden.type='hidden';hidden.name='addon_'+d.id;const note=document.createElement('small');note.className='muted';note.textContent=d.cap<=0?'Not available on any Element':(d.cap===1?'':'Maximum '+d.cap);const sync=()=>{{let n=Math.max(1,Math.min(d.cap||1,Number(qty.value||1)));qty.value=String(n);hidden.value=tick.checked?String(d.cap===1?1:n):'0';qty.disabled=!tick.checked;}};tick.addEventListener('change',sync);qty.addEventListener('input',sync);row.append(tick,label,qty,hidden,note);sync();card.appendChild(row);
+                const row=document.createElement('div');row.className='feature-single';
+                const tick=document.createElement('input');tick.type='checkbox';tick.checked=Number(oldValues[d.id]||0)>0;tick.disabled=d.cap<=0;
+                const label=document.createElement('strong');label.textContent=d.name;
+                const qty=document.createElement('input');qty.type='number';qty.min='1';qty.max=String(Math.max(1,d.cap));qty.value=String(Math.max(1,Math.min(d.cap||1,Number(oldValues[d.id]||1))));qty.style.display=d.cap>1?'inline-block':'none';
+                const hidden=document.createElement('input');hidden.type='hidden';hidden.name='addon_'+d.id;
+                const note=document.createElement('small');note.className='muted';note.textContent=d.cap<=0?'Not available on any Element':(d.cap===1?'':'Maximum '+d.cap);
+                const sync=()=>{{let n=Math.max(1,Math.min(d.cap||1,Number(qty.value||1)));qty.value=String(n);hidden.value=tick.checked?String(d.cap===1?1:n):'0';qty.disabled=!tick.checked;}};
+                tick.addEventListener('change',sync);qty.addEventListener('input',sync);row.append(tick,label,qty,hidden,note);sync();card.appendChild(row);
               }});
               oldCard.parentNode.insertBefore(card,oldCard);
             }})();
