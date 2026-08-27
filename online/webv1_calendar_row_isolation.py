@@ -32,10 +32,8 @@ def install_calendar_row_isolation(app) -> None:
             outline:none !important;
           }
 
-          /* Each Element is a visually separate lane.  Calendar cells are 52px
-             high and the row reserves a further 4px white separator below them.
-             This prevents a yellow selection/departure marker from visually
-             joining the pale-green availability of the next Element. */
+          /* Each normal Element is a visually separate lane.  Calendar cells are
+             52px high and the row reserves a further 4px white separator below. */
           #calendar-scroll .element-row {
             min-height:56px !important;
             height:56px;
@@ -54,6 +52,30 @@ def install_calendar_row_isolation(app) -> None:
             box-sizing:border-box;
             align-self:start;
           }
+
+          /* Unsuitable rows need extra depth because the reason is deliberately
+             shown below the Element name.  Keep the whole calendar lane aligned
+             while allowing a two-line reason to remain fully visible. */
+          #calendar-scroll .element-row.party-unsuitable {
+            min-height:76px !important;
+            height:76px !important;
+          }
+          #calendar-scroll .element-row.party-unsuitable .cal-cell {
+            min-height:72px !important;
+            height:72px !important;
+          }
+          #calendar-scroll .element-row.party-unsuitable .cal-name {
+            height:72px !important;
+            white-space:normal;
+            overflow:visible;
+          }
+          #calendar-scroll .element-row.party-unsuitable .party-reason {
+            display:block;
+            margin-top:3px;
+            line-height:1.2;
+            white-space:normal;
+          }
+
           #calendar-scroll .element-row .night-departure {
             max-height:26px;
           }
