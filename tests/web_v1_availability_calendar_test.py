@@ -52,12 +52,13 @@ def main() -> None:
         with db.connect() as c:
             company = int(c.execute("SELECT id FROM companies WHERE name='Forest View Campsite'").fetchone()['id'])
 
-        # New booking journey deliberately gates Availability until the party /
-        # must-have requirements step has been completed.  Keep the established
-        # calendar regression below by marking that prerequisite complete after
-        # proving the gate itself.
-        gated = operator.get('/availability/calendar-v2', follow_redirects=False)
+        # The public/new-booking entry point is gated by Booking Requirements.
+        # The underlying v2 calendar deliberately remains directly available for
+        # operational/staff views such as opening an existing confirmed booking.
+        gated = operator.get('/availability/calendar', follow_redirects=False)
         assert gated.status_code == 303 and gated.headers['location'] == '/availability/start'
+        operational = operator.get('/availability/calendar-v2', follow_redirects=False)
+        assert operational.status_code == 200 and 'Availability Calendar' in operational.text
         start_page = operator.get('/availability/start')
         assert start_page.status_code == 200 and 'Booking requirements' in start_page.text and 'Who is coming?' in start_page.text
         mark_requirements_ready(db, company, operator)
