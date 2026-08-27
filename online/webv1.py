@@ -5,6 +5,7 @@ import json
 from fastapi import Request
 from fastapi.responses import RedirectResponse
 
+from .app import COOKIE_NAME
 from .setup015 import register_setup015
 from .webv1_addon_person import initialise_addon_person
 from .webv1_addon_popup import initialise_addon_popup, register_addon_popup_routes
@@ -84,6 +85,25 @@ def register_web_v1(app) -> None:
 
     @app.get('/availability/calendar')
     def availability_calendar_compat(request: Request):
+        # /availability/calendar is the normal start of a NEW booking journey.
+        # Require the party/must-have form here.  /availability/calendar-v2 stays
+        # directly usable for operational calendar views (for example viewing an
+        # already-confirmed booking) without forcing staff through a new-booking form.
+        token = request.cookies.get(COOKIE_NAME, '')
+        context = app.state.database.session_context(token) if token else None
+        company_id = None
+        if context:
+            company_id = context['acting_company_id'] if context['role'] == 'supervisor' else context['company_id']
+        ready = False
+        if company_id:
+            with app.state.database.connect() as c:
+                row = c.execute(
+                    'SELECT ready FROM booking_requirement_sessions WHERE session_token=? AND company_id=?',
+                    (token, int(company_id)),
+                ).fetchone()
+                ready = bool(row and int(row['ready']))
+        if not ready:
+            return RedirectResponse('/availability/start', 303)
         target = '/availability/calendar-v2'
         if request.url.query:
             target += '?' + request.url.query
