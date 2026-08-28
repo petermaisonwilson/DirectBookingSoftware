@@ -29,10 +29,15 @@ jobs:
       - name: Verify pricing usability imports
         shell: pwsh
         run: |
-          python -c "from online.webv1_pricing_usability import initialise_pricing_usability, register_pricing_usability_routes, install_pricing_calculation_transparency; from online.setup015_readiness import element_available_setup_ready, element_missing_items; from online.setup015_season_flex import register_flexible_season_routes; assert initialise_pricing_usability and register_pricing_usability_routes and install_pricing_calculation_transparency and element_available_setup_ready and element_missing_items and register_flexible_season_routes; print('Pricing usability imports: passed')"
+          python -c "from online.webv1_pricing_usability import initialise_pricing_usability, register_pricing_usability_routes, install_pricing_calculation_transparency; from online.setup015_readiness import element_available_setup_ready, element_missing_items; from online.setup015_season_flex import register_flexible_season_routes; from online.webv1_ordering import initialise_ordering, register_ordering_routes, person_type_rows; assert initialise_pricing_usability and register_pricing_usability_routes and install_pricing_calculation_transparency and element_available_setup_ready and element_missing_items and register_flexible_season_routes and initialise_ordering and register_ordering_routes and person_type_rows; print('Pricing usability imports: passed')"
           if ($LASTEXITCODE -ne 0) { throw "Pricing usability import verification failed" }
       - name: Run pricing usability and Season extension regression
         shell: pwsh
         run: |
           python tests/web_v1_pricing_usability_test.py
           if ($LASTEXITCODE -ne 0) { throw "Pricing usability / Season extension regression failed" }
+      - name: Run menu and Setup ordering regression
+        shell: pwsh
+        run: |
+          python tests/web_v1_ordering_test.py
+          if ($LASTEXITCODE -ne 0) { throw "Menu / Setup ordering regression failed" }
