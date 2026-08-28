@@ -8,9 +8,9 @@ from fastapi import HTTPException, Request
 from fastapi.responses import HTMLResponse, RedirectResponse
 
 from .app import COOKIE_NAME, form_data
-from .setup015_calculator import _addon_rule
 from .setup015_core import one, rows
 from .webv1_booking_requirements import _requirements_page
+from .webv1_rule_resolver import resolve_element_item_rule
 
 
 def _working_context(database, request: Request):
@@ -36,7 +36,7 @@ def _requirement_cap_anywhere(database, cid: int, addon_id: int) -> int:
     unlimited = False
     for year in configured_years:
         for element in elements:
-            rule = _addon_rule(database, cid, year, element, addon_id)
+            rule = resolve_element_item_rule(database, cid, year, element, addon_id)
             if not rule.get('allowed'):
                 continue
             maximum = rule.get('max')
@@ -48,51 +48,39 @@ def _requirement_cap_anywhere(database, cid: int, addon_id: int) -> int:
 
 
 def _relevant_requirement_ids(database, cid: int, year: int, element_type: str) -> set[int]:
-    """Return requirements that genuinely apply to this Element Type.
-
-    An item is relevant only when the Type allows it somewhere: either through
-    the Element Type default or an explicit Yes override on one of its Elements.
-    Thus Camping-only requirements do not make Fishing pegs unsuitable.
-    """
     relevant = {
         int(r['addon_id'])
-        for r in rows(
-            database,
+        for r in rows(database,
             'SELECT addon_id FROM setup_type_addons WHERE company_id=? AND year=? AND element_type=? AND allowed=1',
-            (cid, year, element_type),
-        )
+            (cid, year, element_type))
     }
     relevant.update(
         int(r['addon_id'])
-        for r in rows(
-            database,
+        for r in rows(database,
             '''SELECT DISTINCT ea.addon_id
                FROM setup_element_addons ea
                JOIN setup_elements e ON e.id=ea.element_id AND e.company_id=ea.company_id
                WHERE ea.company_id=? AND ea.year=? AND e.element_type=?
                  AND e.active=1 AND ea.state='Y' ''',
-            (cid, year, element_type),
-        )
+            (cid, year, element_type))
     )
     return relevant
 
 
 def element_reasons(database, cid: int, year: int, element, people: dict, requirements: dict) -> list[str]:
-    """One authoritative suitability calculation for Availability."""
+    """Authoritative suitability calculation.
+
+    Requirements are positive-only: quantity zero means the customer does not
+    require that capability, never that an Element providing it is unsuitable.
+    """
     reasons: list[str] = []
     element_type = str(element['element_type'])
     pricing_method = str(element['pricing_method'] or '')
 
-    # Accommodation-style Elements are checked against the whole booking party.
-    # Per-day resources (for example a fishing peg) are not: the booking party
-    # may reserve one or more activity resources independently.
     if pricing_method != 'Per day':
         total = sum(int(v.get('quantity', 0)) for v in people.values())
-        occupancy = one(
-            database,
-            'SELECT max_total FROM setup_occupancy WHERE company_id=? AND year=? AND element_id=?',
-            (cid, year, int(element['id'])),
-        )
+        occupancy = one(database, 'SELECT max_total FROM setup_occupancy WHERE company_id=? AND year=? AND element_id=?',
+                        (cid, year, int(element['id'])))
         if occupancy is None:
             reasons.append('occupancy setup incomplete')
         elif total > int(occupancy['max_total']):
@@ -104,11 +92,8 @@ def element_reasons(database, cid: int, year: int, element, people: dict, requir
                 continue
             person = one(database, 'SELECT name FROM setup_person_types WHERE company_id=? AND id=?', (cid, pid))
             name = str(person['name']) if person else 'Person type'
-            limit = one(
-                database,
-                'SELECT max_count FROM setup_person_limits WHERE company_id=? AND year=? AND element_id=? AND person_type_id=?',
-                (cid, year, int(element['id']), pid),
-            )
+            limit = one(database, 'SELECT max_count FROM setup_person_limits WHERE company_id=? AND year=? AND element_id=? AND person_type_id=?',
+                        (cid, year, int(element['id']), pid))
             if limit is None:
                 reasons.append(f'{name} not configured')
             elif qty > int(limit['max_count']):
@@ -116,13 +101,14 @@ def element_reasons(database, cid: int, year: int, element, people: dict, requir
 
     relevant = _relevant_requirement_ids(database, cid, year, element_type)
     for aid, raw_qty in requirements.items():
-        aid = int(aid)
-        qty = int(raw_qty)
-        if qty <= 0 or aid not in relevant:
+        aid = int(aid); qty = int(raw_qty)
+        if qty <= 0:
+            continue
+        if aid not in relevant:
             continue
         item = one(database, 'SELECT name FROM setup_addons WHERE company_id=? AND id=?', (cid, aid))
         name = str(item['name']) if item else 'Requirement'
-        rule = _addon_rule(database, cid, year, element, aid)
+        rule = resolve_element_item_rule(database, cid, year, element, aid)
         if not rule['allowed']:
             reasons.append(f'no {name}')
         elif rule['max'] is not None and qty > int(rule['max']):
@@ -135,13 +121,6 @@ def _remove_route(app, path: str) -> None:
 
 
 def register_booking_requirements_core(app) -> None:
-    """Own the single POST path that turns the Requirements form into saved data.
-
-    Grouped Features are canonicalised here, server-side: exactly one explicit
-    radio choice (including the explicit None choice) is required per group and
-    every unselected member is saved as zero. The hidden quantity controls can
-    therefore never leave two Vehicle Type choices active at once.
-    """
     database = app.state.database
     _remove_route(app, '/availability/requirements-v2')
 
@@ -178,18 +157,13 @@ def register_booking_requirements_core(app) -> None:
         if people_rows and total <= 0:
             return HTMLResponse(_requirements_page(database, context, cid, token, 'Enter at least one person.'), 400)
 
-        addon_rows = rows(
-            database,
-            '''SELECT * FROM setup_addons
+        addon_rows = rows(database, '''SELECT * FROM setup_addons
                WHERE company_id=? AND active=1 AND ask_before_availability=1
-               ORDER BY feature_group,name COLLATE NOCASE''',
-            (cid,),
-        )
+               ORDER BY item_kind,feature_group,name COLLATE NOCASE''', (cid,))
         caps = {int(a['id']): _requirement_cap_anywhere(database, cid, int(a['id'])) for a in addon_rows}
         parsed: dict[int, int] = {int(a['id']): 0 for a in addon_rows}
 
-        groups: dict[str, list] = {}
-        standalone = []
+        groups: dict[str, list] = {}; standalone = []
         for a in addon_rows:
             group = str(a['feature_group'] or '').strip() if str(a['item_kind'] or '') == 'Feature' else ''
             if group:
@@ -213,8 +187,7 @@ def register_booking_requirements_core(app) -> None:
                 parsed[aid] = 1
 
         for a in standalone:
-            aid = int(a['id'])
-            cap = int(caps.get(aid, 0))
+            aid = int(a['id']); cap = int(caps.get(aid, 0))
             values = data.getlist(f'addon_{aid}') if hasattr(data, 'getlist') else [data.get(f'addon_{aid}', '0')]
             try:
                 qty = max(int(v or 0) for v in values)
@@ -228,19 +201,12 @@ def register_booking_requirements_core(app) -> None:
             c.execute('DELETE FROM booking_requirement_people WHERE company_id=? AND session_token=?', (cid, token))
             c.execute('DELETE FROM booking_requirement_addons WHERE company_id=? AND session_token=?', (cid, token))
             for pid, qty, ages in parsed_people:
-                c.execute(
-                    'INSERT INTO booking_requirement_people(session_token,company_id,person_type_id,quantity,ages_json) VALUES (?,?,?,?,?)',
-                    (token, cid, pid, qty, ages),
-                )
+                c.execute('INSERT INTO booking_requirement_people(session_token,company_id,person_type_id,quantity,ages_json) VALUES (?,?,?,?,?)',
+                          (token, cid, pid, qty, ages))
             for aid, qty in parsed.items():
-                c.execute(
-                    'INSERT INTO booking_requirement_addons(session_token,company_id,addon_id,quantity) VALUES (?,?,?,?)',
-                    (token, cid, aid, qty),
-                )
-            c.execute(
-                '''INSERT INTO booking_requirement_sessions(session_token,company_id,ready,updated_at)
+                c.execute('INSERT INTO booking_requirement_addons(session_token,company_id,addon_id,quantity) VALUES (?,?,?,?)',
+                          (token, cid, aid, qty))
+            c.execute('''INSERT INTO booking_requirement_sessions(session_token,company_id,ready,updated_at)
                    VALUES (?,?,1,CURRENT_TIMESTAMP)
-                   ON CONFLICT(session_token,company_id) DO UPDATE SET ready=1,updated_at=CURRENT_TIMESTAMP''',
-                (token, cid),
-            )
+                   ON CONFLICT(session_token,company_id) DO UPDATE SET ready=1,updated_at=CURRENT_TIMESTAMP''', (token, cid))
         return RedirectResponse('/availability/calendar-v2', 303)
