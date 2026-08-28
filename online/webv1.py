@@ -116,9 +116,14 @@ def register_web_v1(app) -> None:
         if company_id and token:
             cid = int(company_id)
             with app.state.database.connect() as c:
+                hold_ids = [int(r['id']) for r in c.execute('SELECT id FROM element_holds WHERE session_token=? AND company_id=?', (token, cid)).fetchall()]
+                for hold_id in hold_ids:
+                    c.execute('DELETE FROM hold_requirement_people WHERE hold_id=?', (hold_id,))
+                    c.execute('DELETE FROM hold_requirement_addons WHERE hold_id=?', (hold_id,))
+                c.execute('DELETE FROM element_holds WHERE session_token=? AND company_id=?', (token, cid))
                 c.execute('DELETE FROM booking_requirement_people WHERE session_token=? AND company_id=?', (token, cid))
                 c.execute('DELETE FROM booking_requirement_addons WHERE session_token=? AND company_id=?', (token, cid))
-                c.execute('''INSERT INTO booking_requirement_sessions(session_token,company_id,ready,updated_at)
-                             VALUES (?,?,0,CURRENT_TIMESTAMP)
-                             ON CONFLICT(session_token,company_id) DO UPDATE SET ready=0,updated_at=CURRENT_TIMESTAMP''', (token, cid))
+                c.execute('''INSERT INTO booking_requirement_sessions(session_token,company_id,ready,arrival_date,departure_date,updated_at)
+                             VALUES (?,?,0,'','',CURRENT_TIMESTAMP)
+                             ON CONFLICT(session_token,company_id) DO UPDATE SET ready=0,arrival_date='',departure_date='',updated_at=CURRENT_TIMESTAMP''', (token, cid))
         return RedirectResponse('/availability/start', 303)
