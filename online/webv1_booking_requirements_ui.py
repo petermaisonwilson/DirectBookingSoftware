@@ -8,13 +8,14 @@ from .app import COOKIE_NAME, esc
 from .setup015_core import one, rows
 from .webv1_booking_requirements import _saved_requirements
 from .webv1_booking_requirements_core import element_reasons
+from .webv1_ordering import person_type_rows
 
 
 def install_booking_requirements_ui(app) -> None:
     """Render requirements setup and suitability without gating direct calendar-v2 views.
 
     The public/new-booking entry route /availability/calendar owns the requirement
-    gate.  Direct /availability/calendar-v2 remains available for operational
+    gate. Direct /availability/calendar-v2 remains available for operational
     calendar views such as inspecting confirmed bookings.
     """
     database = app.state.database
@@ -45,7 +46,7 @@ def install_booking_requirements_ui(app) -> None:
 
         if path == '/setup/person-types':
             controls = '<div class="card"><h2>Age question</h2><p class="muted">Privacy-by-design: ask for age only where it is genuinely needed. Date of birth is not collected.</p><table><thead><tr><th>Person Type</th><th>Ask for age at arrival</th></tr></thead><tbody>'
-            for p in rows(database, 'SELECT id,name,ask_age FROM setup_person_types WHERE company_id=? AND active=1 ORDER BY name', (cid,)):
+            for p in person_type_rows(database, cid, active_only=True):
                 controls += f'<tr><td>{esc(p["name"])}</td><td><form method="post" action="/setup/person-types/age-toggle"><input type="hidden" name="csrf" value="{esc(context["csrf_token"])}"><input type="hidden" name="person_type_id" value="{int(p["id"])}"><button class="secondary">{"✓ Yes" if int(p["ask_age"] or 0) else "No"}</button></form></td></tr>'
             controls += '</tbody></table></div>'
             text = text.replace('<div class="card"><table>', controls + '<div class="card"><table>', 1)
@@ -59,8 +60,6 @@ def install_booking_requirements_ui(app) -> None:
 
         else:
             people, addons, ready = _saved_requirements(database, cid, token)
-            # No requirement session means this is an operational/direct calendar
-            # view. Leave the calendar unchanged rather than forcing a new booking.
             if not ready:
                 return Response(content=text, status_code=response.status_code, headers=headers, media_type='text/html')
 
