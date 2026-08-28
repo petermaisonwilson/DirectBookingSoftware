@@ -72,12 +72,17 @@ def element_reasons(database, cid: int, year: int, element, people: dict, requir
 
     Requirements are positive-only: quantity zero means the customer does not
     require that capability, never that an Element providing it is unsuitable.
+
+    Accommodation Elements check every positively selected requirement against
+    the same resolved rule used by the popup. Per-day activity resources keep
+    their own requirement scope so Camping requirements do not leak into Fishing.
     """
     reasons: list[str] = []
     element_type = str(element['element_type'])
     pricing_method = str(element['pricing_method'] or '')
+    accommodation_style = pricing_method != 'Per day'
 
-    if pricing_method != 'Per day':
+    if accommodation_style:
         total = sum(int(v.get('quantity', 0)) for v in people.values())
         occupancy = one(database, 'SELECT max_total FROM setup_occupancy WHERE company_id=? AND year=? AND element_id=?',
                         (cid, year, int(element['id'])))
@@ -101,10 +106,11 @@ def element_reasons(database, cid: int, year: int, element, people: dict, requir
 
     relevant = _relevant_requirement_ids(database, cid, year, element_type)
     for aid, raw_qty in requirements.items():
-        aid = int(aid); qty = int(raw_qty)
+        aid = int(aid)
+        qty = int(raw_qty)
         if qty <= 0:
             continue
-        if aid not in relevant:
+        if not accommodation_style and aid not in relevant:
             continue
         item = one(database, 'SELECT name FROM setup_addons WHERE company_id=? AND id=?', (cid, aid))
         name = str(item['name']) if item else 'Requirement'
