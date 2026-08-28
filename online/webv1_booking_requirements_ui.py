@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from datetime import date
+from urllib.parse import quote_plus
 
 from fastapi.responses import Response
 
@@ -58,7 +59,7 @@ def install_booking_requirements_ui(app) -> None:
             text = text.replace('<div class="card"><table>', controls + '<div class="card"><table>', 1)
 
         else:
-            people, addons, ready, _, _ = _saved_requirements(database, cid, token)
+            people, addons, ready, saved_arrival, saved_departure = _saved_requirements(database, cid, token)
             if not ready:
                 return Response(content=text, status_code=response.status_code, headers=headers, media_type='text/html')
 
@@ -77,7 +78,17 @@ def install_booking_requirements_ui(app) -> None:
                     a = one(database, 'SELECT name FROM setup_addons WHERE company_id=? AND id=?', (cid, aid))
                     summary.append(f'{str(a["name"]) if a else "Requirement"} {int(qty)}')
             summary_html = ' · '.join(esc(x) for x in summary) or 'No special requirements'
-            card = f'<div class="card requirement-summary"><strong>Your requirements:</strong> {summary_html} <a class="button secondary" style="margin-left:10px" href="/availability/start">Change</a></div>'
+            add_query = ''
+            if saved_arrival:
+                add_query += 'arrival=' + quote_plus(saved_arrival)
+            if saved_departure:
+                add_query += ('&' if add_query else '') + 'departure=' + quote_plus(saved_departure)
+            add_href = '/availability/calendar-v2' + (('?' + add_query) if add_query else '') + '#calendar-scroll'
+            card = (
+                f'<div class="card requirement-summary"><strong>Your requirements:</strong> {summary_html} '
+                f'<a class="button secondary" style="margin-left:10px" href="/availability/start">Change</a> '
+                f'<a class="button secondary" href="{esc(add_href)}">ADD</a></div>'
+            )
             text = text.replace('<h1>Availability Calendar</h1>', '<h1>Availability Calendar</h1>' + card, 1)
 
             raw_day = request.query_params.get('arrival') or request.query_params.get('start') or date.today().isoformat()
