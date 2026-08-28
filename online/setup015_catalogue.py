@@ -171,7 +171,7 @@ def register_catalogue_routes(app) -> None:
             ('pricing', '<h2>Seasonal pricing</h2><p>Set Element prices for each configured season.</p><a class="button" href="/setup/pricing">Open</a>'),
             ('price_test', '<h2>Price / Rules test</h2><p>Test real dates, people, Features / Extras, occupancy and calculated price.</p><a class="button" href="/setup/price-test">Open</a>'),
         ]
-        body = f'<h1>{esc(company["name"])} — Setup</h1>{setup_nav()}' + sortable_menu_html(database, context, 'setup', cards)
+        body = f'<h1>{esc(company["name"])} — Setup</h1>' + sortable_menu_html(database, context, 'setup', cards)
         return layout('Setup', body, context)
 
     @app.get('/setup/element-types', response_class=HTMLResponse)
