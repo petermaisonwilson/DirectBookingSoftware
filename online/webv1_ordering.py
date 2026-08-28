@@ -70,15 +70,11 @@ def person_type_rows(database, company_id: int, *, active_only: bool = False) ->
 
 
 def sortable_menu_html(database, context, page_key: str, items: list[tuple[str, str]]) -> str:
-    """Return a draggable card grid.
-
-    items are (stable_key, inner_html). Menu order is personal to the logged-in
-    supervisor/operator and does not change another user's layout.
-    """
+    """Return a draggable card grid whose order is personal to this login."""
     ordered = order_menu_items(database, int(context['user_id']), page_key, items)
     cards = ''.join(
-        f'<div class="card sortable-card" draggable="true" data-sort-key="{html.escape(str(key), quote=True)}">'
-        f'<div class="sort-handle" title="Drag to reorder">☰ Drag</div>{inner}</div>'
+        f'<div class="card sortable-card" data-sort-key="{html.escape(str(key), quote=True)}">'
+        f'<div class="sort-handle" draggable="true" title="Drag to reorder">☰ Drag</div>{inner}</div>'
         for key, inner in ordered
     )
     csrf = html.escape(str(context['csrf_token']), quote=True)
@@ -97,10 +93,16 @@ def sortable_menu_html(database, context, page_key: str, items: list[tuple[str, 
       const grid=document.querySelector('.sortable-grid[data-page="{page}"]'); if(!grid)return;
       let dragged=null;
       const save=()=>fetch('/ui/menu-order',{{method:'POST',headers:{{'Content-Type':'application/x-www-form-urlencoded'}},body:new URLSearchParams({{csrf:'{csrf}',page_key:'{page}',order:[...grid.querySelectorAll('[data-sort-key]')].map(x=>x.dataset.sortKey).join(',')}})}});
-      grid.querySelectorAll('.sortable-card').forEach(card=>{{
-        card.addEventListener('dragstart',e=>{{if(!e.target.closest('.sort-handle')){{e.preventDefault();return;}}dragged=card;card.classList.add('dragging');}});
-        card.addEventListener('dragend',()=>{{card.classList.remove('dragging');dragged=null;save();}});
-        card.addEventListener('dragover',e=>{{e.preventDefault();if(!dragged||dragged===card)return;const r=card.getBoundingClientRect();const before=e.clientY<r.top+r.height/2;grid.insertBefore(dragged,before?card:card.nextSibling);}});
+      grid.querySelectorAll('.sort-handle').forEach(handle=>{{
+        handle.addEventListener('dragstart',e=>{{dragged=handle.closest('.sortable-card');if(!dragged)return;dragged.classList.add('dragging');e.dataTransfer.effectAllowed='move';}});
+        handle.addEventListener('dragend',()=>{{if(dragged)dragged.classList.remove('dragging');dragged=null;save();}});
+      }});
+      grid.addEventListener('dragover',e=>{{
+        e.preventDefault();if(!dragged)return;
+        const card=e.target.closest('.sortable-card');if(!card||card===dragged)return;
+        const r=card.getBoundingClientRect();
+        const before=e.clientY<r.top+r.height/2;
+        grid.insertBefore(dragged,before?card:card.nextSibling);
       }});
       const reset=document.querySelector('.sort-reset[data-page="{page}"]'); if(reset)reset.addEventListener('click',async()=>{{await fetch('/ui/menu-order/reset',{{method:'POST',headers:{{'Content-Type':'application/x-www-form-urlencoded'}},body:new URLSearchParams({{csrf:'{csrf}',page_key:'{page}'}})}});location.reload();}});
     }})();
@@ -108,28 +110,23 @@ def sortable_menu_html(database, context, page_key: str, items: list[tuple[str, 
 
 
 def setup_sortable_table_bits(context, list_key: str) -> tuple[str, str]:
-    """Return drag-handle heading and script for a Setup table body.
-
-    The caller gives tbody id setup-sort-<list_key> and each row data-item-id.
-    Setup ordering is Client-wide, so a supervisor in Support Mode and the Client
-    are editing the same canonical order.
-    """
+    """Return the Order heading and drag script for a canonical Setup list."""
     csrf = html.escape(str(context['csrf_token']), quote=True)
     key = html.escape(list_key, quote=True)
     heading = '<th style="width:70px">Order</th>'
     script = f'''<style>
-      #setup-sort-{key} tr[draggable=true]{{cursor:default}}
       #setup-sort-{key} tr.dragging{{opacity:.45}}
       #setup-sort-{key} .row-sort-handle{{cursor:grab;user-select:none;color:#66717f;font-size:12px;white-space:nowrap}}
     </style><script>
     (()=>{{
       const body=document.getElementById('setup-sort-{key}');if(!body)return;let dragged=null;
       const save=()=>fetch('/setup/item-order',{{method:'POST',headers:{{'Content-Type':'application/x-www-form-urlencoded'}},body:new URLSearchParams({{csrf:'{csrf}',list_key:'{key}',order:[...body.querySelectorAll('tr[data-item-id]')].map(x=>x.dataset.itemId).join(',')}})}});
-      body.querySelectorAll('tr[data-item-id]').forEach(row=>{{
-        row.addEventListener('dragstart',e=>{{if(!e.target.closest('.row-sort-handle')){{e.preventDefault();return;}}dragged=row;row.classList.add('dragging');}});
-        row.addEventListener('dragend',()=>{{row.classList.remove('dragging');dragged=null;save();}});
-        row.addEventListener('dragover',e=>{{e.preventDefault();if(!dragged||dragged===row)return;const r=row.getBoundingClientRect();body.insertBefore(dragged,e.clientY<r.top+r.height/2?row:row.nextSibling);}});
+      body.querySelectorAll('.row-sort-handle').forEach(handle=>{{
+        handle.setAttribute('draggable','true');
+        handle.addEventListener('dragstart',e=>{{dragged=handle.closest('tr[data-item-id]');if(!dragged)return;dragged.classList.add('dragging');e.dataTransfer.effectAllowed='move';}});
+        handle.addEventListener('dragend',()=>{{if(dragged)dragged.classList.remove('dragging');dragged=null;save();}});
       }});
+      body.addEventListener('dragover',e=>{{e.preventDefault();if(!dragged)return;const row=e.target.closest('tr[data-item-id]');if(!row||row===dragged)return;const r=row.getBoundingClientRect();body.insertBefore(dragged,e.clientY<r.top+r.height/2?row:row.nextSibling);}});
     }})();
     </script>'''
     return heading, script
