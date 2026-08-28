@@ -4,11 +4,12 @@ import json
 from datetime import date
 
 from fastapi import HTTPException, Request
-from fastapi.responses import HTMLResponse, RedirectResponse, Response
+from fastapi.responses import HTMLResponse, JSONResponse, RedirectResponse, Response
 
 from .app import COOKIE_NAME, esc, form_data, layout
 from .setup015_calculator import _addon_rule
 from .setup015_core import audit, context_for, one, require_csrf, rows, working_company
+from .webv1_availability import create_or_replace_hold
 from .webv1_ordering import person_type_rows
 
 
@@ -35,6 +36,21 @@ CREATE TABLE IF NOT EXISTS booking_requirement_addons (
     quantity INTEGER NOT NULL DEFAULT 0,
     PRIMARY KEY(session_token, company_id, addon_id)
 );
+CREATE TABLE IF NOT EXISTS hold_requirement_people (
+    hold_id INTEGER NOT NULL,
+    company_id INTEGER NOT NULL,
+    person_type_id INTEGER NOT NULL,
+    quantity INTEGER NOT NULL DEFAULT 0,
+    ages_json TEXT NOT NULL DEFAULT '[]',
+    PRIMARY KEY(hold_id, person_type_id)
+);
+CREATE TABLE IF NOT EXISTS hold_requirement_addons (
+    hold_id INTEGER NOT NULL,
+    company_id INTEGER NOT NULL,
+    addon_id INTEGER NOT NULL,
+    quantity INTEGER NOT NULL DEFAULT 0,
+    PRIMARY KEY(hold_id, addon_id)
+);
 """
 
 
@@ -49,6 +65,10 @@ def initialise_booking_requirements(database) -> None:
         c.executescript(REQUIREMENTS_SCHEMA)
         _ensure_column(c, 'setup_person_types', 'ask_age', 'INTEGER NOT NULL DEFAULT 0')
         _ensure_column(c, 'setup_addons', 'ask_before_availability', 'INTEGER NOT NULL DEFAULT 0')
+        _ensure_column(c, 'booking_requirement_sessions', 'arrival_date', "TEXT NOT NULL DEFAULT ''")
+        _ensure_column(c, 'booking_requirement_sessions', 'departure_date', "TEXT NOT NULL DEFAULT ''")
+        c.execute('DELETE FROM hold_requirement_people WHERE hold_id NOT IN (SELECT id FROM element_holds)')
+        c.execute('DELETE FROM hold_requirement_addons WHERE hold_id NOT IN (SELECT id FROM element_holds)')
 
 
 def _session_context(database, request: Request):
@@ -66,21 +86,33 @@ def _saved_requirements(database, cid: int, token: str):
               for r in rows(database, 'SELECT * FROM booking_requirement_people WHERE company_id=? AND session_token=?', (cid, token))}
     addons = {int(r['addon_id']): int(r['quantity'])
               for r in rows(database, 'SELECT * FROM booking_requirement_addons WHERE company_id=? AND session_token=?', (cid, token))}
-    ready = one(database, 'SELECT ready FROM booking_requirement_sessions WHERE company_id=? AND session_token=?', (cid, token))
-    return people, addons, bool(ready and int(ready['ready']))
+    saved = one(database, 'SELECT ready,arrival_date,departure_date FROM booking_requirement_sessions WHERE company_id=? AND session_token=?', (cid, token))
+    ready = bool(saved and int(saved['ready'] or 0))
+    arrival = str(saved['arrival_date'] or '') if saved else ''
+    departure = str(saved['departure_date'] or '') if saved else ''
+    return people, addons, ready, arrival, departure
+
+
+def _fmt_user_date(value: str) -> str:
+    try:
+        return date.fromisoformat(value).strftime('%d/%m/%Y')
+    except (TypeError, ValueError):
+        return value or ''
 
 
 def _requirements_page(database, context, cid: int, token: str, message: str = '') -> str:
     people_rows = person_type_rows(database, cid, active_only=True)
     addon_rows = rows(database, 'SELECT * FROM setup_addons WHERE company_id=? AND active=1 AND ask_before_availability=1 ORDER BY name COLLATE NOCASE', (cid,))
-    saved_people, saved_addons, _ = _saved_requirements(database, cid, token)
+    saved_people, saved_addons, _, saved_arrival, saved_departure = _saved_requirements(database, cid, token)
     error = f'<div class="error">{esc(message)}</div>' if message else ''
     body = f'''<h1>Booking requirements</h1>{error}
-    <div class="card"><p>Tell us who is coming and anything that the Element <strong>must</strong> provide. We use this only to prevent you choosing an unsuitable Element.</p>
+    <div class="card"><p>Tell us who is coming, when they are staying and anything that the Element <strong>must</strong> provide. We use this only to prevent you choosing an unsuitable Element.</p>
     <p class="muted">For privacy, age is requested only for Person Types where the Client has enabled <strong>Ask for age</strong>. Date of birth is not collected.</p></div>
     <form method="post" action="/availability/requirements">
     <input type="hidden" name="csrf" value="{esc(context['csrf_token'])}">
-    <div class="card"><h2>Who is coming?</h2><div class="grid">'''
+    <div class="card"><h2>Who's coming and when?</h2><div class="grid">
+      <div><label>Arrival</label><input type="date" name="arrival" required value="{esc(saved_arrival)}"></div>
+      <div><label>Departure</label><input type="date" name="departure" required value="{esc(saved_departure)}"></div>'''
     for p in people_rows:
         pid = int(p['id']); saved = saved_people.get(pid, {'quantity': 0, 'ages': []}); qty = int(saved['quantity'])
         body += f'<div class="requirement-person"><label>{esc(p["name"])}</label><input class="person-qty" data-person="{pid}" data-ask-age="{1 if int(p["ask_age"] or 0) else 0}" type="number" min="0" max="99" name="person_{pid}" value="{qty}">'
@@ -89,12 +121,12 @@ def _requirements_page(database, context, cid: int, token: str, message: str = '
         body += '</div>'
     body += '</div></div>'
     if addon_rows:
-        body += '<div class="card"><h2>Must-have requirements</h2><p class="muted">Only Add-ons the Client has marked “Ask before Availability” appear here.</p><div class="grid">'
+        body += '<div class="card"><h2>Must-have requirements</h2><p class="muted">Only Features or Extras marked “Ask before Availability” appear here.</p><div class="grid">'
         for a in addon_rows:
             aid = int(a['id']); qty = int(saved_addons.get(aid, 0))
             body += f'<div><label>{esc(a["name"])}</label><input type="number" min="0" max="99" name="addon_{aid}" value="{qty}"><small class="muted">0 = not required</small></div>'
         body += '</div></div>'
-    body += '''<p><button type="submit">CONTINUE TO AVAILABILITY</button></p></form>
+    body += '''<p><button type="submit">SEARCH AVAILABILITY</button></p></form>
     <script>
     (()=>{
       function draw(input){
@@ -151,8 +183,48 @@ def _element_reasons(database, cid: int, year: int, element, people: dict, addon
     return reasons
 
 
+def _snapshot_hold_requirements(database, cid: int, token: str, hold_id: int) -> None:
+    with database.connect() as c:
+        c.execute('DELETE FROM hold_requirement_people WHERE hold_id=?', (hold_id,))
+        c.execute('DELETE FROM hold_requirement_addons WHERE hold_id=?', (hold_id,))
+        c.execute('''INSERT INTO hold_requirement_people(hold_id,company_id,person_type_id,quantity,ages_json)
+                     SELECT ?,company_id,person_type_id,quantity,ages_json FROM booking_requirement_people
+                     WHERE company_id=? AND session_token=?''', (hold_id, cid, token))
+        c.execute('''INSERT INTO hold_requirement_addons(hold_id,company_id,addon_id,quantity)
+                     SELECT ?,company_id,addon_id,quantity FROM booking_requirement_addons
+                     WHERE company_id=? AND session_token=?''', (hold_id, cid, token))
+
+
+def _held_requirement_html(database, cid: int, token: str) -> str:
+    hold_rows = rows(database, '''SELECT h.id,h.arrival_date,h.departure_date,e.name AS element_name
+                                  FROM element_holds h JOIN setup_elements e ON e.id=h.element_id
+                                  WHERE h.company_id=? AND h.session_token=? ORDER BY h.id''', (cid, token))
+    if not hold_rows:
+        return ''
+    blocks = []
+    for h in hold_rows:
+        hid = int(h['id']); details = []
+        for p in rows(database, '''SELECT hp.quantity,hp.ages_json,pt.name FROM hold_requirement_people hp
+                                   LEFT JOIN setup_person_types pt ON pt.id=hp.person_type_id AND pt.company_id=hp.company_id
+                                   WHERE hp.hold_id=? AND hp.quantity>0 ORDER BY pt.name''', (hid,)):
+            label = f'{int(p["quantity"])} {str(p["name"] or "person")}'
+            try: ages = json.loads(p['ages_json'] or '[]')
+            except json.JSONDecodeError: ages = []
+            if ages: label += ' (age' + ('s ' if len(ages) != 1 else ' ') + ', '.join(str(x) for x in ages) + ')'
+            details.append(label)
+        for a in rows(database, '''SELECT ha.quantity,sa.name FROM hold_requirement_addons ha
+                                   LEFT JOIN setup_addons sa ON sa.id=ha.addon_id AND sa.company_id=ha.company_id
+                                   WHERE ha.hold_id=? AND ha.quantity>0 ORDER BY sa.name''', (hid,)):
+            details.append(f'{str(a["name"] or "Requirement")} {int(a["quantity"])}')
+        detail_text = ' · '.join(esc(x) for x in details) or 'No special requirements'
+        blocks.append(f'<div><strong>{esc(h["element_name"])}</strong> — {_fmt_user_date(str(h["arrival_date"]))} to {_fmt_user_date(str(h["departure_date"]))}<br><span class="muted">{detail_text}</span></div>')
+    return '<div class="card held-requirements"><h3>Requirements by held item</h3>' + ''.join(blocks) + '</div>'
+
+
 def register_booking_requirement_routes(app) -> None:
     database = app.state.database
+
+    app.router.routes[:] = [r for r in app.router.routes if getattr(r, 'path', None) != '/availability/hold']
 
     @app.get('/availability/start', response_class=HTMLResponse)
     def requirements_start(request: Request):
@@ -167,6 +239,15 @@ def register_booking_requirement_routes(app) -> None:
         data = await form_data(request)
         if data.get('csrf') != context['csrf_token']:
             raise HTTPException(status_code=403, detail='Invalid form token')
+        arrival = str(data.get('arrival', '')).strip(); departure = str(data.get('departure', '')).strip()
+        try:
+            arrival_day = date.fromisoformat(arrival); departure_day = date.fromisoformat(departure)
+        except ValueError:
+            return HTMLResponse(_requirements_page(database, context, cid, token, 'Enter valid arrival and departure dates.'), 400)
+        if departure_day <= arrival_day:
+            return HTMLResponse(_requirements_page(database, context, cid, token, 'Departure must be after arrival.'), 400)
+        if arrival_day.year != (departure_day.fromordinal(departure_day.toordinal()-1)).year:
+            return HTMLResponse(_requirements_page(database, context, cid, token, 'The stay must remain within one pricing year.'), 400)
         people_rows = person_type_rows(database, cid, active_only=True)
         addon_rows = rows(database, 'SELECT * FROM setup_addons WHERE company_id=? AND active=1 AND ask_before_availability=1 ORDER BY name', (cid,))
         parsed_people = []
@@ -199,9 +280,40 @@ def register_booking_requirement_routes(app) -> None:
                 c.execute('INSERT INTO booking_requirement_people(session_token,company_id,person_type_id,quantity,ages_json) VALUES (?,?,?,?,?)', (token, cid, pid, qty, ages))
             for aid, qty in parsed_addons:
                 c.execute('INSERT INTO booking_requirement_addons(session_token,company_id,addon_id,quantity) VALUES (?,?,?,?)', (token, cid, aid, qty))
-            c.execute('''INSERT INTO booking_requirement_sessions(session_token,company_id,ready,updated_at) VALUES (?,?,1,CURRENT_TIMESTAMP)
-                         ON CONFLICT(session_token,company_id) DO UPDATE SET ready=1,updated_at=CURRENT_TIMESTAMP''', (token, cid))
-        return RedirectResponse('/availability/calendar-v2', 303)
+            c.execute('''INSERT INTO booking_requirement_sessions(session_token,company_id,ready,arrival_date,departure_date,updated_at)
+                         VALUES (?,?,1,?,?,CURRENT_TIMESTAMP)
+                         ON CONFLICT(session_token,company_id) DO UPDATE SET ready=1,arrival_date=excluded.arrival_date,departure_date=excluded.departure_date,updated_at=CURRENT_TIMESTAMP''',
+                      (token, cid, arrival, departure))
+        return RedirectResponse(f'/availability/calendar-v2?arrival={arrival}&departure={departure}&start={arrival}', 303)
+
+    @app.post('/availability/search/change')
+    async def requirements_change(request: Request):
+        context, cid = _session_context(database, request); data = await form_data(request); require_csrf(context, data)
+        token = request.cookies.get(COOKIE_NAME, '')
+        with database.connect() as c:
+            hold_ids = [int(r['id']) for r in c.execute('SELECT id FROM element_holds WHERE company_id=? AND session_token=?', (cid, token)).fetchall()]
+            for hid in hold_ids:
+                c.execute('DELETE FROM hold_requirement_people WHERE hold_id=?', (hid,))
+                c.execute('DELETE FROM hold_requirement_addons WHERE hold_id=?', (hid,))
+            c.execute('DELETE FROM element_holds WHERE company_id=? AND session_token=?', (cid, token))
+        return RedirectResponse('/availability/start', 303)
+
+    @app.post('/availability/search/add')
+    async def requirements_add(request: Request):
+        context, _ = _session_context(database, request); data = await form_data(request); require_csrf(context, data)
+        return RedirectResponse('/availability/start', 303)
+
+    @app.post('/availability/hold')
+    async def hold_element(request: Request):
+        context, cid = _session_context(database, request); data = await form_data(request); require_csrf(context, data)
+        token = request.cookies.get(COOKIE_NAME, '')
+        try:
+            element_id = int(data.get('element_id', ''))
+            hold = create_or_replace_hold(database, context, cid, token, element_id, data.get('arrival_date', ''), data.get('departure_date', ''))
+            _snapshot_hold_requirements(database, cid, token, int(hold['id']))
+        except (TypeError, ValueError) as exc:
+            return JSONResponse({'ok': False, 'error': str(exc)}, status_code=409)
+        return JSONResponse({'ok': True, 'hold': hold})
 
     @app.post('/setup/person-types/age-toggle')
     async def person_age_toggle(request: Request):
@@ -259,14 +371,14 @@ def install_booking_requirements(app) -> None:
             text = text.replace('<div class="card"><table>', controls + '<div class="card"><table>', 1)
 
         elif path == '/setup/addons':
-            controls = '<div class="card"><h2>Ask before Availability</h2><p class="muted">Use this only for requirements that can make an Element unsuitable — for example Dogs, Electric Hook-up or Extra Vehicle. Optional extras such as Breakfast stay off and are offered later in the Basket.</p><table><thead><tr><th>Add-on</th><th>Ask before Availability</th></tr></thead><tbody>'
+            controls = '<div class="card"><h2>Ask before Availability</h2><p class="muted">Use this for any Feature or Extra that can make an Element unsuitable — for example Dogs, Electric Hook-up or Extra Vehicle. Optional Extras can remain Extras and still be asked before Availability.</p><table><thead><tr><th>Feature / Extra</th><th>Ask before Availability</th></tr></thead><tbody>'
             for a in rows(database, 'SELECT id,name,ask_before_availability FROM setup_addons WHERE company_id=? AND active=1 ORDER BY name', (cid,)):
                 controls += f'<tr><td>{esc(a["name"])}</td><td><form method="post" action="/setup/addons/requirement-toggle"><input type="hidden" name="csrf" value="{esc(context["csrf_token"])}"><input type="hidden" name="addon_id" value="{int(a["id"])}"><button class="secondary">{"✓ Yes" if int(a["ask_before_availability"] or 0) else "No"}</button></form></td></tr>'
             controls += '</tbody></table></div>'
             text = text.replace('<div class="card"><table>', controls + '<div class="card"><table>', 1)
 
         else:
-            people, addons, ready = _saved_requirements(database, cid, token)
+            people, addons, ready, saved_arrival, saved_departure = _saved_requirements(database, cid, token)
             if not ready:
                 return RedirectResponse('/availability/start', 303)
             summary = []
@@ -283,10 +395,13 @@ def install_booking_requirements(app) -> None:
                     a = one(database, 'SELECT name FROM setup_addons WHERE company_id=? AND id=?', (cid, aid))
                     summary.append(f'{str(a["name"]) if a else "Requirement"} {int(qty)}')
             summary_html = ' · '.join(esc(x) for x in summary) or 'No special requirements'
-            card = f'<div class="card requirement-summary"><strong>Your requirements:</strong> {summary_html} <a class="button secondary" style="margin-left:10px" href="/availability/start">Change</a></div>'
-            text = text.replace('<h1>Availability Calendar</h1>', '<h1>Availability Calendar</h1>' + card, 1)
+            date_html = f'{_fmt_user_date(saved_arrival)} to {_fmt_user_date(saved_departure)}' if saved_arrival and saved_departure else ''
+            controls = f'''<form method="post" action="/availability/search/change" style="display:inline;margin-left:10px"><input type="hidden" name="csrf" value="{esc(context['csrf_token'])}"><button class="secondary">Change</button></form>
+            <form method="post" action="/availability/search/add" style="display:inline;margin-left:6px"><input type="hidden" name="csrf" value="{esc(context['csrf_token'])}"><button class="secondary">Add</button></form>'''
+            card = f'<div class="card requirement-summary"><strong>Your requirements:</strong> {esc(date_html)}' + (' · ' if date_html and summary_html else '') + summary_html + controls + '</div>'
+            text = text.replace('<h1>Availability Calendar</h1>', '<h1>Availability Calendar</h1>' + card + _held_requirement_html(database, cid, token), 1)
 
-            raw_day = request.query_params.get('arrival') or request.query_params.get('start') or date.today().isoformat()
+            raw_day = request.query_params.get('arrival') or request.query_params.get('start') or saved_arrival or date.today().isoformat()
             try: year = date.fromisoformat(raw_day).year
             except ValueError: year = date.today().year
             unsuitable = {}
@@ -311,7 +426,9 @@ def install_booking_requirements(app) -> None:
               #calendar-scroll .element-row.party-unsuitable .selection-action{display:none !important}
               .party-reason{display:block;color:#6d3f7c;font-size:10px;line-height:1.15;margin-top:2px}
               #calendar-scroll .element-row .selection-action:not([style*="grid-column"]){display:none !important}
-            </style>'''
+              .held-requirements>div{margin-top:8px}
+            </style>
+            <script id="requirements-calendar-date-ui">(()=>{['arrival-date','departure-date'].forEach(id=>{const el=document.getElementById(id);if(el&&el.closest('div'))el.closest('div').style.display='none';});})();</script>'''
             text = text.replace('</body>', injection + '</body>', 1)
 
         headers = {k:v for k,v in response.headers.items() if k.lower() not in {'content-length','content-type'}}
