@@ -4,7 +4,7 @@ from fastapi.responses import Response
 
 
 def install_calendar_action_fixes(app) -> None:
-    """Restore visible Availability actions and simplify the date controls."""
+    """Restore visible Availability actions and make ADD start another Element selection."""
 
     @app.middleware('http')
     async def calendar_action_fixes(request, call_next):
@@ -42,46 +42,47 @@ def install_calendar_action_fixes(app) -> None:
           if (calendarStart && calendarStart.parentElement) {
             calendarStart.parentElement.style.display = 'none';
           }
-          const a = arrival ? arrival.value : '';
-          const d = departure ? departure.value : '';
 
-          function headerDates() {
-            return [...document.querySelectorAll('#calendar-scroll .cal-date[data-date]')]
+          function selectedAvailableCells(row) {
+            return [...row.querySelectorAll('.cal-cell.selected-date, .cal-cell.selected-start')]
+              .filter(cell => cell.classList.contains('available'));
+          }
+
+          function allSelectedCells(row) {
+            return [...row.querySelectorAll('.cal-cell.selected-date, .cal-cell.selected-start')];
+          }
+
+          function showReserveFromYellowRange(row) {
+            if (row.classList.contains('party-unsuitable')) return;
+            const selected = allSelectedCells(row);
+            if (!selected.length) return;
+            if (!selected.every(cell => cell.classList.contains('available'))) return;
+            const dates = [...document.querySelectorAll('#calendar-scroll .cal-date[data-date]')]
               .map(x => x.dataset.date);
-          }
-
-          function wholeRangeAvailable(row, start, end) {
-            const cells = [...row.querySelectorAll('.cal-cell[data-date]')]
-              .filter(cell => cell.dataset.date >= start && cell.dataset.date < end);
-            return cells.length > 0 && cells.every(cell => cell.classList.contains('available'));
-          }
-
-          function showReserve(row, start, end) {
-            const dates = headerDates();
-            const s = dates.indexOf(start), e = dates.indexOf(end);
-            if (s < 0 || e < 0 || e <= s) return;
+            const selectedDates = selected.map(x => x.dataset.date).filter(Boolean).sort();
+            if (!selectedDates.length) return;
+            const first = dates.indexOf(selectedDates[0]);
+            const last = dates.indexOf(selectedDates[selectedDates.length - 1]);
+            if (first < 0 || last < first) return;
             const button = row.querySelector('.selection-action');
             if (!button) return;
-            button.style.gridColumn = (s + 2) + ' / ' + (e + 2);
+            button.style.gridColumn = (first + 2) + ' / ' + (last + 3);
             button.style.gridRow = '1';
             button.hidden = false;
           }
 
-          if (a && d && (!editHold || !editHold.value)) {
-            document.querySelectorAll('#calendar-scroll .element-row').forEach(row => {
-              if (!row.classList.contains('party-unsuitable') && wholeRangeAvailable(row, a, d)) {
-                showReserve(row, a, d);
-              }
-            });
+          if (!editHold || !editHold.value) {
+            document.querySelectorAll('#calendar-scroll .element-row').forEach(showReserveFromYellowRange);
           }
 
           const add = document.getElementById('requirements-add');
           if (add) {
             add.addEventListener('click', () => {
-              const url = new URL(window.location.href);
-              url.searchParams.delete('edit_hold');
-              url.hash = 'calendar-scroll';
-              window.location.href = url.toString();
+              const q = new URLSearchParams();
+              if (arrival && arrival.value) q.set('arrival', arrival.value);
+              if (departure && departure.value) q.set('departure', departure.value);
+              q.set('add_element', '1');
+              window.location.href = '/availability/calendar-v2?' + q.toString();
             });
           }
         })();
