@@ -6,7 +6,7 @@ from fastapi import Request
 from fastapi.responses import Response
 
 from .app import COOKIE_NAME
-from .setup015_core import rows
+from .setup015_core import one, rows
 from .webv1_booking_requirements_refinements import _addon_caps
 
 
@@ -43,6 +43,9 @@ def install_feature_booking_ui(app) -> None:
                     'id':aid,'name':str(item['name']),'kind':str(item['item_kind'] or 'Extra'),
                     'group':str(item['feature_group'] or ''),'cap':int(caps.get(aid,0))
                 })
+            token = request.cookies.get(COOKIE_NAME, '')
+            saved_session = one(database, 'SELECT ready FROM booking_requirement_sessions WHERE company_id=? AND session_token=?', (cid, token))
+            restore_saved_extras = bool(saved_session and int(saved_session['ready'] or 0))
             data = json.dumps(definitions,ensure_ascii=False).replace('</','<\\/')
             injection = f'''
             <style id="feature-booking-style">
@@ -63,6 +66,7 @@ def install_feature_booking_ui(app) -> None:
             <script id="feature-booking-script">
             (()=>{{
               const defs={data};
+              const restoreSavedExtras={str(restore_saved_extras).lower()};
               const oldHeading=[...document.querySelectorAll('h2')].find(h=>h.textContent.trim()==='Must-have requirements');
               if(!oldHeading||!defs.length)return;
               const oldCard=oldHeading.closest('.card'); if(!oldCard)return;
@@ -73,11 +77,11 @@ def install_feature_booking_ui(app) -> None:
               const card=document.createElement('div');card.className='card generated-requirements-card';
               const features=defs.filter(d=>d.kind==='Feature'), extras=defs.filter(d=>d.kind==='Extra');
 
-              const addTickRow=(parent,d)=>{{
+              const addTickRow=(parent,d,restoreSaved=true)=>{{
                 const row=document.createElement('label');row.className='requirement-choice';
-                const tick=document.createElement('input');tick.type='checkbox';tick.checked=Number(oldValues[d.id]||0)>0;tick.disabled=d.cap<=0;
+                const tick=document.createElement('input');tick.type='checkbox';tick.checked=restoreSaved&&Number(oldValues[d.id]||0)>0;tick.disabled=d.cap<=0;
                 const name=document.createElement('span');name.className='choice-name';name.textContent=d.name;
-                const qty=document.createElement('input');qty.type='number';qty.min='1';qty.max=String(Math.max(1,d.cap));qty.value=String(Math.max(1,Math.min(d.cap||1,Number(oldValues[d.id]||1))));qty.style.display=d.cap>1?'inline-block':'none';
+                const qty=document.createElement('input');qty.type='number';qty.min='1';qty.max=String(Math.max(1,d.cap));qty.value=String(Math.max(1,Math.min(d.cap||1,restoreSaved?Number(oldValues[d.id]||1):1)));qty.style.display=d.cap>1?'inline-block':'none';
                 const hidden=document.createElement('input');hidden.type='hidden';hidden.name='addon_'+d.id;
                 const note=document.createElement('small');note.className='muted';note.textContent=d.cap<=0?'Not available on any Element':(d.cap>1?'Maximum '+d.cap:'');
                 const sync=()=>{{let n=Math.max(1,Math.min(d.cap||1,Number(qty.value||1)));qty.value=String(n);hidden.value=tick.checked?String(d.cap===1?1:n):'0';qty.disabled=!tick.checked;}};
@@ -100,8 +104,8 @@ def install_feature_booking_ui(app) -> None:
               }}
 
               if(extras.length){{
-                const section=document.createElement('section');section.className='requirements-section';section.innerHTML='<h2>Extras needed</h2><p class="muted">Tick an Extra only when you require the Element to be able to provide it. You can choose whether to add and pay for it after selecting the Element.</p>';
-                extras.forEach(d=>addTickRow(section,d));card.appendChild(section);
+                const section=document.createElement('section');section.className='requirements-section';section.innerHTML='<h2>Extras needed</h2><p class="muted">Nothing is assumed. Extras start unticked on a new booking; tick only what this booking actually needs.</p>';
+                extras.forEach(d=>addTickRow(section,d,restoreSavedExtras));card.appendChild(section);
               }}
               oldCard.parentNode.insertBefore(card,oldCard);
             }})();
