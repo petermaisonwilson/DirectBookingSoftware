@@ -8,7 +8,6 @@ from .app import COOKIE_NAME, esc
 from .setup015_core import one, rows
 from .webv1_booking_requirements import _saved_requirements
 from .webv1_booking_requirements_core import element_reasons
-from .webv1_ordering import person_type_rows
 
 
 def install_booking_requirements_ui(app) -> None:
@@ -46,7 +45,7 @@ def install_booking_requirements_ui(app) -> None:
 
         if path == '/setup/person-types':
             controls = '<div class="card"><h2>Age question</h2><p class="muted">Privacy-by-design: ask for age only where it is genuinely needed. Date of birth is not collected.</p><table><thead><tr><th>Person Type</th><th>Ask for age at arrival</th></tr></thead><tbody>'
-            for p in person_type_rows(database, cid, active_only=True):
+            for p in rows(database, 'SELECT id,name,ask_age FROM setup_person_types WHERE company_id=? AND active=1 ORDER BY name', (cid,)):
                 controls += f'<tr><td>{esc(p["name"])}</td><td><form method="post" action="/setup/person-types/age-toggle"><input type="hidden" name="csrf" value="{esc(context["csrf_token"])}"><input type="hidden" name="person_type_id" value="{int(p["id"])}"><button class="secondary">{"✓ Yes" if int(p["ask_age"] or 0) else "No"}</button></form></td></tr>'
             controls += '</tbody></table></div>'
             text = text.replace('<div class="card"><table>', controls + '<div class="card"><table>', 1)
@@ -111,7 +110,6 @@ def install_booking_requirements_ui(app) -> None:
               #calendar-scroll .element-row.party-unsuitable .cal-cell.available{background:#eadcf4 !important;pointer-events:none;cursor:not-allowed}
               #calendar-scroll .element-row.party-unsuitable .selection-action{display:none !important}
               .party-reason{display:block;color:#6d3f7c;font-size:10px;line-height:1.15;margin-top:2px}
-              #calendar-scroll .element-row .selection-action:not([style*="grid-column"]){display:none !important}
             </style>'''
             text = text.replace('</body>', injection + '</body>', 1)
 
