@@ -58,7 +58,7 @@ def install_booking_requirements_ui(app) -> None:
             text = text.replace('<div class="card"><table>', controls + '<div class="card"><table>', 1)
 
         else:
-            people, addons, ready = _saved_requirements(database, cid, token)
+            people, addons, ready, _, _ = _saved_requirements(database, cid, token)
             if not ready:
                 return Response(content=text, status_code=response.status_code, headers=headers, media_type='text/html')
 
