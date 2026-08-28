@@ -45,7 +45,7 @@ def install_feature_booking_ui(app) -> None:
                 })
             token = request.cookies.get(COOKIE_NAME, '')
             saved_session = one(database, 'SELECT ready FROM booking_requirement_sessions WHERE company_id=? AND session_token=?', (cid, token))
-            restore_saved_extras = bool(saved_session and int(saved_session['ready'] or 0))
+            restore_saved = bool(saved_session and int(saved_session['ready'] or 0))
             data = json.dumps(definitions,ensure_ascii=False).replace('</','<\\/')
             injection = f'''
             <style id="feature-booking-style">
@@ -66,7 +66,7 @@ def install_feature_booking_ui(app) -> None:
             <script id="feature-booking-script">
             (()=>{{
               const defs={data};
-              const restoreSavedExtras={str(restore_saved_extras).lower()};
+              const restoreSaved={str(restore_saved).lower()};
               const oldHeading=[...document.querySelectorAll('h2')].find(h=>h.textContent.trim()==='Must-have requirements');
               if(!oldHeading||!defs.length)return;
               const oldCard=oldHeading.closest('.card'); if(!oldCard)return;
@@ -77,11 +77,11 @@ def install_feature_booking_ui(app) -> None:
               const card=document.createElement('div');card.className='card generated-requirements-card';
               const features=defs.filter(d=>d.kind==='Feature'), extras=defs.filter(d=>d.kind==='Extra');
 
-              const addTickRow=(parent,d,restoreSaved=true)=>{{
+              const addTickRow=(parent,d,restoreCurrent)=>{{
                 const row=document.createElement('label');row.className='requirement-choice';
-                const tick=document.createElement('input');tick.type='checkbox';tick.checked=restoreSaved&&Number(oldValues[d.id]||0)>0;tick.disabled=d.cap<=0;
+                const tick=document.createElement('input');tick.type='checkbox';tick.checked=restoreCurrent&&Number(oldValues[d.id]||0)>0;tick.disabled=d.cap<=0;
                 const name=document.createElement('span');name.className='choice-name';name.textContent=d.name;
-                const qty=document.createElement('input');qty.type='number';qty.min='1';qty.max=String(Math.max(1,d.cap));qty.value=String(Math.max(1,Math.min(d.cap||1,restoreSaved?Number(oldValues[d.id]||1):1)));qty.style.display=d.cap>1?'inline-block':'none';
+                const qty=document.createElement('input');qty.type='number';qty.min='1';qty.max=String(Math.max(1,d.cap));qty.value=String(Math.max(1,Math.min(d.cap||1,restoreCurrent?Number(oldValues[d.id]||1):1)));qty.style.display=d.cap>1?'inline-block':'none';
                 const hidden=document.createElement('input');hidden.type='hidden';hidden.name='addon_'+d.id;
                 const note=document.createElement('small');note.className='muted';note.textContent=d.cap<=0?'Not available on any Element':(d.cap>1?'Maximum '+d.cap:'');
                 const sync=()=>{{let n=Math.max(1,Math.min(d.cap||1,Number(qty.value||1)));qty.value=String(n);hidden.value=tick.checked?String(d.cap===1?1:n):'0';qty.disabled=!tick.checked;}};
@@ -95,17 +95,19 @@ def install_feature_booking_ui(app) -> None:
                   const box=document.createElement('div');box.className='feature-group-box';box.innerHTML='<h3>'+groupName+'</h3>';
                   const choices=document.createElement('div');choices.className='feature-group-choices';
                   const inputName='feature_group_'+groupName.replace(/[^a-z0-9]+/gi,'_').replace(/^_+|_+$/g,'');
-                  const none=document.createElement('label');none.className='requirement-choice';const nr=document.createElement('input');nr.type='radio';nr.name=inputName;nr.value='';nr.required=true;none.append(nr,document.createTextNode(' None / not required'));choices.appendChild(none);
-                  items.forEach(d=>{{const label=document.createElement('label');label.className='requirement-choice';const radio=document.createElement('input');radio.type='radio';radio.name=inputName;radio.value=String(d.id);if(Number(oldValues[d.id]||0)>0)radio.checked=true;const hidden=document.createElement('input');hidden.type='hidden';hidden.name='addon_'+d.id;hidden.value='0';label.append(radio,document.createTextNode(' '+d.name),hidden);choices.appendChild(label);}});
+                  const none=document.createElement('label');none.className='requirement-choice';const nr=document.createElement('input');nr.type='radio';nr.name=inputName;nr.value='';nr.required=true;nr.checked=!restoreSaved;none.append(nr,document.createTextNode(' None / not required'));choices.appendChild(none);
+                  let restoredChoice=false;
+                  items.forEach(d=>{{const label=document.createElement('label');label.className='requirement-choice';const radio=document.createElement('input');radio.type='radio';radio.name=inputName;radio.value=String(d.id);if(restoreSaved&&Number(oldValues[d.id]||0)>0){{radio.checked=true;restoredChoice=true;}}const hidden=document.createElement('input');hidden.type='hidden';hidden.name='addon_'+d.id;hidden.value='0';label.append(radio,document.createTextNode(' '+d.name),hidden);choices.appendChild(label);}});
+                  if(restoreSaved&&!restoredChoice)nr.checked=true;
                   const sync=()=>{{const checked=choices.querySelector('input[type=radio]:checked'),chosen=checked?checked.value:'';items.forEach(x=>{{const h=choices.querySelector('input[type=hidden][name="addon_'+x.id+'"]');if(h)h.value=chosen===String(x.id)?'1':'0';}});}};
                   choices.querySelectorAll('input[type=radio]').forEach(r=>r.addEventListener('change',sync));sync();box.appendChild(choices);section.appendChild(box);
                 }});
-                singles.forEach(d=>addTickRow(section,d));card.appendChild(section);
+                singles.forEach(d=>addTickRow(section,d,restoreSaved));card.appendChild(section);
               }}
 
               if(extras.length){{
                 const section=document.createElement('section');section.className='requirements-section';section.innerHTML='<h2>Extras needed</h2><p class="muted">Please tick any items you wish to add to your search</p>';
-                extras.forEach(d=>addTickRow(section,d,restoreSavedExtras));card.appendChild(section);
+                extras.forEach(d=>addTickRow(section,d,restoreSaved));card.appendChild(section);
               }}
               oldCard.parentNode.insertBefore(card,oldCard);
             }})();
