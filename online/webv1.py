@@ -29,7 +29,6 @@ from .webv1_booking_requirements_v3 import (
 )
 from .webv1_booking_status import initialise_booking_statuses, register_booking_status_routes
 from .webv1_bookings import initialise_booking_workflow, register_booking_routes
-from .webv1_calendar_action_fixes import install_calendar_action_fixes
 from .webv1_calendar_edit_semantics import install_calendar_edit_semantics
 from .webv1_calendar_refresh import install_calendar_expiry_refresh
 from .webv1_calendar_row_isolation import install_calendar_row_isolation
@@ -113,7 +112,6 @@ def register_web_v1(app) -> None:
     install_booking_requirements_v3_form(app)
     install_feature_booking_ui(app)
     install_feature_wording(app)
-    install_calendar_action_fixes(app)
 
     app.router.routes[:] = [
         route for route in app.router.routes
