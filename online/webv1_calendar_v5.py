@@ -29,7 +29,7 @@ def register_calendar_v5_routes(app) -> None:
         anchor_departure = str(basket[0]['departure_date']) if basket else departure
 
         types = [str(r['name']) for r in rows(database, 'SELECT name FROM setup_element_types WHERE company_id=? AND active=1 ORDER BY name COLLATE NOCASE', (cid,))]
-        selected_type = element_type if element_type in types else (types[0] if types else '')
+        selected_type = element_type if element_type in types else ''
         visible_start, display_days = _window(start, anchor_arrival, anchor_departure)
         visible_end = visible_start + timedelta(days=display_days)
         dates = [visible_start + timedelta(days=i) for i in range(display_days)]
@@ -45,7 +45,9 @@ def register_calendar_v5_routes(app) -> None:
             if not departure:
                 departure = str(editing['departure_date']); departure_day = _parse(departure)
 
-        options = ''.join(f'<option value="{esc(t)}" {"selected" if t == selected_type else ""}>{esc(t)}</option>' for t in types)
+        options = '<option value="">Select Element Type</option>' + ''.join(
+            f'<option value="{esc(t)}" {"selected" if t == selected_type else ""}>{esc(t)}</option>' for t in types
+        )
         preserve = f'element_type={quote_plus(selected_type)}&arrival={quote_plus(arrival)}&departure={quote_plus(departure)}'
         if edit_hold:
             preserve += f'&edit_hold={edit_hold}'
@@ -53,11 +55,11 @@ def register_calendar_v5_routes(app) -> None:
         body = '<h1>Availability Calendar</h1>'
         body += f'''<div class="card"><form id="availability-form" method="get" action="/availability/calendar-v2">
         <input type="hidden" id="edit-hold" name="edit_hold" value="{edit_hold or ''}">
+        <input type="hidden" id="calendar-start" name="start" value="{visible_start.isoformat()}">
         <div class="grid">
           <div><label>Element Type</label><select id="element-type" name="element_type">{options}</select></div>
           <div><label>Arrival</label><input id="arrival-date" type="date" name="arrival" value="{esc(arrival)}"></div>
           <div><label>Departure</label><input id="departure-date" type="date" name="departure" value="{esc(departure)}"></div>
-          <div><label>Calendar starts</label><input id="calendar-start" type="date" name="start" value="{visible_start.isoformat()}"></div>
         </div><p>
         <a class="button secondary" href="/availability/calendar-v2?{preserve}&start={(visible_start - timedelta(days=14)).isoformat()}">← Previous 14 days</a>
         <a class="button secondary" href="/availability/calendar-v2?{preserve}&start={(visible_start + timedelta(days=14)).isoformat()}">Next 14 days →</a>
@@ -100,12 +102,18 @@ def register_calendar_v5_routes(app) -> None:
             feature_json = esc(json.dumps(features, ensure_ascii=False))
             bookings, enquiries, closures, holds = _records(database, cid, eid, visible_start, visible_end)
             cells = ''
+            selected_range_available = bool(
+                arrival_day and departure_day and departure_day > arrival_day
+                and arrival_day >= visible_start and departure_day <= visible_end
+            )
             for i, day in enumerate(dates):
                 next_day = day + timedelta(days=1)
                 state = availability_state(database, cid, eid, day.isoformat(), next_day.isoformat(), session_token=token)
                 code = str(state['state'])
                 own_editing_day = bool(editing and eid == int(editing['element_id']) and _parse(str(editing['arrival_date'])) <= day < _parse(str(editing['departure_date'])))
                 selected = ' selected-date' if arrival_day and departure_day and arrival_day <= day < departure_day else (' selected-start' if arrival_day == day else '')
+                if arrival_day and departure_day and arrival_day <= day < departure_day and code != 'AVAILABLE':
+                    selected_range_available = False
                 col = i + 2
                 if code == 'AVAILABLE':
                     cells += f'<button type="button" class="cal-cell available date-pick{selected}" style="grid-column:{col};grid-row:1" data-date="{day.isoformat()}" data-element="{eid}" data-name="{esc(element["name"])}" title="Available {day.strftime("%d/%m/%Y")}"></button>'
@@ -143,11 +151,21 @@ def register_calendar_v5_routes(app) -> None:
                 bars += _bar(held_name if staff else 'Unavailable', held_colour if staff else '#F3C5C9', _cols(hold['arrival_date'], hold['departure_date'], visible_start, visible_end), css='held')
 
             name_html = f'<strong>{esc(element["name"])}</strong><button type="button" class="more-info" data-element-name="{esc(element["name"])}" data-features="{feature_json}">More info</button>'
-            selection = f'<button type="button" class="selection-action" data-element="{eid}" data-name="{esc(element["name"])}" hidden>{"UPDATE" if edit_hold else "RESERVE"}</button>'
+            selection_style = ''
+            selection_hidden = ' hidden'
+            if not edit_hold and selected_range_available and arrival_day and departure_day:
+                selection_start = (arrival_day - visible_start).days + 2
+                selection_end = (departure_day - visible_start).days + 2
+                selection_style = f' style="grid-column:{selection_start} / {selection_end};grid-row:1"'
+                selection_hidden = ''
+            selection = f'<button type="button" class="selection-action" data-element="{eid}" data-name="{esc(element["name"])}"{selection_style}{selection_hidden}>{"UPDATE" if edit_hold else "RESERVE"}</button>'
             cal_rows += f'<div class="cal-row element-row" data-element="{eid}" data-name="{esc(element["name"])}" data-features="{feature_json}"><div class="cal-name" style="grid-column:1;grid-row:1">{name_html}</div>{cells}{bars}{selection}</div>'
 
         if not cal_rows:
-            cal_rows = '<div class="card"><p>No active Elements exist for this Element Type.</p></div>'
+            if selected_type:
+                cal_rows = '<div class="card"><p>No active Elements exist for this Element Type.</p></div>'
+            else:
+                cal_rows = '<div class="card"><p>Select an Element Type to see matching Elements.</p></div>'
         body += f'''<div class="card availability-card"><div class="availability-head"><h2>Availability</h2><div class="legend-row compact"><strong>Key:</strong>{legend}</div></div>
         <div id="calendar-scroll" class="calendar-scroll"><div class="calendar-grid" style="--days:{display_days}">{cal_header}{cal_rows}</div></div>
         <p class="muted">Pale green days are available. Click a start day and then a later day on the same Element. Hover a green day for the quick details; use More info under the Element name for the larger information panel.</p></div>'''
@@ -157,13 +175,13 @@ def register_calendar_v5_routes(app) -> None:
         <div id="hold-modal" class="hold-modal" hidden><div class="hold-dialog"><h2>Still want to hold these Elements?</h2><p id="hold-names"></p><p>If Yes is not clicked before the hold expires, everything is released automatically.</p><p><button id="hold-yes" type="button">Yes — keep holding</button> <button id="hold-release" type="button" class="secondary">Release now</button></p></div></div>
         <style>
         .calendar-scroll{{overflow:auto;max-height:520px;border:1px solid #d6dde5;border-radius:8px;position:relative;scrollbar-gutter:stable both-edges}}
-        .calendar-grid{{min-width:calc(190px + (var(--days) * 48px));background:white}}
-        .progress-grid{{min-width:calc(340px + (var(--days) * 48px));background:white}}
+        .calendar-grid{{min-width:calc(190px + (var(--days) * 48px));background:white;position:relative}}
+        .progress-grid{{min-width:calc(340px + (var(--days) * 48px));background:white;position:relative}}
         .cal-row{{display:grid;grid-template-columns:190px repeat(var(--days),48px);position:relative;min-height:52px;border-bottom:1px solid #e1e6eb}}
         .progress-row{{display:grid;grid-template-columns:190px repeat(var(--days),48px) 150px;position:relative;min-height:52px;border-bottom:1px solid #e1e6eb}}
-        .cal-head{{min-height:52px;background:#f4f6f8;position:sticky;top:0;z-index:10}}
-        .cal-name{{padding:8px;position:sticky;left:0;z-index:6;background:white;border-right:1px solid #d6dde5}} .cal-name strong{{display:block}} .cal-name .more-info{{border:0;background:none;color:#365f86;padding:2px 0;font-size:12px;text-decoration:underline}}
-        .progress-name small{{display:block;color:#66717f;margin-top:2px}} .cal-head .cal-name{{background:#f4f6f8;z-index:12}}
+        .cal-head{{min-height:52px;background:#f4f6f8;position:sticky;top:0;z-index:30}}
+        .cal-name{{padding:8px;position:sticky;left:0;z-index:20;width:190px;min-width:190px;max-width:190px;box-sizing:border-box;background:white;border-right:2px solid #c5cdd6;box-shadow:4px 0 7px -6px rgba(0,0,0,.7)}} .cal-name strong{{display:block}} .cal-name .more-info{{border:0;background:none;color:#365f86;padding:2px 0;font-size:12px;text-decoration:underline}}
+        .progress-name small{{display:block;color:#66717f;margin-top:2px}} .cal-head .cal-name{{background:#f4f6f8;z-index:40}}
         .cal-date{{padding:6px 2px;text-align:center;border-right:1px solid #e5e9ee;font-size:12px;background:#f4f6f8}} .cal-date small{{display:block;color:#66717f}}
         .cal-cell{{min-height:52px;border:0;border-right:1px solid rgba(255,255,255,.6);display:block;z-index:1;padding:0;margin:0;border-radius:0}}
         button.cal-cell{{cursor:pointer}} .cal-cell.available{{background:#dff2df}} .cal-cell.available:hover{{background:#c8e9c8;outline:2px solid #5f8b66;outline-offset:-2px}} .cal-cell.unavailable{{background:#f6d6d9}} .cal-cell.own-held{{background:#ffe39a}} .cal-cell.closed{{background:#e1e4e8}}
@@ -180,9 +198,9 @@ def register_calendar_v5_routes(app) -> None:
         const csrf={json.dumps(str(context['csrf_token']))}; const editingHold={int(edit_hold or 0)}; const anchorArr={json.dumps(anchor_arrival)}; const anchorDep={json.dumps(anchor_departure)};
         const form=document.getElementById('availability-form'),elementType=document.getElementById('element-type'),arrivalInput=document.getElementById('arrival-date'),departureInput=document.getElementById('departure-date'),startInput=document.getElementById('calendar-start'),scrollBox=document.getElementById('calendar-scroll'),progressScroll=document.getElementById('progress-scroll');
         let selectedElement={int(editing['element_id']) if editing else 0}; let firstPick='';
-        function qsFor(a,d){{const q=new URLSearchParams();q.set('element_type',elementType.value);if(a)q.set('arrival',a);if(d)q.set('departure',d);if(editingHold)q.set('edit_hold',editingHold);return q;}}
+        function qsFor(a,d){{const q=new URLSearchParams();if(elementType.value)q.set('element_type',elementType.value);if(a)q.set('arrival',a);if(d)q.set('departure',d);if(editingHold)q.set('edit_hold',editingHold);return q;}}
         function submitDates(){{const a=arrivalInput.value,d=departureInput.value;if(!a||!d)return;if(d<=a){{departureInput.setCustomValidity('Departure must be after arrival.');departureInput.reportValidity();return;}}window.location='/availability/calendar-v2?'+qsFor(a,d).toString();}}
-        elementType.addEventListener('change',()=>{{const a=anchorArr||arrivalInput.value,d=anchorDep||departureInput.value;window.location='/availability/calendar-v2?'+qsFor(a,d).toString();}}); arrivalInput.addEventListener('change',()=>{{if(arrivalInput.value&&departureInput.value)submitDates();}}); departureInput.addEventListener('change',submitDates); startInput.addEventListener('change',()=>form.submit());
+        elementType.addEventListener('change',()=>{{const a=anchorArr||arrivalInput.value,d=anchorDep||departureInput.value;window.location='/availability/calendar-v2?'+qsFor(a,d).toString();}}); arrivalInput.addEventListener('change',()=>{{if(arrivalInput.value&&departureInput.value)submitDates();}}); departureInput.addEventListener('change',submitDates);
         function clearSelectionBars(){{document.querySelectorAll('.selection-action').forEach(x=>x.hidden=true);}}
         function showSelection(elementId,a,d){{clearSelectionBars();const row=document.querySelector('.element-row[data-element="'+elementId+'"]');if(!row)return;const dates=[...document.querySelectorAll('#calendar-scroll .cal-date')].map(x=>x.dataset.date);let s=dates.indexOf(a),e=dates.indexOf(d);if(s<0||e<0||e<=s)return;const btn=row.querySelector('.selection-action');btn.style.gridColumn=(s+2)+' / '+(e+2);btn.style.gridRow='1';btn.hidden=false;selectedElement=Number(elementId);}}
         if(editingHold&&arrivalInput.value&&departureInput.value&&selectedElement)showSelection(selectedElement,arrivalInput.value,departureInput.value);
