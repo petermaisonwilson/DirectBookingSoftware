@@ -3,10 +3,11 @@ from __future__ import annotations
 import json
 
 from fastapi import Request
-from fastapi.responses import RedirectResponse
+from fastapi.responses import JSONResponse, RedirectResponse
 
-from .app import COOKIE_NAME
+from .app import COOKIE_NAME, form_data
 from .setup015 import register_setup015
+from .setup015_core import require_csrf
 from .webv1_addon_person import initialise_addon_person
 from .webv1_addon_popup import initialise_addon_popup, register_addon_popup_routes
 from .webv1_addon_when import initialise_addon_when, register_addon_when_routes
@@ -32,14 +33,19 @@ from .webv1_edit_action_box import install_edit_action_box
 from .webv1_feature_booking_ui import install_feature_booking_ui
 from .webv1_feature_wording import install_feature_wording
 from .webv1_features_extras_v2 import initialise_features_extras, register_features_extras_routes
-from .webv1_hold_settings import initialise_hold_settings, install_hold_timing, register_hold_settings_routes
+from .webv1_hold_settings import (
+    create_or_replace_hold as create_timed_hold,
+    initialise_hold_settings,
+    install_hold_timing,
+    register_hold_settings_routes,
+)
 from .webv1_ordering import initialise_ordering, register_ordering_routes
 from .webv1_pricing_usability import (
     initialise_pricing_usability,
     install_pricing_calculation_transparency,
     register_pricing_usability_routes,
 )
-from . import webv1_calendar_v2
+from . import webv1_availability, webv1_calendar_v2
 from .webv1_calendar_v5 import register_calendar_v5_routes
 from .webv1_core import initialise_web_v1
 from .webv1_customers import register_customer_routes
@@ -103,8 +109,28 @@ def register_web_v1(app) -> None:
 
     app.router.routes[:] = [
         route for route in app.router.routes
-        if getattr(route, 'path', None) != '/availability/calendar'
+        if getattr(route, 'path', None) not in {'/availability/calendar', '/availability/hold'}
     ]
+
+    @app.post('/availability/hold')
+    async def availability_hold_with_client_timing(request: Request):
+        context, cid = webv1_availability._session_company(app.state.database, request)
+        data = await form_data(request)
+        require_csrf(context, data)
+        try:
+            element_id = int(data.get('element_id', ''))
+            hold = create_timed_hold(
+                app.state.database,
+                context,
+                cid,
+                request.cookies.get(COOKIE_NAME, ''),
+                element_id,
+                data.get('arrival_date', ''),
+                data.get('departure_date', ''),
+            )
+        except (TypeError, ValueError) as exc:
+            return JSONResponse({'ok': False, 'error': str(exc)}, status_code=409)
+        return JSONResponse({'ok': True, 'hold': hold})
 
     @app.get('/availability/calendar')
     def availability_calendar_compat(request: Request):
