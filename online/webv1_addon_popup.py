@@ -6,8 +6,8 @@ from fastapi import Request
 from fastapi.responses import RedirectResponse, Response
 
 from .app import COOKIE_NAME, esc, form_data
-from .setup015_calculator import _addon_rule
 from .setup015_core import audit, context_for, require_csrf, rows, working_company
+from .webv1_rule_resolver import resolve_element_item_rule
 
 
 def initialise_addon_popup(database) -> None:
@@ -23,7 +23,7 @@ def initialise_addon_popup(database) -> None:
 
 
 def popup_addons_for_element(database, company_id: int, year: int, element) -> list[dict[str, object]]:
-    """Use the existing Type-default/Element-override rule for the tick/cross; visibility is per Element."""
+    """Resolve popup ticks/crosses through the same canonical rule used by suitability."""
     result: list[dict[str, object]] = []
     element_id = int(element['id'])
     for addon in rows(database, '''SELECT a.*, COALESCE(p.show_popup,1) AS show_popup
@@ -34,13 +34,12 @@ def popup_addons_for_element(database, company_id: int, year: int, element) -> l
         ORDER BY a.name COLLATE NOCASE''', (element_id, company_id)):
         if not int(addon['show_popup']):
             continue
-        rule = _addon_rule(database, company_id, year, element, int(addon['id']))
+        rule = resolve_element_item_rule(database, company_id, year, element, int(addon['id']))
         result.append({'id': int(addon['id']), 'name': str(addon['name']), 'available': bool(rule['allowed'])})
     return result
 
 
 def _remove_element_list(text: str) -> str:
-    """In edit mode hide the catalogue table so the user sees only the Element editor and its popup choices."""
     marker = '<div class="card"><table><thead><tr><th>Name</th><th>Element Type</th>'
     start = text.find(marker)
     if start < 0:
@@ -95,7 +94,7 @@ def register_addon_popup_routes(app) -> None:
                 company_id, element_id = int(company_id), int(raw_edit)
                 element = rows(database, 'SELECT * FROM setup_elements WHERE company_id=? AND id=?', (company_id, element_id))
                 if element:
-                    controls = '<div class="card element-popup-settings"><h2>Calendar popup information</h2><p class="muted">Choose which existing Add-on rules appear in this Element\'s Availability Calendar popup. New items default to <strong>Yes</strong>. The displayed ✓ or ✕ is still taken automatically from the Element Type default and any Individual Element override.</p><table><thead><tr><th>Item</th><th>Show in popup</th></tr></thead><tbody>'
+                    controls = '<div class="card element-popup-settings"><h2>Calendar popup information</h2><p class="muted">Choose which existing Feature / Extra rules appear in this Element\'s Availability Calendar popup. New items default to <strong>Yes</strong>. The displayed ✓ or ✕ is resolved from the Element Type default and Individual Element override.</p><table><thead><tr><th>Item</th><th>Show in popup</th></tr></thead><tbody>'
                     settings = {int(r['addon_id']): int(r['show_popup']) for r in rows(database, 'SELECT addon_id,show_popup FROM setup_element_popup_items WHERE company_id=? AND element_id=?', (company_id, element_id))}
                     for addon in rows(database, 'SELECT id,name FROM setup_addons WHERE company_id=? AND active=1 ORDER BY name COLLATE NOCASE', (company_id,)):
                         aid = int(addon['id']); shown = bool(settings.get(aid, 1))
