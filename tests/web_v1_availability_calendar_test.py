@@ -49,7 +49,9 @@ def main() -> None:
         start = client.get('/availability/start')
         assert start.status_code == 200
         assert 'Booking requirements' in start.text
-        assert "Who’s coming and when?" in start.text
+        assert 'coming and when?' in start.text
+        assert 'name="arrival"' in start.text
+        assert 'name="departure"' in start.text
         assert 'Date of birth is not collected' in start.text
 
         with db.connect() as c:
