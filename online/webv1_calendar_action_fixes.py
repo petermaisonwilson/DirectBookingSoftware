@@ -4,15 +4,7 @@ from fastapi.responses import Response
 
 
 def install_calendar_action_fixes(app) -> None:
-    """Restore the visible Availability actions expected by the booking flow.
-
-    Booking Requirements can arrive at the calendar with a complete date range
-    already selected. The V5 calendar only revealed RESERVE after two manual
-    calendar-cell clicks, so a preselected range had no visible action. This
-    middleware exposes RESERVE on every suitable Element row for that range and
-    restores the ADD control beside Change without altering the proven hold or
-    availability engines.
-    """
+    """Restore visible Availability actions and simplify the date controls."""
 
     @app.middleware('http')
     async def calendar_action_fixes(request, call_next):
@@ -46,6 +38,10 @@ def install_calendar_action_fixes(app) -> None:
           const arrival = document.getElementById('arrival-date');
           const departure = document.getElementById('departure-date');
           const editHold = document.getElementById('edit-hold');
+          const calendarStart = document.getElementById('calendar-start');
+          if (calendarStart && calendarStart.parentElement) {
+            calendarStart.parentElement.style.display = 'none';
+          }
           const a = arrival ? arrival.value : '';
           const d = departure ? departure.value : '';
 
@@ -71,9 +67,6 @@ def install_calendar_action_fixes(app) -> None:
             button.hidden = false;
           }
 
-          // A Requirements search already supplies the complete dates. In normal
-          // add mode, make the RESERVE action visible immediately on every Element
-          // that is actually free for the whole selected range.
           if (a && d && (!editHold || !editHold.value)) {
             document.querySelectorAll('#calendar-scroll .element-row').forEach(row => {
               if (!row.classList.contains('party-unsuitable') && wholeRangeAvailable(row, a, d)) {
