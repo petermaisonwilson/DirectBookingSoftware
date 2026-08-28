@@ -67,6 +67,7 @@ def main() -> None:
 
         people_setup = client.get('/setup/person-types')
         assert people_setup.status_code == 200
+        assert '☰ Drag' in people_setup.text
         assert_in_order(people_setup.text, desired_names)
 
         requirements = client.get('/availability/start')

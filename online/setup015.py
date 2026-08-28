@@ -7,6 +7,7 @@ from .setup015_core import copy_previous_year, initialise_setup015
 from .setup015_element_availability_page import register_element_availability_page
 from .setup015_elements_no_base_price import register_elements_no_base_price
 from .setup015_maintenance import register_setup_maintenance_routes
+from .setup015_person_types_ordered import register_ordered_person_types_route
 from .setup015_season_flex import register_flexible_season_routes
 from .setup015_year_actions import register_year_action_routes
 from .setup015_year_audit import register_year_audit_routes
@@ -31,6 +32,9 @@ def register_setup015(app) -> None:
     # A Season may be extended mid-year without re-entering prices: the same
     # Season ID keeps its stored rates and they automatically cover the new dates.
     register_flexible_season_routes(app)
+    # Person Types needs the current saved-order UI before maintenance registers
+    # its legacy alphabetical GET route for the same path.
+    register_ordered_person_types_route(app)
     # Legacy/enhanced routes remain registered underneath for compatibility.
     register_element_availability_page(app)
     register_setup_maintenance_routes(app)
