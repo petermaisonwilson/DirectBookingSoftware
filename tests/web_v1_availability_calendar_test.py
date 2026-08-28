@@ -49,7 +49,7 @@ def main() -> None:
         start = client.get('/availability/start')
         assert start.status_code == 200
         assert 'Booking requirements' in start.text
-        assert 'Who is coming?' in start.text
+        assert "Who’s coming and when?" in start.text
         assert 'Date of birth is not collected' in start.text
 
         with db.connect() as c:
@@ -109,7 +109,6 @@ def main() -> None:
                         (company, 2035, element_id, pid, 0.0),
                     )
 
-        # Create two client-defined grouped Features using the actual Setup route.
         for name in ('Current Motorhome', 'Current Caravan'):
             response = client.post(
                 '/setup/addons',
@@ -136,8 +135,6 @@ def main() -> None:
                     (company, 2035, 'Current Camping', aid, 1, 0, 1, 0.0),
                 )
 
-        # Submit deliberately conflicting hidden values. The explicit radio choice
-        # is authoritative and must zero every other member of Vehicle Type.
         saved = client.post(
             '/availability/requirements-v2',
             data={
