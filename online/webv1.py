@@ -33,6 +33,7 @@ from .webv1_feature_booking_ui import install_feature_booking_ui
 from .webv1_feature_wording import install_feature_wording
 from .webv1_features_extras_v2 import initialise_features_extras, register_features_extras_routes
 from .webv1_hold_settings import initialise_hold_settings, install_hold_timing, register_hold_settings_routes
+from .webv1_ordering import initialise_ordering, register_ordering_routes
 from .webv1_pricing_usability import (
     initialise_pricing_usability,
     install_pricing_calculation_transparency,
@@ -55,6 +56,7 @@ def register_web_v1(app) -> None:
     """Register the proven Setup engine first, then the permanent Web V1 lifecycle."""
     register_setup015(app)
     initialise_web_v1(app.state.database)
+    initialise_ordering(app.state.database)
     initialise_addon_when(app.state.database)
     initialise_addon_person(app.state.database)
     initialise_availability(app.state.database)
@@ -71,6 +73,7 @@ def register_web_v1(app) -> None:
     register_pricing_usability_routes(app)
     webv1_calendar_v2.json = json
     register_web_v1_routes(app)
+    register_ordering_routes(app)
     register_customer_routes(app)
     register_enquiry_routes(app)
     register_enquiry_builder_routes(app)
