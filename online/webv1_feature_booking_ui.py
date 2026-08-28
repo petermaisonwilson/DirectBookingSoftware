@@ -95,10 +95,14 @@ def install_feature_booking_ui(app) -> None:
                   const box=document.createElement('div');box.className='feature-group-box';box.innerHTML='<h3>'+groupName+'</h3>';
                   const choices=document.createElement('div');choices.className='feature-group-choices';
                   const inputName='feature_group_'+groupName.replace(/[^a-z0-9]+/gi,'_').replace(/^_+|_+$/g,'');
-                  const none=document.createElement('label');none.className='requirement-choice';const nr=document.createElement('input');nr.type='radio';nr.name=inputName;nr.value='';nr.required=true;nr.checked=!restoreSaved;none.append(nr,document.createTextNode(' None / not required'));choices.appendChild(none);
+                  const vehicleRequired=groupName.trim().toLowerCase()==='vehicle type';
+                  let nr=null;
+                  if(!vehicleRequired){{
+                    const none=document.createElement('label');none.className='requirement-choice';nr=document.createElement('input');nr.type='radio';nr.name=inputName;nr.value='';nr.required=true;nr.checked=!restoreSaved;none.append(nr,document.createTextNode(' None / not required'));choices.appendChild(none);
+                  }}
                   let restoredChoice=false;
-                  items.forEach(d=>{{const label=document.createElement('label');label.className='requirement-choice';const radio=document.createElement('input');radio.type='radio';radio.name=inputName;radio.value=String(d.id);if(restoreSaved&&Number(oldValues[d.id]||0)>0){{radio.checked=true;restoredChoice=true;}}const hidden=document.createElement('input');hidden.type='hidden';hidden.name='addon_'+d.id;hidden.value='0';label.append(radio,document.createTextNode(' '+d.name),hidden);choices.appendChild(label);}});
-                  if(restoreSaved&&!restoredChoice)nr.checked=true;
+                  items.forEach(d=>{{const label=document.createElement('label');label.className='requirement-choice';const radio=document.createElement('input');radio.type='radio';radio.name=inputName;radio.value=String(d.id);radio.required=vehicleRequired;if(restoreSaved&&Number(oldValues[d.id]||0)>0){{radio.checked=true;restoredChoice=true;}}const hidden=document.createElement('input');hidden.type='hidden';hidden.name='addon_'+d.id;hidden.value='0';label.append(radio,document.createTextNode(' '+d.name),hidden);choices.appendChild(label);}});
+                  if(restoreSaved&&!restoredChoice&&nr)nr.checked=true;
                   const sync=()=>{{const checked=choices.querySelector('input[type=radio]:checked'),chosen=checked?checked.value:'';items.forEach(x=>{{const h=choices.querySelector('input[type=hidden][name="addon_'+x.id+'"]');if(h)h.value=chosen===String(x.id)?'1':'0';}});}};
                   choices.querySelectorAll('input[type=radio]').forEach(r=>r.addEventListener('change',sync));sync();box.appendChild(choices);section.appendChild(box);
                 }});
