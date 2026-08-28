@@ -23,7 +23,13 @@ def initialise_addon_popup(database) -> None:
 
 
 def popup_addons_for_element(database, company_id: int, year: int, element) -> list[dict[str, object]]:
-    """Resolve popup ticks/crosses through the same canonical rule used by suitability."""
+    """Return only Feature / Extra items this Element can actually provide.
+
+    The canonical resolved rule already applies Element Type default followed by
+    any Individual Element override. An unticked Type default therefore stays
+    hidden unless this Element overrides it to Yes; likewise an Element override
+    to No hides an otherwise allowed Type default.
+    """
     result: list[dict[str, object]] = []
     element_id = int(element['id'])
     for addon in rows(database, '''SELECT a.*, COALESCE(p.show_popup,1) AS show_popup
@@ -35,7 +41,9 @@ def popup_addons_for_element(database, company_id: int, year: int, element) -> l
         if not int(addon['show_popup']):
             continue
         rule = resolve_element_item_rule(database, company_id, year, element, int(addon['id']))
-        result.append({'id': int(addon['id']), 'name': str(addon['name']), 'available': bool(rule['allowed'])})
+        if not bool(rule['allowed']):
+            continue
+        result.append({'id': int(addon['id']), 'name': str(addon['name']), 'available': True})
     return result
 
 
@@ -94,7 +102,7 @@ def register_addon_popup_routes(app) -> None:
                 company_id, element_id = int(company_id), int(raw_edit)
                 element = rows(database, 'SELECT * FROM setup_elements WHERE company_id=? AND id=?', (company_id, element_id))
                 if element:
-                    controls = '<div class="card element-popup-settings"><h2>Calendar popup information</h2><p class="muted">Choose which existing Feature / Extra rules appear in this Element\'s Availability Calendar popup. New items default to <strong>Yes</strong>. The displayed ✓ or ✕ is resolved from the Element Type default and Individual Element override.</p><table><thead><tr><th>Item</th><th>Show in popup</th></tr></thead><tbody>'
+                    controls = '<div class="card element-popup-settings"><h2>Calendar popup information</h2><p class="muted">Choose which bookable Feature / Extra items may be shown in this Element\'s Availability Calendar popup. Items that resolve to No in Feature / Extra Rules are automatically omitted from the popup, even if Show is Yes here.</p><table><thead><tr><th>Item</th><th>Show when bookable</th></tr></thead><tbody>'
                     settings = {int(r['addon_id']): int(r['show_popup']) for r in rows(database, 'SELECT addon_id,show_popup FROM setup_element_popup_items WHERE company_id=? AND element_id=?', (company_id, element_id))}
                     for addon in rows(database, 'SELECT id,name FROM setup_addons WHERE company_id=? AND active=1 ORDER BY name COLLATE NOCASE', (company_id,)):
                         aid = int(addon['id']); shown = bool(settings.get(aid, 1))
