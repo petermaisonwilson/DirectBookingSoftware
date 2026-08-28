@@ -104,7 +104,7 @@ def install_feature_booking_ui(app) -> None:
               }}
 
               if(extras.length){{
-                const section=document.createElement('section');section.className='requirements-section';section.innerHTML='<h2>Extras needed</h2><p class="muted">Nothing is assumed. Extras start unticked on a new booking; tick only what this booking actually needs.</p>';
+                const section=document.createElement('section');section.className='requirements-section';section.innerHTML='<h2>Extras needed</h2><p class="muted">Please tick any items you wish to add to your search</p>';
                 extras.forEach(d=>addTickRow(section,d,restoreSavedExtras));card.appendChild(section);
               }}
               oldCard.parentNode.insertBefore(card,oldCard);
