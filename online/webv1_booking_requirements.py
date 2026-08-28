@@ -9,6 +9,7 @@ from fastapi.responses import HTMLResponse, RedirectResponse, Response
 from .app import COOKIE_NAME, esc, form_data, layout
 from .setup015_calculator import _addon_rule
 from .setup015_core import audit, context_for, one, require_csrf, rows, working_company
+from .webv1_ordering import person_type_rows
 
 
 REQUIREMENTS_SCHEMA = """
@@ -70,7 +71,7 @@ def _saved_requirements(database, cid: int, token: str):
 
 
 def _requirements_page(database, context, cid: int, token: str, message: str = '') -> str:
-    people_rows = rows(database, 'SELECT * FROM setup_person_types WHERE company_id=? AND active=1 ORDER BY name COLLATE NOCASE', (cid,))
+    people_rows = person_type_rows(database, cid, active_only=True)
     addon_rows = rows(database, 'SELECT * FROM setup_addons WHERE company_id=? AND active=1 AND ask_before_availability=1 ORDER BY name COLLATE NOCASE', (cid,))
     saved_people, saved_addons, _ = _saved_requirements(database, cid, token)
     error = f'<div class="error">{esc(message)}</div>' if message else ''
@@ -166,7 +167,7 @@ def register_booking_requirement_routes(app) -> None:
         data = await form_data(request)
         if data.get('csrf') != context['csrf_token']:
             raise HTTPException(status_code=403, detail='Invalid form token')
-        people_rows = rows(database, 'SELECT * FROM setup_person_types WHERE company_id=? AND active=1 ORDER BY name', (cid,))
+        people_rows = person_type_rows(database, cid, active_only=True)
         addon_rows = rows(database, 'SELECT * FROM setup_addons WHERE company_id=? AND active=1 AND ask_before_availability=1 ORDER BY name', (cid,))
         parsed_people = []
         total = 0
@@ -252,7 +253,7 @@ def install_booking_requirements(app) -> None:
 
         if path == '/setup/person-types':
             controls = '<div class="card"><h2>Age question</h2><p class="muted">Privacy-by-design: ask for age only where it is genuinely needed. Date of birth is not collected.</p><table><thead><tr><th>Person Type</th><th>Ask for age at arrival</th></tr></thead><tbody>'
-            for p in rows(database, 'SELECT id,name,ask_age FROM setup_person_types WHERE company_id=? AND active=1 ORDER BY name', (cid,)):
+            for p in person_type_rows(database, cid, active_only=True):
                 controls += f'<tr><td>{esc(p["name"])}</td><td><form method="post" action="/setup/person-types/age-toggle"><input type="hidden" name="csrf" value="{esc(context["csrf_token"])}"><input type="hidden" name="person_type_id" value="{int(p["id"])}"><button class="secondary">{"✓ Yes" if int(p["ask_age"] or 0) else "No"}</button></form></td></tr>'
             controls += '</tbody></table></div>'
             text = text.replace('<div class="card"><table>', controls + '<div class="card"><table>', 1)
@@ -296,8 +297,6 @@ def install_booking_requirements(app) -> None:
                 marker = f'<div class="cal-row element-row" data-element="{eid}"'
                 replacement = marker.replace('class="cal-row element-row"', 'class="cal-row element-row party-unsuitable"')
                 text = text.replace(marker, replacement, 1)
-                more = f'data-element="{eid}"'
-                # Add the reason beside the Element name without another popup.
                 reason_text = 'Not suitable: ' + ' · '.join(reasons)
                 row_start = text.find(replacement)
                 if row_start >= 0:
@@ -311,7 +310,6 @@ def install_booking_requirements(app) -> None:
               #calendar-scroll .element-row.party-unsuitable .cal-cell.available{background:#eadcf4 !important;pointer-events:none;cursor:not-allowed}
               #calendar-scroll .element-row.party-unsuitable .selection-action{display:none !important}
               .party-reason{display:block;color:#6d3f7c;font-size:10px;line-height:1.15;margin-top:2px}
-              /* The action only exists after a range is complete; never show the duplicate/unpositioned RESERVE under a name. */
               #calendar-scroll .element-row .selection-action:not([style*="grid-column"]){display:none !important}
             </style>'''
             text = text.replace('</body>', injection + '</body>', 1)
