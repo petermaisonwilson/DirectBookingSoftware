@@ -104,7 +104,7 @@ def _transform_requirement_form(text: str, caps: dict[int, int]) -> str:
 
 
 def _transform_calendar(database, request: Request, text: str, cid: int, token: str) -> str:
-    people, addons, ready = _saved_requirements(database, cid, token)
+    people, addons, ready, _, _ = _saved_requirements(database, cid, token)
     raw_day = request.query_params.get('arrival') or request.query_params.get('start') or date.today().isoformat()
     try:
         year = date.fromisoformat(raw_day).year
