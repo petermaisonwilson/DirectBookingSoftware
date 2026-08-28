@@ -23,6 +23,10 @@ from .webv1_booking_requirements_refinements import (
     register_booking_requirements_refinement_routes,
 )
 from .webv1_booking_requirements_ui import install_booking_requirements_ui
+from .webv1_booking_requirements_v3 import (
+    install_booking_requirements_v3_form,
+    register_booking_requirements_v3,
+)
 from .webv1_booking_status import initialise_booking_statuses, register_booking_status_routes
 from .webv1_bookings import initialise_booking_workflow, register_booking_routes
 from .webv1_calendar_action_fixes import install_calendar_action_fixes
@@ -93,6 +97,7 @@ def register_web_v1(app) -> None:
     register_addon_popup_routes(app)
     register_booking_requirement_routes(app)
     register_booking_requirements_refinement_routes(app)
+    register_booking_requirements_v3(app)
     register_booking_requirements_core(app)
     register_features_extras_routes(app)
     register_calendar_v5_routes(app)
@@ -105,6 +110,7 @@ def register_web_v1(app) -> None:
     install_calendar_row_isolation(app)
     install_booking_requirements_ui(app)
     install_booking_requirements_refinements(app)
+    install_booking_requirements_v3_form(app)
     install_feature_booking_ui(app)
     install_feature_wording(app)
     install_calendar_action_fixes(app)
