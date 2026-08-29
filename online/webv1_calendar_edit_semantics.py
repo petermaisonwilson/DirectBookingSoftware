@@ -172,8 +172,11 @@ def install_calendar_edit_semantics(app) -> None:
           const showBar=(row,a,lastDay,internalEnd)=>{{
             clearBars();
             paintRange(row,a,lastDay);
-            const ds=dates(),s=ds.indexOf(a),e=ds.indexOf(internalEnd);
-            if(s<0||e<0||e<=s)return;
+            const ds=dates(),s=ds.indexOf(a),last=ds.indexOf(lastDay);
+            if(s<0||last<0||last<s)return;
+            let e=ds.indexOf(internalEnd);
+            if(e<0)e=last+1;
+            if(e<=s)e=last+1;
             const b=row.querySelector('.selection-action'); if(!b)return;
             b.style.gridColumn=(s+2)+' / '+(e+2); b.style.gridRow='1';
             b.textContent=editMode?'RESERVE CHANGES':'RESERVE'; b.hidden=false;
@@ -196,7 +199,6 @@ def install_calendar_edit_semantics(app) -> None:
           if(editMode){{
             document.querySelectorAll('.selection-action').forEach(b=>b.hidden=true);
             document.querySelectorAll('.element-row .cal-cell.selected-date,.element-row .cal-cell.selected-start').forEach(cell=>cell.classList.remove('selected-date','selected-start'));
-            // Make the currently edited hold's own yellow cells genuine click targets.
             document.querySelectorAll('.cal-cell.editable-own').forEach(cell=>{{cell.style.pointerEvents='auto';cell.style.cursor='pointer';}});
           }}
 
@@ -204,6 +206,7 @@ def install_calendar_edit_semantics(app) -> None:
             const cell=ev.target.closest('.date-pick');
             if(!cell||!calendar.contains(cell))return;
             ev.preventDefault(); ev.stopImmediatePropagation();
+            const pop=document.getElementById('quick-popover'); if(pop)pop.hidden=true;
             const row=cell.closest('.element-row'); if(!row)return;
             const eid=Number(row.dataset.element), picked=cell.dataset.date;
 
@@ -223,14 +226,13 @@ def install_calendar_edit_semantics(app) -> None:
               return;
             }}
 
-            // Both pricing bases use the same human selection: first booked day + last booked day.
-            // Storage remains end-exclusive, so 1+2 October stores departure/end as 3 October.
             const internalEnd=dayAfter(picked);
             arrival.value=first; departure.value=internalEnd;
             showBar(row,first,picked,internalEnd); first='';
           }},true);
 
           document.querySelectorAll('.cal-cell.available,.cal-cell.editable-own').forEach(cell=>cell.addEventListener('mouseenter',()=>{{
+            if(cell.classList.contains('preview-selected')||cell.classList.contains('selected-date')||cell.classList.contains('selected-start'))return;
             setTimeout(()=>{{
               const row=cell.closest('.element-row');
               const qdates=document.getElementById('quick-dates'), qaction=document.getElementById('quick-action');
@@ -242,7 +244,6 @@ def install_calendar_edit_semantics(app) -> None:
             }},0);
           }}));
 
-          // If edit is abandoned by navigation before a new selection, leave the original visual intact.
           window.addEventListener('pageshow',()=>{{if(editMode&&!document.querySelector('.preview-selected'))restoreEditedOriginal();}});
         }})();
         </script>"""
