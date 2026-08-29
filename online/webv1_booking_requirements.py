@@ -10,6 +10,7 @@ from .app import COOKIE_NAME, esc, form_data, layout
 from .setup015_calculator import _addon_rule
 from .setup015_core import audit, context_for, one, require_csrf, rows, working_company
 from .webv1_availability import create_or_replace_hold
+from .webv1_booking_progress import booking_progress_strip
 from .webv1_ordering import person_type_rows
 
 
@@ -105,7 +106,8 @@ def _requirements_page(database, context, cid: int, token: str, message: str = '
     addon_rows = rows(database, 'SELECT * FROM setup_addons WHERE company_id=? AND active=1 AND ask_before_availability=1 ORDER BY name COLLATE NOCASE', (cid,))
     saved_people, saved_addons, _, saved_arrival, saved_departure = _saved_requirements(database, cid, token)
     error = f'<div class="error">{esc(message)}</div>' if message else ''
-    body = f'''<h1>Booking requirements</h1>{error}
+    progress = booking_progress_strip(database, context, cid, token)
+    body = f'''<h1>Booking requirements</h1>{progress}{error}
     <div class="card"><p>Tell us who is coming, when they are staying and anything that the Element <strong>must</strong> provide. We use this only to prevent you choosing an unsuitable Element.</p>
     <p class="muted">For privacy, age is requested only for Person Types where the Client has enabled <strong>Ask for age</strong>. Date of birth is not collected.</p></div>
     <form method="post" action="/availability/requirements">
