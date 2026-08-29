@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+from datetime import date
 from urllib.parse import quote_plus
 
 from fastapi import Request
@@ -8,8 +9,14 @@ from fastapi.responses import HTMLResponse, RedirectResponse
 
 from .app import COOKIE_NAME, esc, form_data, layout
 from .setup015_core import require_csrf, rows
-from .webv1_booking_requirements import _fmt_user_date
 from .webv1_availability import _session_company
+
+
+def _fmt_user_date(value: str) -> str:
+    try:
+        return date.fromisoformat(value).strftime('%d/%m/%Y')
+    except (TypeError, ValueError):
+        return value or ''
 
 
 def _held_items(database, company_id: int, token: str):
