@@ -21,6 +21,23 @@ def _basket_row(connection, company_id: int, token: str, hold_id: int):
     ).fetchone()
 
 
+def _snapshot_current_requirements(connection, company_id: int, token: str, hold_id: int) -> None:
+    connection.execute('DELETE FROM hold_requirement_people WHERE hold_id=?', (hold_id,))
+    connection.execute('DELETE FROM hold_requirement_addons WHERE hold_id=?', (hold_id,))
+    connection.execute(
+        '''INSERT INTO hold_requirement_people(hold_id,company_id,person_type_id,quantity,ages_json)
+           SELECT ?,company_id,person_type_id,quantity,ages_json
+           FROM booking_requirement_people WHERE company_id=? AND session_token=?''',
+        (hold_id, company_id, token),
+    )
+    connection.execute(
+        '''INSERT INTO hold_requirement_addons(hold_id,company_id,addon_id,quantity)
+           SELECT ?,company_id,addon_id,quantity
+           FROM booking_requirement_addons WHERE company_id=? AND session_token=?''',
+        (hold_id, company_id, token),
+    )
+
+
 def register_basket_routes(app) -> None:
     database = app.state.database
 
@@ -73,6 +90,8 @@ def register_basket_routes(app) -> None:
             if row is None:
                 return JSONResponse({'ok': False, 'error': 'That basket item has already expired or been removed.'}, status_code=404)
             before = dict(row)
+            c.execute('DELETE FROM hold_requirement_people WHERE hold_id=?', (hold_id,))
+            c.execute('DELETE FROM hold_requirement_addons WHERE hold_id=?', (hold_id,))
             c.execute('DELETE FROM element_holds WHERE id=? AND company_id=? AND session_token=?', (hold_id, company_id, token))
         audit(database, context, company_id, 'ELEMENT_HOLD_REMOVED', 'element_hold', hold_id, before, {'removed': True})
         return JSONResponse({'ok': True, 'removed': 1, 'hold_id': hold_id})
@@ -91,78 +110,47 @@ def register_basket_routes(app) -> None:
         arrival = data.get('arrival_date', '')
         departure = data.get('departure_date', '')
 
-        # Validate before opening the write transaction. availability_state opens its own
-        # database connection, so calling it while a write connection is already active
-        # can lock SQLite on Windows.
-        state = availability.availability_state(
-            database, company_id, element_id, arrival, departure, session_token=token
-        )
-        if not state['available']:
-            return JSONResponse({'ok': False, 'error': state['reason']}, status_code=409)
-
-        now = availability._now()
+        # Validate the replacement while treating only the item being edited as
+        # replaceable. Other holds in this same basket remain locked conflicts.
         with database.connect() as c:
             availability._purge_expired_holds(c)
             current = _basket_row(c, company_id, token, hold_id)
             if current is None:
                 return JSONResponse({'ok': False, 'error': 'That booking item has expired or been removed.'}, status_code=404)
             before = dict(current)
-
             element = c.execute(
                 'SELECT name,element_type FROM setup_elements WHERE id=? AND company_id=? AND active=1',
                 (element_id, company_id),
             ).fetchone()
             if element is None:
                 return JSONResponse({'ok': False, 'error': 'That Element is no longer active.'}, status_code=409)
-
-            # Re-check conflicts inside this same write transaction so there is no race
-            # between the initial validation and saving the replacement. Ignore this
-            # session's own holds; they are the booking currently being edited.
             competing_hold = c.execute(
                 '''SELECT id FROM element_holds
-                   WHERE company_id=? AND element_id=? AND session_token<>?
+                   WHERE company_id=? AND element_id=? AND id<>?
                      AND date(arrival_date)<date(?) AND date(departure_date)>date(?)
                      AND expires_at>? LIMIT 1''',
-                (company_id, element_id, token, departure, arrival, iso_now()),
+                (company_id, element_id, hold_id, departure, arrival, iso_now()),
             ).fetchone()
             booking_conflict = availability._booking_conflict(c, company_id, element_id, arrival, departure)
             closure_conflict = availability._closure_conflict(c, company_id, element_id, arrival, departure)
             if competing_hold or booking_conflict or closure_conflict:
-                return JSONResponse(
-                    {'ok': False, 'error': 'That Element has just become unavailable. Please choose another.'},
-                    status_code=409,
-                )
+                return JSONResponse({'ok': False, 'error': 'That Element is already unavailable or held. Please choose another.'}, status_code=409)
 
-            hold_seconds = 600
-            grace_seconds = 60
-            settings = c.execute(
-                'SELECT hold_seconds,grace_seconds FROM company_hold_settings WHERE company_id=?',
-                (company_id,),
-            ).fetchone()
-            if settings:
-                hold_seconds = int(settings['hold_seconds'])
-                grace_seconds = int(settings['grace_seconds'])
+            settings = c.execute('SELECT hold_seconds,grace_seconds FROM company_hold_settings WHERE company_id=?', (company_id,)).fetchone()
+            hold_seconds = int(settings['hold_seconds']) if settings else 600
+            grace_seconds = int(settings['grace_seconds']) if settings else 60
+            now = availability._now()
             prompt = now + timedelta(seconds=hold_seconds)
             expires = prompt + timedelta(seconds=grace_seconds)
-
             c.execute(
-                '''UPDATE element_holds
-                   SET element_id=?,holder_user_id=?,arrival_date=?,departure_date=?,
-                       renewal_required_at=?,expires_at=?,updated_at=?
+                '''UPDATE element_holds SET element_id=?,holder_user_id=?,arrival_date=?,departure_date=?,
+                   renewal_required_at=?,expires_at=?,updated_at=?
                    WHERE id=? AND company_id=? AND session_token=?''',
-                (
-                    element_id,
-                    context['user_id'],
-                    arrival,
-                    departure,
-                    prompt.isoformat(timespec='seconds'),
-                    expires.isoformat(timespec='seconds'),
-                    now.isoformat(timespec='seconds'),
-                    hold_id,
-                    company_id,
-                    token,
-                ),
+                (element_id, context['user_id'], arrival, departure, prompt.isoformat(timespec='seconds'), expires.isoformat(timespec='seconds'), now.isoformat(timespec='seconds'), hold_id, company_id, token),
             )
+            # EDIT is the only operation allowed to replace a basket item's saved
+            # party/vehicle/feature/extra snapshot.
+            _snapshot_current_requirements(c, company_id, token, hold_id)
 
         after = {
             'element_id': element_id,
