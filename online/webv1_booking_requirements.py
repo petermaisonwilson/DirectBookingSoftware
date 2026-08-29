@@ -90,3 +90,19 @@ def register_booking_requirement_routes(app):
     @app.get('/availability/start',response_class=HTMLResponse)
     def requirements_start(request:Request):
         context,cid=_session_context(database,request);token=request.cookies.get(COOKIE_NAME,'');return _requirements_page(database,context,cid,token)
+    @app.post('/setup/person-types/age-toggle')
+    async def person_age_toggle(request:Request):
+        context=context_for(database,request);cid=int(working_company(context));data=await form_data(request);require_csrf(context,data);pid=int(data.get('person_type_id','0') or 0)
+        with database.connect() as c:
+            row=c.execute('SELECT ask_age FROM setup_person_types WHERE company_id=? AND id=?',(cid,pid)).fetchone()
+            if row is None:raise HTTPException(status_code=404,detail='Person Type not found')
+            old=int(row['ask_age'] or 0);new=0 if old else 1;c.execute('UPDATE setup_person_types SET ask_age=? WHERE company_id=? AND id=?',(new,cid,pid))
+        audit(database,context,cid,'PERSON_TYPE_AGE_QUESTION_CHANGED','person_type',pid,{'ask_age':old},{'ask_age':new});return RedirectResponse('/setup/person-types',303)
+    @app.post('/setup/addons/requirement-toggle')
+    async def addon_requirement_toggle(request:Request):
+        context=context_for(database,request);cid=int(working_company(context));data=await form_data(request);require_csrf(context,data);aid=int(data.get('addon_id','0') or 0)
+        with database.connect() as c:
+            row=c.execute('SELECT ask_before_availability FROM setup_addons WHERE company_id=? AND id=?',(cid,aid)).fetchone()
+            if row is None:raise HTTPException(status_code=404,detail='Feature / Extra not found')
+            old=int(row['ask_before_availability'] or 0);new=0 if old else 1;c.execute('UPDATE setup_addons SET ask_before_availability=? WHERE company_id=? AND id=?',(new,cid,aid))
+        audit(database,context,cid,'ADDON_AVAILABILITY_QUESTION_CHANGED','addon',aid,{'ask_before_availability':old},{'ask_before_availability':new});return RedirectResponse('/setup/addons',303)
