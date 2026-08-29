@@ -126,7 +126,7 @@ def register_calendar_v5_routes(app) -> None:
             for enquiry in enquiries:
                 cols = _cols(enquiry['arrival_date'], enquiry['departure_date'], visible_start, visible_end)
                 if staff:
-                    customer = (f"{enquiry['first_name']} {enquiry['last_name']").strip() or 'Customer'
+                    customer = (f"{enquiry['first_name']} {enquiry['last_name']}").strip() or 'Customer'
                     bars += _bar(f'{customer} · Enquiry #{int(enquiry["enquiry_id"])} · {enquiry["workflow_name"] or held_name}', str(enquiry['colour'] or held_colour), cols, href=f'/operations/enquiries/{int(enquiry["enquiry_id"])}')
                 else:
                     bars += _bar('Unavailable', '#F3C5C9', cols)
