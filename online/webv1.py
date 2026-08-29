@@ -13,6 +13,7 @@ from .webv1_addon_popup import initialise_addon_popup, register_addon_popup_rout
 from .webv1_addon_when import initialise_addon_when, register_addon_when_routes
 from .webv1_availability import initialise_availability, register_availability_routes
 from .webv1_basket import register_basket_routes
+from .webv1_booking_progress import register_booking_progress_routes
 from .webv1_booking_requirements import (
     initialise_booking_requirements,
     register_booking_requirement_routes,
@@ -92,6 +93,7 @@ def register_web_v1(app) -> None:
     register_hold_settings_routes(app)
     register_availability_routes(app)
     register_basket_routes(app)
+    register_booking_progress_routes(app)
     register_addon_popup_routes(app)
     register_booking_requirement_routes(app)
     register_booking_requirements_refinement_routes(app)
