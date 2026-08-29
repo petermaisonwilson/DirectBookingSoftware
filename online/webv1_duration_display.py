@@ -46,6 +46,14 @@ def _label(start_value, end_value, pricing_method: str) -> str:
     return f'Start date {start} · End date {end} · {units} {noun}'
 
 
+def _progress_label(start_value, end_value, pricing_method: str) -> str:
+    _, _, units = _duration(start_value, end_value, pricing_method)
+    noun = 'day' if str(pricing_method or '').strip().lower() == 'per day' else 'night'
+    if units != 1:
+        noun += 's'
+    return f'{units} {noun}'
+
+
 def install_duration_display(app) -> None:
     """Display duration anywhere current booking/enquiry date pairs are shown.
 
@@ -75,7 +83,8 @@ def install_duration_display(app) -> None:
         text = body.decode('utf-8')
         path = request.url.path
 
-        # Availability Calendar / Booking in progress.
+        # Availability Calendar / Booking in progress. Dates are already visible
+        # on the calendar, so show only the useful stay length here.
         if path == '/availability/calendar-v2':
             hold_map = {}
             for r in rows(database, '''SELECT h.id,h.arrival_date,h.departure_date,e.pricing_method
@@ -83,7 +92,7 @@ def install_duration_display(app) -> None:
                                       JOIN setup_elements e ON e.id=h.element_id AND e.company_id=h.company_id
                                       WHERE h.company_id=? AND h.session_token=? AND h.expires_at>datetime('now')''',
                           (company_id, token)):
-                hold_map[str(int(r['id']))] = _label(r['arrival_date'], r['departure_date'], r['pricing_method'])
+                hold_map[str(int(r['id']))] = _progress_label(r['arrival_date'], r['departure_date'], r['pricing_method'])
             script = f'''<style id="duration-display-style">.duration-summary{{display:block;color:#4f5d6b;font-size:11px;line-height:1.25;margin-top:3px}}</style>
 <script id="duration-display-script">(()=>{{
  const labels={json.dumps(hold_map)};
@@ -96,8 +105,6 @@ def install_duration_display(app) -> None:
 }})();</script>'''
             text = text.replace('</body>', script + '</body>', 1)
 
-        # Booking detail: show duration per Element, because a booking can contain
-        # Elements with different date ranges or pricing bases.
         elif path.startswith('/operations/bookings/') and path.rstrip('/').split('/')[-1].isdigit():
             booking_id = int(path.rstrip('/').split('/')[-1])
             items = rows(database, '''SELECT be.arrival_date,be.departure_date,se.name AS element_name,se.element_type,
@@ -110,7 +117,6 @@ def install_duration_display(app) -> None:
                 new = f'''<strong>{item['element_name']}</strong> ({item['element_type']}) — {_label(item['arrival_date'], item['departure_date'], item['pricing_method'])}'''
                 text = text.replace(old, new, 1)
 
-        # Enquiry detail: current enquiry workflow contains one requested Element.
         elif path.startswith('/operations/enquiries/') and path.rstrip('/').split('/')[-1].isdigit():
             enquiry_id = int(path.rstrip('/').split('/')[-1])
             item = rows(database, '''SELECT e.arrival_date,e.departure_date,se.pricing_method
