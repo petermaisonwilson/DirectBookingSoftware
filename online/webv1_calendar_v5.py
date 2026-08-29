@@ -177,8 +177,13 @@ def register_calendar_v5_routes(app) -> None:
         .calendar-scroll{{overflow:auto;max-height:520px;border:1px solid #d6dde5;border-radius:8px;position:relative;scrollbar-gutter:stable both-edges}}
         .calendar-grid{{min-width:calc(190px + (var(--days) * 48px));background:white;position:relative}}
         .progress-grid{{min-width:calc(340px + (var(--days) * 48px));background:white;position:relative}}
-        .cal-row{{display:grid;grid-template-columns:190px repeat(var(--days),48px);position:relative;min-height:52px;border-bottom:1px solid #e1e6eb}}
-        .progress-row{{display:grid;grid-template-columns:190px repeat(var(--days),48px) 150px;position:relative;min-height:52px;border-bottom:1px solid #e1e6eb}}
+        .cal-row{{display:grid;grid-template-columns:190px repeat(var(--days),48px);position:relative;min-height:56px;border-bottom:4px solid #fff;box-sizing:border-box;overflow:visible}}
+        .progress-row{{display:grid;grid-template-columns:190px repeat(var(--days),48px) 150px;position:relative;min-height:52px;border-bottom:1px solid #e1e6eb;overflow:visible}}
+        .element-row .cal-cell{{min-height:52px;height:52px;align-self:start;box-sizing:border-box}}
+        .element-row .cal-name{{height:52px;align-self:start}}
+        .element-row.party-unsuitable{{min-height:76px;height:76px}}
+        .element-row.party-unsuitable .cal-cell{{min-height:72px;height:72px}}
+        .element-row.party-unsuitable .cal-name{{height:72px;white-space:normal;overflow:visible}}
         .cal-head{{min-height:52px;background:#f4f6f8;position:sticky;top:0;z-index:30}}
         .cal-name{{padding:8px;position:sticky;left:0;z-index:20;width:190px;min-width:190px;max-width:190px;box-sizing:border-box;background:white;border-right:2px solid #c5cdd6;box-shadow:4px 0 7px -6px rgba(0,0,0,.7)}} .cal-name strong{{display:block}} .cal-name .more-info{{border:0;background:none;color:#365f86;padding:2px 0;font-size:12px;text-decoration:underline}}
         .progress-name small{{display:block;color:#66717f;margin-top:2px}} .cal-head .cal-name{{background:#f4f6f8;z-index:40}}
