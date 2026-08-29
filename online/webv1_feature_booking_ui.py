@@ -46,7 +46,12 @@ def install_feature_booking_ui(app) -> None:
             token = request.cookies.get(COOKIE_NAME, '')
             saved_session = one(database, 'SELECT ready FROM booking_requirement_sessions WHERE company_id=? AND session_token=?', (cid, token))
             restore_saved = bool(saved_session and int(saved_session['ready'] or 0))
+            saved_values = {
+                int(r['addon_id']): int(r['quantity'] or 0)
+                for r in rows(database, 'SELECT addon_id,quantity FROM booking_requirement_addons WHERE company_id=? AND session_token=?', (cid, token))
+            }
             data = json.dumps(definitions,ensure_ascii=False).replace('</','<\\/')
+            saved_data = json.dumps(saved_values).replace('</','<\\/')
             injection = f'''
             <style id="feature-booking-style">
               .generated-requirements-card{{margin-top:16px}}
@@ -67,21 +72,23 @@ def install_feature_booking_ui(app) -> None:
             (()=>{{
               const defs={data};
               const restoreSaved={str(restore_saved).lower()};
+              const savedValues={saved_data};
               const oldHeading=[...document.querySelectorAll('h2')].find(h=>h.textContent.trim()==='Must-have requirements');
               if(!oldHeading||!defs.length)return;
               const oldCard=oldHeading.closest('.card'); if(!oldCard)return;
-              const oldValues={{}};
-              oldCard.querySelectorAll('input[name^="addon_"]').forEach(i=>{{const id=i.name.slice(6);const n=Number(i.value||0);if(n>(oldValues[id]||0))oldValues[id]=n;i.disabled=true;}});
+              oldCard.querySelectorAll('input[name^="addon_"]').forEach(i=>i.disabled=true);
               oldCard.style.display='none';
 
+              const valueFor=(id)=>Number(savedValues[String(id)]??savedValues[id]??0);
               const card=document.createElement('div');card.className='card generated-requirements-card';
               const features=defs.filter(d=>d.kind==='Feature'), extras=defs.filter(d=>d.kind==='Extra');
 
               const addTickRow=(parent,d,restoreCurrent)=>{{
                 const row=document.createElement('label');row.className='requirement-choice';
-                const tick=document.createElement('input');tick.type='checkbox';tick.checked=restoreCurrent&&Number(oldValues[d.id]||0)>0;tick.disabled=d.cap<=0;
+                const savedQty=valueFor(d.id);
+                const tick=document.createElement('input');tick.type='checkbox';tick.checked=restoreCurrent&&savedQty>0;tick.disabled=d.cap<=0;
                 const name=document.createElement('span');name.className='choice-name';name.textContent=d.name;
-                const qty=document.createElement('input');qty.type='number';qty.min='1';qty.max=String(Math.max(1,d.cap));qty.value=String(Math.max(1,Math.min(d.cap||1,restoreCurrent?Number(oldValues[d.id]||1):1)));qty.style.display=d.cap>1?'inline-block':'none';
+                const qty=document.createElement('input');qty.type='number';qty.min='1';qty.max=String(Math.max(1,d.cap));qty.value=String(Math.max(1,Math.min(d.cap||1,restoreCurrent&&savedQty>0?savedQty:1)));qty.style.display=d.cap>1?'inline-block':'none';
                 const hidden=document.createElement('input');hidden.type='hidden';hidden.name='addon_'+d.id;
                 const note=document.createElement('small');note.className='muted';note.textContent=d.cap<=0?'Not available on any Element':(d.cap>1?'Maximum '+d.cap:'');
                 const sync=()=>{{let n=Math.max(1,Math.min(d.cap||1,Number(qty.value||1)));qty.value=String(n);hidden.value=tick.checked?String(d.cap===1?1:n):'0';qty.disabled=!tick.checked;}};
@@ -101,7 +108,7 @@ def install_feature_booking_ui(app) -> None:
                     const none=document.createElement('label');none.className='requirement-choice';nr=document.createElement('input');nr.type='radio';nr.name=inputName;nr.value='';nr.required=true;nr.checked=!restoreSaved;none.append(nr,document.createTextNode(' None / not required'));choices.appendChild(none);
                   }}
                   let restoredChoice=false;
-                  items.forEach(d=>{{const label=document.createElement('label');label.className='requirement-choice';const radio=document.createElement('input');radio.type='radio';radio.name=inputName;radio.value=String(d.id);radio.required=vehicleRequired;if(restoreSaved&&Number(oldValues[d.id]||0)>0){{radio.checked=true;restoredChoice=true;}}const hidden=document.createElement('input');hidden.type='hidden';hidden.name='addon_'+d.id;hidden.value='0';label.append(radio,document.createTextNode(' '+d.name),hidden);choices.appendChild(label);}});
+                  items.forEach(d=>{{const label=document.createElement('label');label.className='requirement-choice';const radio=document.createElement('input');radio.type='radio';radio.name=inputName;radio.value=String(d.id);radio.required=vehicleRequired;if(restoreSaved&&valueFor(d.id)>0){{radio.checked=true;restoredChoice=true;}}const hidden=document.createElement('input');hidden.type='hidden';hidden.name='addon_'+d.id;hidden.value='0';label.append(radio,document.createTextNode(' '+d.name),hidden);choices.appendChild(label);}});
                   if(restoreSaved&&!restoredChoice&&nr)nr.checked=true;
                   const sync=()=>{{const checked=choices.querySelector('input[type=radio]:checked'),chosen=checked?checked.value:'';items.forEach(x=>{{const h=choices.querySelector('input[type=hidden][name="addon_'+x.id+'"]');if(h)h.value=chosen===String(x.id)?'1':'0';}});}};
                   choices.querySelectorAll('input[type=radio]').forEach(r=>r.addEventListener('change',sync));sync();box.appendChild(choices);section.appendChild(box);
