@@ -15,6 +15,7 @@ from .webv1_availability import initialise_availability, register_availability_r
 from .webv1_basket import register_basket_routes
 from .webv1_booking_progress import register_booking_progress_routes
 from .webv1_booking_requirements import (
+    _snapshot_hold_requirements,
     initialise_booking_requirements,
     register_booking_requirement_routes,
 )
@@ -123,17 +124,19 @@ def register_web_v1(app) -> None:
         context, cid = webv1_availability._session_company(app.state.database, request)
         data = await form_data(request)
         require_csrf(context, data)
+        token = request.cookies.get(COOKIE_NAME, '')
         try:
             element_id = int(data.get('element_id', ''))
             hold = create_timed_hold(
                 app.state.database,
                 context,
                 cid,
-                request.cookies.get(COOKIE_NAME, ''),
+                token,
                 element_id,
                 data.get('arrival_date', ''),
                 data.get('departure_date', ''),
             )
+            _snapshot_hold_requirements(app.state.database, cid, token, int(hold['id']))
         except (TypeError, ValueError) as exc:
             return JSONResponse({'ok': False, 'error': str(exc)}, status_code=409)
         return JSONResponse({'ok': True, 'hold': hold})
