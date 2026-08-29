@@ -59,6 +59,17 @@ def _validate(raw: str, minimum: int, maximum: int, label: str) -> int:
 
 
 def create_or_replace_hold(database, context, company_id: int, session_token: str, element_id: int, arrival: str, departure: str):
+    # A hold already in this basket is immutable during normal ADD Element / NEW
+    # BOOKING work. It can only be changed through the explicit basket EDIT route.
+    with database.connect() as c:
+        legacy._purge_expired_holds(c)
+        existing = c.execute(
+            'SELECT * FROM element_holds WHERE company_id=? AND element_id=? AND session_token=?',
+            (company_id, element_id, session_token),
+        ).fetchone()
+    if existing is not None:
+        raise ValueError('That Element is already held in your basket. Use EDIT in Booking in progress to change it.')
+
     state = legacy.availability_state(database, company_id, element_id, arrival, departure, session_token=session_token)
     if not state['available']:
         raise ValueError(state['reason'])
@@ -69,31 +80,18 @@ def create_or_replace_hold(database, context, company_id: int, session_token: st
     with database.connect() as c:
         legacy._purge_expired_holds(c)
         conflict = c.execute(
-            '''SELECT id FROM element_holds WHERE company_id=? AND element_id=? AND session_token<>?
+            '''SELECT id FROM element_holds WHERE company_id=? AND element_id=?
                AND date(arrival_date)<date(?) AND date(departure_date)>date(?) AND expires_at>? LIMIT 1''',
-            (company_id, element_id, session_token, departure, arrival, iso_now()),
+            (company_id, element_id, departure, arrival, iso_now()),
         ).fetchone()
         if conflict or legacy._booking_conflict(c, company_id, element_id, arrival, departure) or legacy._closure_conflict(c, company_id, element_id, arrival, departure):
             raise ValueError('That Element has just become unavailable. Please choose another.')
-        existing = c.execute(
-            'SELECT * FROM element_holds WHERE company_id=? AND element_id=? AND session_token=?',
-            (company_id, element_id, session_token),
-        ).fetchone()
-        if existing:
-            hold_id = int(existing['id'])
-            before = dict(existing)
-            c.execute(
-                'UPDATE element_holds SET arrival_date=?,departure_date=?,renewal_required_at=?,expires_at=?,updated_at=? WHERE id=?',
-                (arrival, departure, prompt.isoformat(timespec='seconds'), expires.isoformat(timespec='seconds'), now.isoformat(timespec='seconds'), hold_id),
-            )
-        else:
-            before = None
-            hold_id = int(c.execute(
-                '''INSERT INTO element_holds(company_id,element_id,session_token,holder_user_id,arrival_date,departure_date,renewal_required_at,expires_at,created_at,updated_at)
-                   VALUES (?,?,?,?,?,?,?,?,?,?)''',
-                (company_id, element_id, session_token, context['user_id'], arrival, departure, prompt.isoformat(timespec='seconds'), expires.isoformat(timespec='seconds'), now.isoformat(timespec='seconds'), now.isoformat(timespec='seconds')),
-            ).lastrowid)
-    audit(database, context, company_id, 'ELEMENT_HOLD_SAVED', 'element_hold', hold_id, before, {
+        hold_id = int(c.execute(
+            '''INSERT INTO element_holds(company_id,element_id,session_token,holder_user_id,arrival_date,departure_date,renewal_required_at,expires_at,created_at,updated_at)
+               VALUES (?,?,?,?,?,?,?,?,?,?)''',
+            (company_id, element_id, session_token, context['user_id'], arrival, departure, prompt.isoformat(timespec='seconds'), expires.isoformat(timespec='seconds'), now.isoformat(timespec='seconds'), now.isoformat(timespec='seconds')),
+        ).lastrowid)
+    audit(database, context, company_id, 'ELEMENT_HOLD_SAVED', 'element_hold', hold_id, None, {
         'element_id': element_id,
         'arrival_date': arrival,
         'departure_date': departure,
