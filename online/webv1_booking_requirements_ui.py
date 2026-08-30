@@ -6,7 +6,7 @@ from fastapi.responses import Response
 
 from .app import COOKIE_NAME, esc
 from .setup015_core import one, rows
-from .webv1_booking_requirements import _saved_requirements
+from .webv1_booking_requirements import _saved_lead_name, _saved_requirements
 from .webv1_booking_requirements_core import element_reasons
 
 
@@ -36,6 +36,7 @@ def install_booking_requirements_ui(app) -> None:
         else:
             people,addons,ready,_,_=_saved_requirements(database,cid,token)
             if not ready:return Response(content=text,status_code=response.status_code,headers=headers,media_type='text/html')
+            lead_name=_saved_lead_name(database,cid,token)
             summary=[]
             for pid,data in people.items():
                 qty=int(data.get('quantity',0))
@@ -46,8 +47,8 @@ def install_booking_requirements_ui(app) -> None:
             for aid,qty in addons.items():
                 if int(qty):
                     a=one(database,'SELECT name FROM setup_addons WHERE company_id=? AND id=?',(cid,aid));summary.append(f'{str(a["name"]) if a else "Requirement"} {int(qty)}')
-            summary_html=' · '.join(esc(x) for x in summary) or 'No special requirements';edit_hold=request.query_params.get('edit_hold','');change_href='/availability/start'+(f'?edit_hold={edit_hold}' if edit_hold.isdigit() else '')
-            card=f'<div class="card requirement-summary"><strong>Your requirements:</strong> {summary_html} <a class="button secondary" style="margin-left:10px" href="{change_href}">Change</a></div>';text=text.replace('<h1>Availability Calendar</h1>','<h1>Availability Calendar</h1>'+card,1)
+            summary_html=' · '.join(esc(x) for x in summary) or 'No special requirements';name_html=f'<strong>Name:</strong> {esc(lead_name)} &nbsp; ' if lead_name else '';edit_hold=request.query_params.get('edit_hold','');change_href='/availability/start'+(f'?edit_hold={edit_hold}' if edit_hold.isdigit() else '')
+            card=f'<div class="card requirement-summary">{name_html}<strong>Your requirements:</strong> {summary_html} <a class="button secondary" style="margin-left:10px" href="{change_href}">Change</a></div>';text=text.replace('<h1>Availability Calendar</h1>','<h1>Availability Calendar</h1>'+card,1)
             raw_day=request.query_params.get('arrival') or request.query_params.get('start') or date.today().isoformat()
             try:year=date.fromisoformat(raw_day).year
             except ValueError:year=date.today().year
