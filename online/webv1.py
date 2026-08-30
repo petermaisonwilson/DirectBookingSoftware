@@ -136,6 +136,9 @@ def register_web_v1(app) -> None:
                 data.get('arrival_date', ''),
                 data.get('departure_date', ''),
             )
+            with app.state.database.connect() as c:
+                working = c.execute('SELECT lead_name FROM booking_requirement_sessions WHERE company_id=? AND session_token=?', (cid, token)).fetchone()
+                c.execute('UPDATE element_holds SET lead_name=? WHERE id=? AND company_id=? AND session_token=?', (str(working['lead_name'] or '') if working else '', int(hold['id']), cid, token))
             _snapshot_hold_requirements(app.state.database, cid, token, int(hold['id']))
         except (TypeError, ValueError) as exc:
             return JSONResponse({'ok': False, 'error': str(exc)}, status_code=409)
@@ -158,7 +161,7 @@ def register_web_v1(app) -> None:
                 c.execute('DELETE FROM element_holds WHERE session_token=? AND company_id=?', (token, cid))
                 c.execute('DELETE FROM booking_requirement_people WHERE session_token=? AND company_id=?', (token, cid))
                 c.execute('DELETE FROM booking_requirement_addons WHERE session_token=? AND company_id=?', (token, cid))
-                c.execute('''INSERT INTO booking_requirement_sessions(session_token,company_id,ready,arrival_date,departure_date,updated_at)
-                             VALUES (?,?,0,'','',CURRENT_TIMESTAMP)
-                             ON CONFLICT(session_token,company_id) DO UPDATE SET ready=0,arrival_date='',departure_date='',updated_at=CURRENT_TIMESTAMP''', (token, cid))
+                c.execute('''INSERT INTO booking_requirement_sessions(session_token,company_id,ready,arrival_date,departure_date,lead_name,updated_at)
+                             VALUES (?,?,0,'','','',CURRENT_TIMESTAMP)
+                             ON CONFLICT(session_token,company_id) DO UPDATE SET ready=0,arrival_date='',departure_date='',lead_name='',updated_at=CURRENT_TIMESTAMP''', (token, cid))
         return RedirectResponse('/availability/start', 303)
