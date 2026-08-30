@@ -39,8 +39,6 @@ def main() -> None:
             addon_id = int(c.execute("INSERT INTO setup_addons(company_id,name,pricing_method,active) VALUES (?,?,?,1)", (cid, 'Breakfast', 'Fixed once')).lastrowid)
             c.execute("INSERT INTO setup_type_addons(company_id,year,element_type,addon_id,allowed,min_qty,max_qty,rate) VALUES (?,?,?,?,?,?,?,?)", (cid, 2035, 'Lodge', addon_id, 1, 1, 4, 20))
 
-            # Complete the year-wide readiness data. Every active Person Type must have an
-            # explicit limit and price, and the Element must have a total occupancy value.
             c.execute('INSERT OR REPLACE INTO setup_occupancy(company_id,year,element_id,max_total) VALUES (?,?,?,?)', (cid, 2035, element_id, 6))
             people = c.execute('SELECT id FROM setup_person_types WHERE company_id=? AND active=1', (cid,)).fetchall()
             for person in people:
@@ -69,12 +67,10 @@ def main() -> None:
             released = c.execute("SELECT id FROM booking_status_definitions WHERE company_id=? AND active=1 AND internal_state='RELEASED' ORDER BY display_order,id LIMIT 1", (cid,)).fetchone()
             confirmed_id = int(confirmed['id']); confirmed_colour = str(confirmed['colour']); released_id = int(released['id'])
 
-        # Enquiry detail exposes a real conversion action.
         detail = client.get(f'/operations/enquiries/{enquiry_id}')
         assert detail.status_code == 200
         assert 'Convert to Booking' in detail.text and 'Confirm / Convert to Booking' in detail.text
 
-        # The Enquiry itself blocks availability before conversion.
         before = availability_state(db, cid, element_id, '2035-06-10', '2035-06-13')
         assert before['available'] is False and before['state'] == 'ENQUIRY'
 
@@ -96,27 +92,24 @@ def main() -> None:
             frozen = json.loads(ba['rule_snapshot_json']); assert float(frozen['frozen_amount']) == 20.0
             reference = str(b['reference'])
 
-        # Booking replaces Enquiry as the inventory blocker and appears on the staff calendar.
         after = availability_state(db, cid, element_id, '2035-06-10', '2035-06-13')
         assert after['available'] is False and after['state'] == 'BOOKED' and after['booking_id'] == booking_id
         cal = client.get('/availability/calendar-v2?element_type=Lodge&arrival=2035-06-10&departure=2035-06-13')
         assert cal.status_code == 200 and reference in cal.text and confirmed_colour in cal.text
-        assert 'hold-expiry-calendar-refresh' in cal.text
+        assert 'hold-expiry-calendar-refresh' not in cal.text
+        assert 'async function checkExpiry()' in cal.text and 'function releasedTransition()' in cal.text
 
-        # Frozen price survives later Setup price changes.
         with db.connect() as c:
             c.execute('UPDATE setup_element_rates SET rate=999 WHERE company_id=? AND year=? AND element_id=?', (cid, 2035, element_id))
             c.execute('UPDATE setup_person_prices SET rate=999 WHERE company_id=? AND year=? AND element_id=? AND person_type_id=?', (cid, 2035, element_id, person_id))
         booking_page = client.get(f'/operations/bookings/{booking_id}')
         assert booking_page.status_code == 200 and '€380.00' in booking_page.text and 'Frozen Booking' in booking_page.text
 
-        # Payment updates totals and permanent Who/When/What history.
         pay = client.post(f'/operations/bookings/{booking_id}/payments', data={'csrf': csrf, 'amount': '100.00', 'payment_date': '2035-05-01', 'method': 'Card', 'reference': 'PAY-1', 'notes': 'Deposit'}, follow_redirects=False)
         assert pay.status_code == 303
         page = client.get(f'/operations/bookings/{booking_id}')
         assert '€100.00' in page.text and '€280.00' in page.text and 'BOOKING_PAYMENT_RECORDED' in page.text
 
-        # Client-defined status drives availability and is audited.
         change = client.post(f'/operations/bookings/{booking_id}/status', data={'csrf': csrf, 'workflow_status_id': str(released_id)}, follow_redirects=False)
         assert change.status_code == 303
         free = availability_state(db, cid, element_id, '2035-06-10', '2035-06-13')
@@ -124,7 +117,6 @@ def main() -> None:
         page = client.get(f'/operations/bookings/{booking_id}')
         assert 'BOOKING_STATUS_CHANGED' in page.text
 
-        # Operations now exposes the Booking Register.
         ops = client.get('/operations'); assert '/operations/bookings' in ops.text
         register = client.get('/operations/bookings'); assert reference in register.text
 
