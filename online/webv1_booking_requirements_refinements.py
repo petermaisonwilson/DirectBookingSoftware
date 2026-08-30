@@ -64,11 +64,10 @@ def _transform_calendar(database, request: Request, text: str, cid: int, token: 
     except ValueError: year = date.today().year
 
     if not request.query_params.get('element_type') and not request.query_params.get('edit_hold'):
-        # v5 already owns the single canonical blank option. Only make it selected;
-        # do not inject a second "Select" option.
         text = text.replace('<option value="">Select Element Type</option>', '<option value="" selected>Select Element Type</option>', 1)
-        text = text.replace('<h2>Availability</h2>', '<h2>Availability</h2><p class="select-element-note"><strong>Select an Element Type</strong> to view availability.</p>', 1)
-        text = text.replace('</body>', '<style id="blank-element-type-style">#calendar-scroll .element-row{display:none!important}</style></body>', 1)
+        held = one(database, 'SELECT id FROM element_holds WHERE company_id=? AND session_token=? LIMIT 1', (cid, token))
+        note = '<strong>Held Elements are shown below.</strong> Select an Element Type above to add another.' if held else '<strong>Select an Element Type</strong> to view availability.'
+        text = text.replace('<h2>Availability</h2>', f'<h2>Availability</h2><p class="select-element-note">{note}</p>', 1)
     if not ready: return text
 
     elements = rows(database, 'SELECT * FROM setup_elements WHERE company_id=? AND active=1', (cid,))
@@ -87,8 +86,6 @@ def _transform_calendar(database, request: Request, text: str, cid: int, token: 
         if reasons:
             encoded = html.escape(json.dumps({'element': str(element['name']), 'reasons': reasons, 'features': features}, ensure_ascii=False), quote=True)
             marker = f'<div class="cal-row element-row party-unsuitable" data-element="{eid}"'; text = text.replace(marker, marker + f' data-party-info="{encoded}"', 1)
-    # Suitability details remain available through the Element title / More info;
-    # date cells are never hijacked by a separate suitability popover.
     return text
 
 
