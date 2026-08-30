@@ -33,6 +33,8 @@ def initialise_booking_requirements(database):
         _ensure_column(c, 'setup_addons', 'ask_before_availability', 'INTEGER NOT NULL DEFAULT 0')
         _ensure_column(c, 'booking_requirement_sessions', 'arrival_date', "TEXT NOT NULL DEFAULT ''")
         _ensure_column(c, 'booking_requirement_sessions', 'departure_date', "TEXT NOT NULL DEFAULT ''")
+        _ensure_column(c, 'booking_requirement_sessions', 'lead_name', "TEXT NOT NULL DEFAULT ''")
+        _ensure_column(c, 'element_holds', 'lead_name', "TEXT NOT NULL DEFAULT ''")
         c.execute('DELETE FROM hold_requirement_people WHERE hold_id NOT IN (SELECT id FROM element_holds)')
         c.execute('DELETE FROM hold_requirement_addons WHERE hold_id NOT IN (SELECT id FROM element_holds)')
 
@@ -63,11 +65,16 @@ def _saved_requirements(database, cid, token):
     return people, addons, ready, arrival, departure
 
 
+def _saved_lead_name(database, cid, token):
+    saved = one(database, 'SELECT lead_name FROM booking_requirement_sessions WHERE company_id=? AND session_token=?', (cid, token))
+    return str(saved['lead_name'] or '') if saved else ''
+
+
 def _load_hold_requirements_into_working(database, cid: int, token: str, hold_id: int) -> bool:
     """Load one explicitly edited basket item's snapshot into the working form."""
     with database.connect() as c:
         hold = c.execute(
-            '''SELECT id,arrival_date,departure_date FROM element_holds
+            '''SELECT id,arrival_date,departure_date,lead_name FROM element_holds
                WHERE id=? AND company_id=? AND session_token=?''',
             (hold_id, cid, token),
         ).fetchone()
@@ -88,11 +95,12 @@ def _load_hold_requirements_into_working(database, cid: int, token: str, hold_id
             (token, hold_id),
         )
         c.execute(
-            '''INSERT INTO booking_requirement_sessions(session_token,company_id,ready,arrival_date,departure_date,updated_at)
-               VALUES (?,?,1,?,?,CURRENT_TIMESTAMP)
+            '''INSERT INTO booking_requirement_sessions(session_token,company_id,ready,arrival_date,departure_date,lead_name,updated_at)
+               VALUES (?,?,1,?,?,?,CURRENT_TIMESTAMP)
                ON CONFLICT(session_token,company_id) DO UPDATE SET
-                 ready=1,arrival_date=excluded.arrival_date,departure_date=excluded.departure_date,updated_at=CURRENT_TIMESTAMP''',
-            (token, cid, str(hold['arrival_date']), str(hold['departure_date'])),
+                 ready=1,arrival_date=excluded.arrival_date,departure_date=excluded.departure_date,
+                 lead_name=excluded.lead_name,updated_at=CURRENT_TIMESTAMP''',
+            (token, cid, str(hold['arrival_date']), str(hold['departure_date']), str(hold['lead_name'] or '')),
         )
     return True
 
@@ -108,14 +116,15 @@ def _requirements_page(database, context, cid, token, message='', edit_hold: int
     people_rows = person_type_rows(database, cid, active_only=True)
     addon_rows = rows(database, 'SELECT * FROM setup_addons WHERE company_id=? AND active=1 AND ask_before_availability=1 ORDER BY name COLLATE NOCASE', (cid,))
     saved_people, saved_addons, _, saved_arrival, saved_departure = _saved_requirements(database, cid, token)
+    saved_lead_name = _saved_lead_name(database, cid, token)
     error = f'<div class="error">{esc(message)}</div>' if message else ''
     progress = booking_progress_strip(database, context, cid, token)
     edit_hidden = f'<input type="hidden" name="edit_hold" value="{int(edit_hold)}">' if edit_hold else ''
-    edit_note = '<div class="card edit-notice"><strong>Editing this basket item’s requirements.</strong> Saving will update only this held Element.</div>' if edit_hold else ''
+    edit_note = '<div class="card edit-notice"><strong>Editing this basket item’s requirements.</strong> Saving will update only this held Element and return you to it on the Availability Calendar.</div>' if edit_hold else ''
     body = f'''<h1>Booking requirements</h1>{progress}{edit_note}{error}
     <div class="card"><p>Tell us who is coming, when they are staying and anything that the Element <strong>must</strong> provide. We use this only to prevent you choosing an unsuitable Element.</p><p class="muted">For privacy, age is requested only for Person Types where the Client has enabled <strong>Ask for age</strong>. Date of birth is not collected.</p></div>
     <form method="post" action="/availability/requirements">{edit_hidden}<input type="hidden" name="csrf" value="{esc(context['csrf_token'])}">
-    <div class="card"><h2>Who's coming and when?</h2><div class="grid"><div><label>Arrival</label><input id="requirements-arrival" type="date" name="arrival" required value="{esc(saved_arrival)}"></div><div><label>Departure</label><input id="requirements-departure" type="date" name="departure" required value="{esc(saved_departure)}"></div>'''
+    <div class="card"><h2>Who's coming and when?</h2><div class="grid"><div><label>Please enter the lead name</label><input name="lead_name" placeholder="NAME" required value="{esc(saved_lead_name)}"></div><div><label>Arrival</label><input id="requirements-arrival" type="date" name="arrival" required value="{esc(saved_arrival)}"></div><div><label>Departure</label><input id="requirements-departure" type="date" name="departure" required value="{esc(saved_departure)}"></div>'''
     for p in people_rows:
         pid = int(p['id'])
         saved = saved_people.get(pid, {'quantity': 0, 'ages': []})
