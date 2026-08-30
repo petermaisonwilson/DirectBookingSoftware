@@ -20,7 +20,6 @@ def initialise_features_extras(database) -> None:
     with database.connect() as c:
         _ensure_column(c, 'setup_addons', 'item_kind', "TEXT NOT NULL DEFAULT 'Extra'")
         _ensure_column(c, 'setup_addons', 'feature_group', "TEXT NOT NULL DEFAULT ''")
-        c.execute("UPDATE setup_addons SET item_kind='Feature' WHERE ask_before_availability=1")
         c.execute("UPDATE setup_addons SET item_kind='Extra' WHERE item_kind IS NULL OR item_kind NOT IN ('Feature','Extra')")
 
 
@@ -55,20 +54,20 @@ def _features_page(database, context, submitted=None, message='', edit=0) -> str
     method_options = ''.join(f'<option {"selected" if method == m else ""}>{esc(m)}</option>' for m in ADDON_PRICING_METHODS)
     error = f'<div class="error">{esc(message)}</div>' if message else ''
     body = f'''<h1>Features & Extras</h1>{_nav()}{error}
-    <div class="card"><p><strong>Features</strong> describe what a guest needs and can make an Element suitable or unsuitable. Put related Features in the same group, for example <strong>Vehicle Type</strong>. A group is presented to the guest as a single-choice list.</p><p><strong>Extras</strong> are optional purchases offered after an Element has been selected, for example Breakfast or BBQ hire.</p></div>
+    <div class="card"><p><strong>Features</strong> describe what a guest needs and can make an Element suitable or unsuitable. Put related Features in the same group, for example <strong>Vehicle Type</strong>. A group is presented to the guest as a single-choice list.</p><p><strong>Extras</strong> are optional or chargeable items. Features and Extras can both be marked <strong>Ask before Availability</strong> when they can affect which Elements are suitable, for example Electric Hook-up or Pets.</p></div>
     <div class="card"><h2>{'Edit' if current else 'Add'} Feature / Extra</h2><form method="post" action="/setup/addons">
     <input type="hidden" name="csrf" value="{esc(context['csrf_token'])}"><input type="hidden" name="id" value="{int(current['id']) if current else ''}">
     <div class="grid"><div><label>Name</label><input name="name" value="{esc(name)}"></div>
     <div><label>Type</label><select id="feature-kind" name="item_kind"><option {'selected' if kind == 'Feature' else ''}>Feature</option><option {'selected' if kind == 'Extra' else ''}>Extra</option></select></div>
     <div id="feature-group"><label>Feature group <span class="muted">(optional)</span></label><input name="feature_group" value="{esc(group)}" placeholder="e.g. Vehicle Type"><small class="muted">Same group = one choice only.</small></div>
     <div><label>Pricing method</label><select name="pricing_method">{method_options}</select></div>
-    <div id="feature-ask"><label><input style="width:auto" type="checkbox" name="ask_before_availability" {'checked' if ask else ''}> Ask before Availability</label><small class="muted">Tick when this Feature should be part of suitability checking.</small></div></div>
+    <div id="feature-ask"><label><input style="width:auto" type="checkbox" name="ask_before_availability" {'checked' if ask else ''}> Ask before Availability</label><small class="muted">Tick when this Feature or Extra should be part of suitability checking.</small></div></div>
     <p><button>{'SAVE CHANGES' if current else 'ADD FEATURE / EXTRA'}</button>{' <a class="button secondary" href="/setup/addons">Cancel</a>' if current else ''}</p></form></div>
     <div class="card"><h2>Existing Features & Extras</h2><table><thead><tr><th>Name</th><th>Type</th><th>Group</th><th>Ask before Availability</th><th>Pricing</th><th></th></tr></thead><tbody>'''
     for r in items:
         group_text = str(r['feature_group'] or '—')
         body += f'<tr><td>{esc(r["name"])}</td><td>{esc(r["item_kind"])}</td><td>{esc(group_text)}</td><td>{"✓" if int(r["ask_before_availability"] or 0) else "—"}</td><td>{esc(r["pricing_method"])}</td><td><a href="/setup/addons?edit={int(r["id"])}">Edit</a></td></tr>'
-    body += '''</tbody></table></div><script>(()=>{const k=document.getElementById('feature-kind'),g=document.getElementById('feature-group'),a=document.getElementById('feature-ask');function s(){const f=k.value==='Feature';g.style.display=f?'block':'none';a.style.display=f?'block':'none';if(!f){g.querySelector('input').value='';a.querySelector('input').checked=false;}}k.addEventListener('change',s);s();})();</script>'''
+    body += '''</tbody></table></div><script>(()=>{const k=document.getElementById('feature-kind'),g=document.getElementById('feature-group');function s(){const f=k.value==='Feature';g.style.display=f?'block':'none';if(!f)g.querySelector('input').value='';}k.addEventListener('change',s);s();})();</script>'''
     return layout('Features & Extras', body, context)
 
 
@@ -137,7 +136,7 @@ def register_features_extras_routes(app) -> None:
         name=str(data.get('name','')).strip(); kind=str(data.get('item_kind','Feature')); group=str(data.get('feature_group','')).strip(); method=str(data.get('pricing_method','')); raw_id=str(data.get('id',''))
         if not name or kind not in {'Feature','Extra'} or method not in ADDON_PRICING_METHODS:
             return HTMLResponse(_features_page(database,context,data,'Complete the name, Type and Pricing method.',int(raw_id) if raw_id.isdigit() else 0),400)
-        ask=1 if kind=='Feature' and 'ask_before_availability' in data else 0
+        ask=1 if 'ask_before_availability' in data else 0
         if kind=='Extra': group=''
         try:
             with database.connect() as c:
