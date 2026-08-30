@@ -66,7 +66,7 @@ def register_calendar_v5_routes(app) -> None:
         {'<a class="button secondary" href="/setup/booking-statuses">Booking Statuses</a>' if staff else ''}</p></form></div>'''
 
         if editing:
-            body += f'<div class="card edit-notice"><strong>Editing {esc(editing["element_name"])}</strong> — select new dates and/or another {esc(editing["element_type"])} Element directly on the calendar, then click <strong>UPDATE</strong> on the coloured selection.</div>'
+            body += f'<div class="card edit-notice"><strong>Editing {esc(editing["element_name"])}</strong> — your current range is selected below. Choose different dates if required, then use <strong>RESERVE CHANGES</strong>.</div>'
 
         held_status = default_status(database, cid, 'HELD')
         held_colour = str(held_status['colour']) if held_status else '#FFE39A'
@@ -80,7 +80,14 @@ def register_calendar_v5_routes(app) -> None:
 
         cal_header = _header(dates, arrival_day, departure_day)
         cal_rows = ''
-        elements = rows(database, 'SELECT * FROM setup_elements WHERE company_id=? AND active=1 AND element_type=? ORDER BY name COLLATE NOCASE', (cid, selected_type)) if selected_type else []
+        if selected_type:
+            elements = rows(database, 'SELECT * FROM setup_elements WHERE company_id=? AND active=1 AND element_type=? ORDER BY name COLLATE NOCASE', (cid, selected_type))
+        elif basket:
+            basket_ids = list(dict.fromkeys(int(r['element_id']) for r in basket))
+            marks = ','.join('?' for _ in basket_ids)
+            elements = rows(database, f'SELECT * FROM setup_elements WHERE company_id=? AND active=1 AND id IN ({marks}) ORDER BY element_type,name COLLATE NOCASE', (cid, *basket_ids))
+        else:
+            elements = []
         feature_year = (_parse(arrival) or _parse(anchor_arrival) or visible_start).year
         locked_holds = {
             int(r['element_id']): r for r in basket
@@ -117,9 +124,7 @@ def register_calendar_v5_routes(app) -> None:
                 if code == 'AVAILABLE' and not locked_in_basket:
                     cells += f'<button type="button" class="cal-cell available date-pick{selected}" style="grid-column:{col};grid-row:1" data-date="{day.isoformat()}" data-element="{eid}" data-name="{esc(element["name"])}"></button>'
                 elif code == 'AVAILABLE':
-                    # The Element is already somewhere in this basket, but this day is
-                    # not part of that hold. Keep its true availability colour green.
-                    cells += f'<button type="button" class="cal-cell available basket-locked{selected}" style="grid-column:{col};grid-row:1" data-date="{day.isoformat()}" data-element="{eid}" data-name="{esc(element["name"])}" title="Already in basket — use EDIT to change it"></button>'
+                    cells += f'<button type="button" class="cal-cell available basket-locked{selected}" style="grid-column:{col};grid-row:1" data-date="{day.isoformat()}" data-element="{eid}" data-name="{esc(element["name"])}"></button>'
                 elif code == 'HELD_BY_YOU':
                     cls = ' editable-own date-pick' if own_editing_day else ''
                     tag = 'button type="button"' if own_editing_day else 'span'
@@ -187,7 +192,7 @@ def register_calendar_v5_routes(app) -> None:
         .element-info-title{{display:block;border:0;background:none;color:#1f2937;padding:0;margin:0;text-align:left;font:inherit;cursor:help}} .cal-name .more-info{{border:0;background:none;color:#365f86;padding:2px 0;font-size:12px;text-decoration:underline}}
         .cal-head .cal-name{{background:#f4f6f8!important;z-index:70!important}} .cal-date{{padding:6px 2px;text-align:center;border-right:1px solid #e5e9ee;font-size:12px;background:#f4f6f8}} .cal-date small{{display:block;color:#66717f}}
         .cal-cell{{border:0;border-right:1px solid rgba(255,255,255,.6);display:block;z-index:1;padding:0;margin:0}} button.cal-cell{{cursor:pointer}} .cal-cell.available{{background:#dff2df}} .cal-cell.unavailable{{background:#f6d6d9}} .cal-cell.own-held{{background:#ffe39a}} .cal-cell.closed{{background:#e1e4e8}}
-        .cal-cell.basket-locked{{cursor:not-allowed}} .cal-cell.selected-date,.cal-date.selected-date{{box-shadow:inset 0 0 0 2px #6d8196}}
+        .cal-cell.basket-locked{{cursor:help}} .cal-cell.selected-date,.cal-date.selected-date{{box-shadow:inset 0 0 0 2px #6d8196}}
         .selection-action{{z-index:7;align-self:center;height:34px;margin:0 2px;padding:4px 12px;border-radius:6px;font-weight:bold}} .selection-action[hidden]{{display:none!important}}
         .availability-head{{display:flex;justify-content:space-between;align-items:center;gap:14px;flex-wrap:wrap}} .availability-head h2{{margin:0}} .legend-row{{display:flex;gap:6px;flex-wrap:wrap;align-items:center}} .legend.mini{{padding:2px 6px;border-radius:4px;font-size:11px}} .available-key{{background:#dff2df}} .own-held{{background:#ffe39a}} .legend.closed{{background:#e1e4e8}}
         .cal-bar{{z-index:4;align-self:center;height:30px;margin:0 2px;border-radius:5px;overflow:hidden;white-space:nowrap;display:flex;align-items:center}} .cal-bar a,.cal-bar span{{display:block;padding:6px 8px;color:#26313d;text-decoration:none;width:100%;overflow:hidden;text-overflow:ellipsis}}
@@ -198,7 +203,7 @@ def register_calendar_v5_routes(app) -> None:
         <script>
         const csrf={json.dumps(str(context['csrf_token']))}; const editingHold={int(edit_hold or 0)}; const anchorArr={json.dumps(anchor_arrival)},anchorDep={json.dumps(anchor_departure)};
         const elementType=document.getElementById('element-type'),arrivalInput=document.getElementById('arrival-date'),departureInput=document.getElementById('departure-date'),scrollBox=document.getElementById('calendar-scroll');
-        let selectedElement={int(editing['element_id']) if editing else 0},firstPick='';
+        let selectedElement={int(editing['element_id']) if editing else 0},firstPick='',holdTransition=false;
         const dayAfter=iso=>{{const d=new Date(iso+'T12:00:00');d.setDate(d.getDate()+1);return d.toISOString().slice(0,10)}};
         function qsFor(a,d){{const q=new URLSearchParams();if(elementType.value)q.set('element_type',elementType.value);if(a)q.set('arrival',a);if(d)q.set('departure',d);if(editingHold)q.set('edit_hold',editingHold);return q}}
         function submitDates(){{const a=arrivalInput.value,d=departureInput.value;if(!a||!d||d<=a)return;window.location='/availability/calendar-v2?'+qsFor(a,d)}}
@@ -208,14 +213,15 @@ def register_calendar_v5_routes(app) -> None:
         function showSelection(eid,a,d){{clearBars();const row=document.querySelector('.element-row[data-element="'+eid+'"]');if(!row)return;const ds=[...document.querySelectorAll('#calendar-scroll .cal-date')].map(x=>x.dataset.date),s=ds.indexOf(a),e=ds.indexOf(d);if(s<0||e<=s)return;const b=row.querySelector('.selection-action');b.style.gridColumn=(s+2)+' / '+(e+2);b.style.gridRow='1';b.hidden=false;selectedElement=Number(eid)}}
         if(editingHold&&arrivalInput.value&&departureInput.value&&selectedElement)showSelection(selectedElement,arrivalInput.value,departureInput.value);
         document.querySelectorAll('.date-pick').forEach(cell=>cell.addEventListener('click',()=>{{const chosen=cell.dataset.date,eid=Number(cell.dataset.element);if(!firstPick||selectedElement!==eid){{firstPick=chosen;selectedElement=eid;arrivalInput.value=chosen;departureInput.value='';clearBars();return}}if(chosen<=firstPick){{firstPick=chosen;arrivalInput.value=chosen;departureInput.value='';return}}arrivalInput.value=firstPick;departureInput.value=chosen;showSelection(eid,firstPick,chosen);firstPick=''}}));
-        document.querySelectorAll('.basket-locked').forEach(cell=>cell.addEventListener('click',()=>{{alert((cell.dataset.name||'This Element')+' is already in your basket. Use EDIT in Booking in progress to change it.')}}));
         async function post(url,data={{}}){{const body=new URLSearchParams();body.set('csrf',csrf);Object.entries(data).forEach(([k,v])=>body.set(k,v));return fetch(url,{{method:'POST',headers:{{'Content-Type':'application/x-www-form-urlencoded;charset=UTF-8'}},body:body.toString()}})}}
         document.querySelectorAll('.selection-action').forEach(btn=>btn.addEventListener('click',async()=>{{const a=arrivalInput.value,d=departureInput.value;if(!a||!d)return;const url=editingHold?'/availability/basket/update':'/availability/hold',data=editingHold?{{hold_id:editingHold,element_id:btn.dataset.element,arrival_date:a,departure_date:d}}:{{element_id:btn.dataset.element,arrival_date:a,departure_date:d}};const r=await post(url,data);let p={{}};try{{p=await r.json()}}catch(e){{}}if(!r.ok){{alert(p.error||'Unable to save that Element.');return}}const q=new URLSearchParams();q.set('arrival',a);q.set('departure',d);if(editingHold){{q.set('element_type',elementType.value);q.set('edit_hold',editingHold)}}window.location='/availability/calendar-v2?'+q.toString()}}));
         function featureHtml(features){{return '<ul>'+features.map(f=>'<li>'+(f.available?'✓ ':'✕ ')+f.name+'</li>').join('')+'</ul>'}}
         const info=document.getElementById('info-modal'); function showFullInfo(btn){{document.getElementById('info-title').textContent=btn.dataset.elementName;document.getElementById('info-features').innerHTML=featureHtml(JSON.parse(btn.dataset.features||'[]'));info.hidden=false}}
         document.querySelectorAll('.more-info').forEach(btn=>btn.addEventListener('click',()=>showFullInfo(btn))); document.getElementById('info-close').addEventListener('click',()=>info.hidden=true);
         const quick=document.getElementById('quick-element-info'); document.querySelectorAll('.element-info-title').forEach(btn=>{{btn.addEventListener('mouseenter',e=>{{const features=JSON.parse(btn.dataset.features||'[]');quick.innerHTML='<strong>'+btn.dataset.elementName+'</strong>'+featureHtml(features);quick.hidden=false;quick.style.left=Math.min(innerWidth-340,e.clientX+12)+'px';quick.style.top=Math.min(innerHeight-220,e.clientY+12)+'px'}});btn.addEventListener('mousemove',e=>{{if(!quick.hidden){{quick.style.left=Math.min(innerWidth-340,e.clientX+12)+'px';quick.style.top=Math.min(innerHeight-220,e.clientY+12)+'px'}}}});btn.addEventListener('mouseleave',()=>quick.hidden=true)}});
-        async function checkExpiry(){{const r=await fetch('/availability/basket');if(!r.ok)return;const data=await r.json();if(!data.items.length&&{str(bool(basket)).lower()}){{location.reload();return}}if(data.items.some(x=>x.needs_confirmation)){{document.getElementById('hold-names').textContent=data.items.map(x=>x.element_name).join(', ');document.getElementById('hold-modal').hidden=false}}}}
-        document.getElementById('hold-yes').addEventListener('click',async()=>{{const r=await post('/availability/holds/renew');if(r.ok)document.getElementById('hold-modal').hidden=true;else alert('Unable to renew holds.')}}); document.getElementById('hold-release').addEventListener('click',async()=>{{const r=await post('/availability/holds/release');if(r.ok)location.reload();else alert('Unable to release holds.')}}); setInterval(checkExpiry,5000);
+        document.querySelectorAll('.basket-locked').forEach(cell=>{{const show=e=>{{quick.innerHTML='<strong>'+((cell.dataset.name)||'This Element')+'</strong><div>Already in your basket — use EDIT in Booking in progress to change it.</div>';quick.hidden=false;quick.style.left=Math.min(innerWidth-340,e.clientX+12)+'px';quick.style.top=Math.min(innerHeight-160,e.clientY+12)+'px'}};cell.addEventListener('mouseenter',show);cell.addEventListener('mousemove',show);cell.addEventListener('mouseleave',()=>quick.hidden=true);}});
+        function releasedTransition(){{if(holdTransition)return;holdTransition=true;document.getElementById('hold-modal').hidden=true;const q=qsFor(arrivalInput.value,departureInput.value);q.delete('edit_hold');window.location.replace('/availability/calendar-v2?'+q.toString())}}
+        async function checkExpiry(){{if(holdTransition)return;const r=await fetch('/availability/basket',{{cache:'no-store'}});if(!r.ok)return;const data=await r.json();if(!data.items.length&&{str(bool(basket)).lower()}){{releasedTransition();return}}if(data.items.some(x=>x.needs_confirmation)){{document.getElementById('hold-names').textContent=data.items.map(x=>(x.lead_name?x.lead_name+' — ':'')+x.element_name).join(', ');document.getElementById('hold-modal').hidden=false}}}}
+        document.getElementById('hold-yes').addEventListener('click',async()=>{{const r=await post('/availability/holds/renew');if(r.ok)document.getElementById('hold-modal').hidden=true;else alert('Unable to renew holds.')}}); document.getElementById('hold-release').addEventListener('click',async()=>{{if(holdTransition)return;const r=await post('/availability/holds/release');if(r.ok)releasedTransition();else alert('Unable to release holds.')}}); setInterval(checkExpiry,5000);
         </script>'''
         return HTMLResponse(layout('Availability Calendar', body, context))
