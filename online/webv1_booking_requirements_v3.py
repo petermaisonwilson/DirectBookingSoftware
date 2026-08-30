@@ -33,6 +33,10 @@ def register_booking_requirements_v3(app) -> None:
             if owned is None:
                 edit_hold = 0
 
+        lead_name = str(data.get('lead_name', '') or '').strip()
+        if not lead_name:
+            return HTMLResponse(_requirements_page(database, context, cid, token, 'Please enter the lead name.', edit_hold=edit_hold), 400)
+
         arrival = str(data.get('arrival', '')).strip()
         departure = str(data.get('departure', '')).strip()
         try:
@@ -92,15 +96,17 @@ def register_booking_requirements_v3(app) -> None:
                 c.execute('INSERT INTO booking_requirement_people(session_token,company_id,person_type_id,quantity,ages_json) VALUES (?,?,?,?,?)', (token, cid, pid, qty, ages))
             for aid, qty in parsed_addons:
                 c.execute('INSERT INTO booking_requirement_addons(session_token,company_id,addon_id,quantity) VALUES (?,?,?,?)', (token, cid, aid, qty))
-            c.execute('''INSERT INTO booking_requirement_sessions(session_token,company_id,ready,arrival_date,departure_date,updated_at)
-                         VALUES (?,?,1,?,?,CURRENT_TIMESTAMP)
+            c.execute('''INSERT INTO booking_requirement_sessions(session_token,company_id,ready,arrival_date,departure_date,lead_name,updated_at)
+                         VALUES (?,?,1,?,?,?,CURRENT_TIMESTAMP)
                          ON CONFLICT(session_token,company_id) DO UPDATE SET
-                           ready=1,arrival_date=excluded.arrival_date,departure_date=excluded.departure_date,updated_at=CURRENT_TIMESTAMP''',
-                      (token, cid, arrival, departure))
+                           ready=1,arrival_date=excluded.arrival_date,departure_date=excluded.departure_date,
+                           lead_name=excluded.lead_name,updated_at=CURRENT_TIMESTAMP''',
+                      (token, cid, arrival, departure, lead_name))
 
         if edit_hold:
             _snapshot_hold_requirements(database, cid, token, edit_hold)
             with database.connect() as c:
+                c.execute('UPDATE element_holds SET lead_name=?,updated_at=CURRENT_TIMESTAMP WHERE id=? AND company_id=? AND session_token=?', (lead_name, edit_hold, cid, token))
                 item = c.execute(
                     '''SELECT e.element_type FROM element_holds h
                        JOIN setup_elements e ON e.id=h.element_id AND e.company_id=h.company_id
