@@ -21,6 +21,19 @@ def _basket_row(connection, company_id: int, token: str, hold_id: int):
     ).fetchone()
 
 
+def _purge_expired_basket_rows(connection, company_id: int, token: str) -> int:
+    expired = [int(r['id']) for r in connection.execute(
+        'SELECT id FROM element_holds WHERE company_id=? AND session_token=? AND expires_at<=?',
+        (company_id, token, iso_now()),
+    ).fetchall()]
+    for hold_id in expired:
+        connection.execute('DELETE FROM hold_requirement_people WHERE hold_id=?', (hold_id,))
+        connection.execute('DELETE FROM hold_requirement_addons WHERE hold_id=?', (hold_id,))
+    if expired:
+        connection.execute('DELETE FROM element_holds WHERE company_id=? AND session_token=? AND expires_at<=?', (company_id, token, iso_now()))
+    return len(expired)
+
+
 def _snapshot_current_requirements(connection, company_id: int, token: str, hold_id: int) -> None:
     connection.execute('DELETE FROM hold_requirement_people WHERE hold_id=?', (hold_id,))
     connection.execute('DELETE FROM hold_requirement_addons WHERE hold_id=?', (hold_id,))
@@ -47,7 +60,7 @@ def register_basket_routes(app) -> None:
         token = request.cookies.get(COOKIE_NAME, '')
         now = availability._now()
         with database.connect() as c:
-            availability._purge_expired_holds(c)
+            _purge_expired_basket_rows(c, company_id, token)
             held = c.execute(
                 '''SELECT h.*, e.name AS element_name, e.element_type
                    FROM element_holds h
@@ -63,6 +76,7 @@ def register_basket_routes(app) -> None:
                 'element_id': int(row['element_id']),
                 'element_name': str(row['element_name']),
                 'element_type': str(row['element_type']),
+                'lead_name': str(row['lead_name'] or ''),
                 'arrival_date': str(row['arrival_date']),
                 'departure_date': str(row['departure_date']),
                 'renewal_required_at': str(row['renewal_required_at']),
@@ -85,7 +99,7 @@ def register_basket_routes(app) -> None:
         except (TypeError, ValueError):
             return JSONResponse({'ok': False, 'error': 'Invalid basket item.'}, status_code=400)
         with database.connect() as c:
-            availability._purge_expired_holds(c)
+            _purge_expired_basket_rows(c, company_id, token)
             row = _basket_row(c, company_id, token, hold_id)
             if row is None:
                 return JSONResponse({'ok': False, 'error': 'That basket item has already expired or been removed.'}, status_code=404)
@@ -110,10 +124,8 @@ def register_basket_routes(app) -> None:
         arrival = data.get('arrival_date', '')
         departure = data.get('departure_date', '')
 
-        # Validate the replacement while treating only the item being edited as
-        # replaceable. Other holds in this same basket remain locked conflicts.
         with database.connect() as c:
-            availability._purge_expired_holds(c)
+            _purge_expired_basket_rows(c, company_id, token)
             current = _basket_row(c, company_id, token, hold_id)
             if current is None:
                 return JSONResponse({'ok': False, 'error': 'That booking item has expired or been removed.'}, status_code=404)
@@ -139,23 +151,24 @@ def register_basket_routes(app) -> None:
             settings = c.execute('SELECT hold_seconds,grace_seconds FROM company_hold_settings WHERE company_id=?', (company_id,)).fetchone()
             hold_seconds = int(settings['hold_seconds']) if settings else 600
             grace_seconds = int(settings['grace_seconds']) if settings else 60
+            working = c.execute('SELECT lead_name FROM booking_requirement_sessions WHERE company_id=? AND session_token=?', (company_id, token)).fetchone()
+            lead_name = str(working['lead_name'] or '') if working else str(current['lead_name'] or '')
             now = availability._now()
             prompt = now + timedelta(seconds=hold_seconds)
             expires = prompt + timedelta(seconds=grace_seconds)
             c.execute(
-                '''UPDATE element_holds SET element_id=?,holder_user_id=?,arrival_date=?,departure_date=?,
+                '''UPDATE element_holds SET element_id=?,holder_user_id=?,arrival_date=?,departure_date=?,lead_name=?,
                    renewal_required_at=?,expires_at=?,updated_at=?
                    WHERE id=? AND company_id=? AND session_token=?''',
-                (element_id, context['user_id'], arrival, departure, prompt.isoformat(timespec='seconds'), expires.isoformat(timespec='seconds'), now.isoformat(timespec='seconds'), hold_id, company_id, token),
+                (element_id, context['user_id'], arrival, departure, lead_name, prompt.isoformat(timespec='seconds'), expires.isoformat(timespec='seconds'), now.isoformat(timespec='seconds'), hold_id, company_id, token),
             )
-            # EDIT is the only operation allowed to replace a basket item's saved
-            # party/vehicle/feature/extra snapshot.
             _snapshot_current_requirements(c, company_id, token, hold_id)
 
         after = {
             'element_id': element_id,
             'element_name': str(element['name']),
             'element_type': str(element['element_type']),
+            'lead_name': lead_name,
             'arrival_date': arrival,
             'departure_date': departure,
             'expires_at': expires.isoformat(timespec='seconds'),
