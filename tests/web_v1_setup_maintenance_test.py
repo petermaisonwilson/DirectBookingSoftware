@@ -10,6 +10,7 @@ from fastapi.testclient import TestClient
 from online.app import COOKIE_NAME, create_app
 from online.database import iso_now
 from online.webv1 import register_web_v1
+from online.webv1_features_extras_v2 import initialise_features_extras
 
 
 def login(client: TestClient) -> None:
@@ -30,6 +31,50 @@ def main() -> None:
         csrf = csrf_for(client, db)
         with db.connect() as c:
             company = int(c.execute("SELECT id FROM companies WHERE name='Forest View Campsite'").fetchone()['id'])
+
+        # Features and Extras both independently support Ask before Availability.
+        extra_save = client.post('/setup/addons', data={
+            'csrf': csrf,
+            'id': '',
+            'name': 'Test Electric Hook-up',
+            'item_kind': 'Extra',
+            'pricing_method': 'Fixed once',
+            'ask_before_availability': 'on',
+        }, follow_redirects=False)
+        assert extra_save.status_code == 303
+        with db.connect() as c:
+            extra = c.execute("SELECT id,item_kind,ask_before_availability FROM setup_addons WHERE company_id=? AND name='Test Electric Hook-up'", (company,)).fetchone()
+            assert extra is not None and str(extra['item_kind']) == 'Extra' and int(extra['ask_before_availability']) == 1
+            extra_id = int(extra['id'])
+        edit_page = client.get(f'/setup/addons?edit={extra_id}')
+        assert edit_page.status_code == 200
+        assert 'name="ask_before_availability" checked' in edit_page.text
+        initialise_features_extras(db)
+        with db.connect() as c:
+            extra = c.execute('SELECT item_kind,ask_before_availability FROM setup_addons WHERE id=?', (extra_id,)).fetchone()
+            assert extra is not None and str(extra['item_kind']) == 'Extra' and int(extra['ask_before_availability']) == 1
+        extra_to_feature = client.post('/setup/addons', data={
+            'csrf': csrf,
+            'id': str(extra_id),
+            'name': 'Test Electric Hook-up',
+            'item_kind': 'Feature',
+            'feature_group': '',
+            'pricing_method': 'Fixed once',
+            'ask_before_availability': 'on',
+        }, follow_redirects=False)
+        assert extra_to_feature.status_code == 303
+        feature_to_extra = client.post('/setup/addons', data={
+            'csrf': csrf,
+            'id': str(extra_id),
+            'name': 'Test Electric Hook-up',
+            'item_kind': 'Extra',
+            'pricing_method': 'Fixed once',
+            'ask_before_availability': 'on',
+        }, follow_redirects=False)
+        assert feature_to_extra.status_code == 303
+        with db.connect() as c:
+            extra = c.execute('SELECT item_kind,ask_before_availability FROM setup_addons WHERE id=?', (extra_id,)).fetchone()
+            assert extra is not None and str(extra['item_kind']) == 'Extra' and int(extra['ask_before_availability']) == 1
 
         # Person Type maintenance.
         assert client.post('/setup/maintenance/catalog/save', data={'csrf': csrf, 'kind': 'person', 'id': '', 'name': 'Senior Guest', 'short_name': 'SeniorG'}, follow_redirects=False).status_code == 303
@@ -102,7 +147,7 @@ def main() -> None:
             assert int(c.execute('SELECT COUNT(*) AS n FROM setup_type_addons WHERE company_id=? AND year=2033', (company,)).fetchone()['n']) == 0
             assert int(c.execute('SELECT COUNT(*) AS n FROM setup_element_addons WHERE company_id=? AND year=2033', (company,)).fetchone()['n']) == 0
             actions = {str(r['action']) for r in c.execute('SELECT action FROM audit_log WHERE company_id=?', (company,)).fetchall()}
-            required = {'PERSON_TYPE_SAVED','PERSON_DELETED','ADDON_SAVED','ADDON_DELETED','ELEMENT_DELETED','ELEMENT_TYPE_DELETED','PRICING_YEAR_DELETED','SEASON_SAVED','SEASON_DELETED','ADDON_RULES_RESET'}
+            required = {'PERSON_TYPE_SAVED','PERSON_DELETED','ADDON_SAVED','ADDON_DELETED','ELEMENT_DELETED','ELEMENT_TYPE_DELETED','PRICING_YEAR_DELETED','SEASON_SAVED','SEASON_DELETED','ADDON_RULES_RESET','FEATURE_EXTRA_SAVED'}
             assert required.issubset(actions), (required - actions)
 
     print('Direct Booking Web V1 Setup maintenance test: passed')
