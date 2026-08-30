@@ -84,12 +84,16 @@ def operating_window(database, company_id: int, year: int) -> tuple[date, date] 
         row = c.execute('SELECT MIN(start_date) AS first_day, MAX(end_date) AS last_day FROM setup_seasons WHERE company_id=? AND year=?', (company_id, year)).fetchone()
     if not row or not row['first_day'] or not row['last_day']:
         return None
-    # Season end dates are inclusive pricing dates; availability departure is exclusive.
     return _parse_day(row['first_day']), _parse_day(row['last_day']) + timedelta(days=1)
 
 
 def _purge_expired_holds(connection) -> None:
-    connection.execute('DELETE FROM element_holds WHERE expires_at<=?', (iso_now(),))
+    expired = [int(r['id']) for r in connection.execute('SELECT id FROM element_holds WHERE expires_at<=?', (iso_now(),)).fetchall()]
+    for hold_id in expired:
+        connection.execute('DELETE FROM hold_requirement_people WHERE hold_id=?', (hold_id,))
+        connection.execute('DELETE FROM hold_requirement_addons WHERE hold_id=?', (hold_id,))
+    if expired:
+        connection.execute('DELETE FROM element_holds WHERE expires_at<=?', (iso_now(),))
 
 
 def _booking_conflict(connection, company_id: int, element_id: int, start: str, end: str, exclude_booking_id: int | None = None):
@@ -178,7 +182,6 @@ def create_or_replace_hold(database, context, company_id: int, session_token: st
     now = _now(); prompt = now + timedelta(minutes=HOLD_MINUTES); expires = prompt + timedelta(minutes=HOLD_GRACE_MINUTES)
     with database.connect() as c:
         _purge_expired_holds(c)
-        # Re-check inside the write transaction for competing holds/bookings/closures.
         conflict = c.execute('''SELECT id FROM element_holds WHERE company_id=? AND element_id=? AND session_token<>?
                                 AND date(arrival_date)<date(?) AND date(departure_date)>date(?) AND expires_at>? LIMIT 1''',
                              (company_id, element_id, session_token, departure, arrival, iso_now())).fetchone()
@@ -246,6 +249,10 @@ def register_availability_routes(app) -> None:
         context, cid = _session_company(database, request); data = await form_data(request); require_csrf(context, data); token = request.cookies.get(COOKIE_NAME, '')
         with database.connect() as c:
             held = c.execute('SELECT * FROM element_holds WHERE company_id=? AND session_token=?', (cid, token)).fetchall()
+            for hold in held:
+                hold_id = int(hold['id'])
+                c.execute('DELETE FROM hold_requirement_people WHERE hold_id=?', (hold_id,))
+                c.execute('DELETE FROM hold_requirement_addons WHERE hold_id=?', (hold_id,))
             c.execute('DELETE FROM element_holds WHERE company_id=? AND session_token=?', (cid, token))
         audit(database, context, cid, 'ELEMENT_HOLDS_RELEASED', 'element_hold', token[:12], {'count': len(held)}, {'count': 0})
         return JSONResponse({'ok': True, 'released': len(held)})
