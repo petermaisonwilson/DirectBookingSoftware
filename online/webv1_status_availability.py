@@ -38,10 +38,15 @@ def availability_state(database,cid,eid,arrival,departure,*,session_token='',exc
             own=bool(session_token and str(held['session_token'])==session_token);return {'available':own,'state':'HELD_BY_YOU' if own else 'HELD','reason':'Held in your basket' if own else 'Temporarily held','hold_id':int(held['id']),'expires_at':str(held['expires_at']),'renewal_required_at':str(held['renewal_required_at'])}
     return {'available':True,'state':'AVAILABLE','reason':''}
 def available_elements(database,cid,element_type,arrival,departure,*,session_token=''):
+    try:year=date.fromisoformat(arrival).year
+    except ValueError:return []
     result=[]
     for element in rows(database,'SELECT * FROM setup_elements WHERE company_id=? AND active=1 AND element_type=? ORDER BY lower(name)',(cid,element_type)):
         state=availability_state(database,cid,int(element['id']),arrival,departure,session_token=session_token)
-        if state['available']:result.append({'id':int(element['id']),'name':str(element['name']),'element_type':str(element['element_type']),'state':state['state'],'addons':[]})
+        if not state['available']:continue
+        addons=[]
+        for addon in rows(database,'SELECT * FROM setup_addons WHERE company_id=? AND active=1 ORDER BY lower(name)',(cid,)):
+            rule=_addon_rule(database,cid,year,element,int(addon['id']));addons.append({'id':int(addon['id']),'name':str(addon['name']),'available':bool(rule['allowed'])})
+        result.append({'id':int(element['id']),'name':str(element['name']),'element_type':str(element['element_type']),'state':state['state'],'addons':addons})
     return result
-def install_status_aware_availability():
-    legacy.availability_state=availability_state;legacy.available_elements=available_elements
+def install_status_aware_availability():legacy._booking_conflict=_booking_conflict;legacy.availability_state=availability_state;legacy.available_elements=available_elements
