@@ -102,10 +102,17 @@ def seed_runtime_defaults(database) -> None:
             for name, short, colour, order_no, state, blocks, expiry in default_statuses:
                 c.execute("""INSERT INTO booking_status_definitions(company_id,name,short_name,colour,display_order,internal_state,blocks_availability,expiry_minutes,automation_config_json,active,created_at,updated_at)
                              VALUES (?,?,?,?,?,?,?,?,?,1,?,?) ON CONFLICT DO NOTHING""", (cid,name,short,colour,order_no,state,blocks,expiry,"{}",now,now))
-        c.execute("INSERT INTO setup_element_types(company_id,name,active) SELECT DISTINCT company_id,TRIM(element_type),1 FROM setup_elements WHERE TRIM(element_type)<>'' ON CONFLICT DO NOTHING")
-        c.execute("INSERT INTO setup_addon_person_pricing(company_id,addon_id,pricing_mode) SELECT company_id,id,'single' FROM setup_addons ON CONFLICT DO NOTHING")
-        c.execute("INSERT INTO setup_addon_when_options(company_id,addon_id,option_code,label,active,sort_order) SELECT company_id,id,'every_day','Every day',1,1 FROM setup_addons ON CONFLICT DO NOTHING")
-        c.execute("INSERT INTO setup_addon_when_options(company_id,addon_id,option_code,label,active,sort_order) SELECT company_id,id,'selected_days','Selected days',0,2 FROM setup_addons ON CONFLICT DO NOTHING")
+
+        element_types = c.execute("SELECT DISTINCT company_id, TRIM(element_type) AS name FROM setup_elements WHERE TRIM(element_type)<>''").fetchall()
+        for row in element_types:
+            c.execute("INSERT INTO setup_element_types(company_id,name,active) VALUES (?,?,1) ON CONFLICT DO NOTHING", (int(row["company_id"]), str(row["name"])))
+
+        addons = c.execute("SELECT company_id,id FROM setup_addons").fetchall()
+        for addon in addons:
+            cid = int(addon["company_id"]); aid = int(addon["id"])
+            c.execute("INSERT INTO setup_addon_person_pricing(company_id,addon_id,pricing_mode) VALUES (?,?,'single') ON CONFLICT(company_id,addon_id) DO NOTHING", (cid, aid))
+            c.execute("INSERT INTO setup_addon_when_options(company_id,addon_id,option_code,label,active,sort_order) VALUES (?,?,'every_day','Every day',1,1) ON CONFLICT(company_id,addon_id,option_code) DO NOTHING", (cid, aid))
+            c.execute("INSERT INTO setup_addon_when_options(company_id,addon_id,option_code,label,active,sort_order) VALUES (?,?,'selected_days','Selected days',0,2) ON CONFLICT(company_id,addon_id,option_code) DO NOTHING", (cid, aid))
 
 
 __all__ = ["DatabaseConnection", "DatabaseResult", "DatabaseRow", "IntegrityError", "connect_engine", "ensure_portable_schema", "seed_runtime_defaults"]
