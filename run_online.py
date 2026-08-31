@@ -13,12 +13,20 @@ register_web_v1(app)
 
 
 def main() -> None:
-    host = os.environ.get("DIRECTBOOKING_HOST", "127.0.0.1")
-    port = int(os.environ.get("DIRECTBOOKING_PORT", "8000"))
-    if os.environ.get("DIRECTBOOKING_NO_BROWSER") != "1":
+    settings = app.state.runtime_config
+    host = settings.host
+    port = settings.port
+    if (
+        settings.environment == "development"
+        and os.environ.get("DIRECTBOOKING_NO_BROWSER") != "1"
+    ):
         threading.Timer(1.2, lambda: webbrowser.open(f"http://{host}:{port}")).start()
-    print(f"Direct Booking Web V1 starting at http://{host}:{port}")
-    print("Press Ctrl+C in this window when you want to stop it.")
+    print(
+        f"Direct Booking Web V1 starting at http://{host}:{port} "
+        f"[{settings.environment}]"
+    )
+    if settings.environment == "development":
+        print("Press Ctrl+C in this window when you want to stop it.")
     uvicorn.run(app, host=host, port=port, log_level="info")
 
 
