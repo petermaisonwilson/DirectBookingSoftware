@@ -30,12 +30,13 @@ class DatabaseRow(Mapping[str, Any]):
 
 
 class DatabaseResult:
-    def __init__(self, result: Result[Any]):
+    def __init__(self, result: Result[Any], lastrowid: Any = None):
         self._result = result
+        self._lastrowid = lastrowid
 
     @property
     def lastrowid(self):
-        return getattr(self._result, "lastrowid", None)
+        return self._lastrowid if self._lastrowid is not None else getattr(self._result, "lastrowid", None)
 
     def fetchone(self):
         row = self._result.mappings().fetchone()
@@ -50,6 +51,7 @@ class DatabaseResult:
 
 
 _QMARK = re.compile(r"\?")
+_INSERT_TABLE = re.compile(r"^\s*INSERT\s+INTO\s+([A-Za-z_][A-Za-z0-9_]*)", re.I)
 
 
 def _named_sql(sql: str, params: Sequence[Any]) -> tuple[str, dict[str, Any]]:
@@ -85,12 +87,23 @@ class DatabaseConnection:
 
     def execute(self, sql: str, params: Sequence[Any] | Mapping[str, Any] = ()) -> DatabaseResult:
         if isinstance(params, Mapping):
-            statement = text(sql)
+            statement_sql = sql
             bound = dict(params)
         else:
             statement_sql, bound = _named_sql(sql, tuple(params))
-            statement = text(statement_sql)
-        return DatabaseResult(self._connection.execute(statement, bound))
+
+        lastrowid = None
+        insert_match = _INSERT_TABLE.match(statement_sql)
+        if self.dialect_name == "postgresql" and insert_match and " returning " not in statement_sql.lower():
+            table = insert_match.group(1)
+            if "id" in self.column_names(table):
+                statement_sql = statement_sql.rstrip().rstrip(";") + " RETURNING id"
+                raw = self._connection.execute(text(statement_sql), bound)
+                lastrowid = raw.scalar_one()
+                return DatabaseResult(raw, lastrowid)
+
+        raw = self._connection.execute(text(statement_sql), bound)
+        return DatabaseResult(raw, lastrowid)
 
     def table_exists(self, table: str) -> bool:
         return inspect(self._connection).has_table(table)
