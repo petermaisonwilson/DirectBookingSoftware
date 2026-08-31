@@ -3,6 +3,7 @@ from __future__ import annotations
 import os
 
 from sqlalchemy import delete, insert, select
+from sqlalchemy.exc import IntegrityError
 
 from online.config import load_runtime_config
 from online.db_engine import create_database_engine
@@ -80,8 +81,10 @@ def main() -> None:
         assert row["name"] == "AWS Test Site"
         assert row["email"] == "aws-test@example.com"
 
-        # Case-insensitive uniqueness must behave the same on SQLite and PostgreSQL.
-        try:
+    # PostgreSQL aborts a transaction after an integrity error, so this deliberate
+    # failure lives in its own transaction rather than contaminating other checks.
+    try:
+        with engine.begin() as connection:
             connection.execute(
                 insert(companies).values(
                     name="aws test site",
@@ -91,12 +94,11 @@ def main() -> None:
                     created_at="2026-08-31T00:00:00+00:00",
                 )
             )
-        except Exception:
-            pass
-        else:
-            raise AssertionError("Company names must be unique case-insensitively")
+    except IntegrityError:
+        pass
+    else:
+        raise AssertionError("Company names must be unique case-insensitively")
 
-    # Recreate after the deliberately failed transaction so cleanup is reliable.
     with engine.begin() as connection:
         connection.execute(delete(sessions))
         connection.execute(delete(audit_log))
