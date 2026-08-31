@@ -98,3 +98,5 @@ jobs:
       - name: Verify PostgreSQL DBS tables
         run: |
           python -c "from sqlalchemy import create_engine,inspect; import os; e=create_engine(os.environ['DIRECTBOOKING_DATABASE_URL']); t=set(inspect(e).get_table_names()); required={'companies','users','sessions','audit_log','setup_elements','setup_addons','setup_seasons','setup_person_prices','customer_records','enquiries','bookings','booking_elements','booking_status_definitions','element_closures','element_holds','company_hold_settings','booking_requirement_sessions','hold_requirement_people'}; missing=required-t; assert not missing, f'Missing PostgreSQL tables: {sorted(missing)}'; print('PostgreSQL DBS schema foundation passed')"
+      - name: PostgreSQL core runtime
+        run: python tests/aws_readiness_postgres_core_test.py
