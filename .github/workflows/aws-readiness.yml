@@ -1,0 +1,64 @@
+name: Direct Booking AWS Readiness
+
+on:
+  workflow_dispatch:
+
+jobs:
+  windows-sqlite-foundation:
+    runs-on: windows-latest
+    timeout-minutes: 15
+    steps:
+      - name: Checkout source
+        uses: actions/checkout@v4
+      - name: Set up Python 3.11
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+      - name: Install online dependencies
+        shell: pwsh
+        run: |
+          python -m pip install --upgrade pip
+          python -m pip install -r requirements-online.txt
+          if ($LASTEXITCODE -ne 0) { throw "Dependency installation failed" }
+      - name: Test environment and SQLite portability foundation
+        shell: pwsh
+        run: |
+          python tests/aws_readiness_config_test.py
+          if ($LASTEXITCODE -ne 0) { throw "AWS readiness configuration regression failed" }
+
+  linux-postgresql-foundation:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    services:
+      postgres:
+        image: postgres:16-alpine
+        env:
+          POSTGRES_USER: postgres
+          POSTGRES_PASSWORD: postgres
+          POSTGRES_DB: directbooking_test
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd "pg_isready -U postgres -d directbooking_test"
+          --health-interval 5s
+          --health-timeout 5s
+          --health-retries 10
+    env:
+      DIRECTBOOKING_ENV: test
+      DIRECTBOOKING_DATABASE_URL: postgresql+psycopg://postgres:postgres@127.0.0.1:5432/directbooking_test
+      DIRECTBOOKING_SEED_DEMO: "0"
+    steps:
+      - name: Checkout source
+        uses: actions/checkout@v4
+      - name: Set up Python 3.11
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+      - name: Install online dependencies
+        run: |
+          python -m pip install --upgrade pip
+          python -m pip install -r requirements-online.txt
+      - name: Prove Alembic migration on PostgreSQL
+        run: alembic upgrade head
+      - name: Test PostgreSQL schema and transaction behaviour
+        run: python tests/aws_readiness_postgres_test.py
