@@ -6,6 +6,9 @@ on:
     branches:
       - aws-readiness-database-portability
 
+env:
+  PYTHONPATH: .
+
 jobs:
   windows-sqlite:
     runs-on: windows-latest
