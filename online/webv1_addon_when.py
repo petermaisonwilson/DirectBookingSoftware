@@ -7,7 +7,12 @@ from .setup015_core import audit,context_for,require_csrf,rows,working_company
 from .webv1_addon_person import addon_person_mode,addon_person_rates
 
 def initialise_addon_when(database):
-    with database.connect() as c:c.execute("INSERT INTO setup_addon_when_options(company_id,addon_id,option_code,label,active,sort_order) SELECT company_id,id,'every_day','Every day',1,1 FROM setup_addons ON CONFLICT DO NOTHING");c.execute("INSERT INTO setup_addon_when_options(company_id,addon_id,option_code,label,active,sort_order) SELECT company_id,id,'selected_days','Selected days',0,2 FROM setup_addons ON CONFLICT DO NOTHING")
+    with database.connect() as c:
+        addon_rows=c.execute('SELECT company_id,id FROM setup_addons').fetchall()
+        for addon in addon_rows:
+            cid=int(addon['company_id']);aid=int(addon['id'])
+            c.execute("INSERT INTO setup_addon_when_options(company_id,addon_id,option_code,label,active,sort_order) VALUES (?,?,?,?,?,?) ON CONFLICT(company_id,addon_id,option_code) DO NOTHING",(cid,aid,'every_day','Every day',1,1))
+            c.execute("INSERT INTO setup_addon_when_options(company_id,addon_id,option_code,label,active,sort_order) VALUES (?,?,?,?,?,?) ON CONFLICT(company_id,addon_id,option_code) DO NOTHING",(cid,aid,'selected_days','Selected days',0,2))
 def when_options(database,cid,aid,*,active_only=True):
     sql='SELECT * FROM setup_addon_when_options WHERE company_id=? AND addon_id=?';params=[cid,aid]
     if active_only:sql+=' AND active=1'
