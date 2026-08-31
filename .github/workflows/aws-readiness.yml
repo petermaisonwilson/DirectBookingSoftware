@@ -1,0 +1,99 @@
+name: Direct Booking 276 Restoration Validation
+
+on:
+  workflow_dispatch:
+  push:
+    branches:
+      - aws-readiness-276-restoration
+
+env:
+  PYTHONPATH: .
+
+jobs:
+  sqlite-restoration:
+    name: sqlite-restoration-${{ matrix.os }}
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 35
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [windows-latest, ubuntu-latest]
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+      - run: python -m pip install -r requirements-online.txt
+      - name: Compile all Python source
+        run: python -m compileall -q online tests run_online.py
+      - name: AWS configuration regression
+        run: python tests/aws_readiness_config_test.py
+      - name: Web V1 foundation
+        run: python tests/web_v1_foundation_test.py
+      - name: Availability foundation
+        run: python tests/web_v1_availability_foundation_test.py
+      - name: Availability calendar accepted behaviour
+        run: python tests/web_v1_availability_calendar_test.py
+      - name: Booking workflow accepted behaviour
+        run: python tests/web_v1_booking_workflow_test.py
+      - name: Add-on picker
+        run: python tests/web_v1_addon_picker_test.py
+      - name: Add-on timing
+        run: python tests/web_v1_addon_when_test.py
+      - name: Add-on person pricing
+        run: python tests/web_v1_addon_person_pricing_test.py
+      - name: Hold settings
+        run: python tests/web_v1_hold_settings_test.py
+      - name: Pricing usability
+        run: python tests/web_v1_pricing_usability_test.py
+      - name: Full enquiry
+        run: python tests/web_v1_full_enquiry_test.py
+      - name: Enquiry search
+        run: python tests/web_v1_enquiry_search_test.py
+      - name: Ordering
+        run: python tests/web_v1_ordering_test.py
+      - name: Persistent data
+        run: python tests/web_v1_persistent_data_test.py
+      - name: Setup maintenance
+        run: python tests/web_v1_setup_maintenance_test.py
+      - name: Setup year audit
+        run: python tests/web_v1_setup_year_audit_test.py
+      - name: Client register
+        run: python tests/web_v1_client_register_test.py
+      - name: Operations navigation
+        run: python tests/web_v1_operations_navigation_test.py
+
+  postgresql-foundation:
+    name: postgresql-foundation
+    runs-on: ubuntu-latest
+    timeout-minutes: 25
+    services:
+      postgres:
+        image: postgres:16-alpine
+        env:
+          POSTGRES_USER: postgres
+          POSTGRES_PASSWORD: postgres
+          POSTGRES_DB: directbooking_test
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd "pg_isready -U postgres -d directbooking_test"
+          --health-interval 5s
+          --health-timeout 5s
+          --health-retries 10
+    env:
+      DIRECTBOOKING_ENV: test
+      DIRECTBOOKING_DATABASE_URL: postgresql+psycopg://postgres:postgres@127.0.0.1:5432/directbooking_test
+      DIRECTBOOKING_SEED_DEMO: "0"
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+      - run: python -m pip install -r requirements-online.txt
+      - name: Compile all Python source
+        run: python -m compileall -q online tests run_online.py
+      - name: Create portable core schema
+        run: alembic upgrade head
+      - name: Verify PostgreSQL core tables
+        run: python -c "from sqlalchemy import create_engine,inspect; import os; e=create_engine(os.environ['DIRECTBOOKING_DATABASE_URL']); t=set(inspect(e).get_table_names()); assert {'companies','users','sessions','audit_log'}.issubset(t); print('PostgreSQL foundation passed')"
