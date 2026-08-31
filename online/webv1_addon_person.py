@@ -2,7 +2,13 @@ from __future__ import annotations
 from .setup015_core import one, rows
 
 def initialise_addon_person(database)->None:
-    with database.connect() as c:c.execute("INSERT INTO setup_addon_person_pricing(company_id,addon_id,pricing_mode) SELECT company_id,id,'single' FROM setup_addons ON CONFLICT DO NOTHING")
+    addons=rows(database,'SELECT company_id,id FROM setup_addons')
+    with database.connect() as c:
+        for addon in addons:
+            c.execute(
+                'INSERT INTO setup_addon_person_pricing(company_id,addon_id,pricing_mode) VALUES (?,?,?) ON CONFLICT(company_id,addon_id) DO NOTHING',
+                (int(addon['company_id']),int(addon['id']),'single'),
+            )
 def addon_person_mode(database,company_id:int,addon_id:int)->str:
     row=one(database,'SELECT pricing_mode FROM setup_addon_person_pricing WHERE company_id=? AND addon_id=?',(company_id,addon_id));return str(row['pricing_mode']) if row else 'single'
 def addon_person_rates(database,company_id:int,addon_id:int,year:int)->dict[int,float]:
