@@ -4,31 +4,48 @@ on:
   workflow_dispatch:
 
 jobs:
-  windows-sqlite-foundation:
+  windows-sqlite:
     runs-on: windows-latest
-    timeout-minutes: 15
+    timeout-minutes: 25
     steps:
-      - name: Checkout source
-        uses: actions/checkout@v4
-      - name: Set up Python 3.11
-        uses: actions/setup-python@v5
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
         with:
           python-version: "3.11"
-      - name: Install online dependencies
+      - name: Install dependencies
         shell: pwsh
         run: |
           python -m pip install --upgrade pip
           python -m pip install -r requirements-online.txt
-          if ($LASTEXITCODE -ne 0) { throw "Dependency installation failed" }
-      - name: Test environment and SQLite portability foundation
-        shell: pwsh
-        run: |
-          python tests/aws_readiness_config_test.py
-          if ($LASTEXITCODE -ne 0) { throw "AWS readiness configuration regression failed" }
+      - name: Configuration and migration regression
+        run: python tests/aws_readiness_config_test.py
+      - name: Existing DBS availability regression
+        run: python tests/web_v1_availability_calendar_test.py
+      - name: Existing DBS booking workflow regression
+        run: python tests/web_v1_booking_workflow_test.py
 
-  linux-postgresql-foundation:
+  linux-sqlite:
     runs-on: ubuntu-latest
-    timeout-minutes: 15
+    timeout-minutes: 25
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+      - name: Install dependencies
+        run: |
+          python -m pip install --upgrade pip
+          python -m pip install -r requirements-online.txt
+      - name: Configuration and migration regression
+        run: python tests/aws_readiness_config_test.py
+      - name: Existing DBS availability regression on Linux
+        run: python tests/web_v1_availability_calendar_test.py
+      - name: Existing DBS booking workflow regression on Linux
+        run: python tests/web_v1_booking_workflow_test.py
+
+  linux-postgresql:
+    runs-on: ubuntu-latest
+    timeout-minutes: 25
     services:
       postgres:
         image: postgres:16-alpine
@@ -48,17 +65,17 @@ jobs:
       DIRECTBOOKING_DATABASE_URL: postgresql+psycopg://postgres:postgres@127.0.0.1:5432/directbooking_test
       DIRECTBOOKING_SEED_DEMO: "0"
     steps:
-      - name: Checkout source
-        uses: actions/checkout@v4
-      - name: Set up Python 3.11
-        uses: actions/setup-python@v5
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
         with:
           python-version: "3.11"
-      - name: Install online dependencies
+      - name: Install dependencies
         run: |
           python -m pip install --upgrade pip
           python -m pip install -r requirements-online.txt
-      - name: Prove Alembic migration on PostgreSQL
+      - name: Prove complete Alembic schema on PostgreSQL
         run: alembic upgrade head
-      - name: Test PostgreSQL schema and transaction behaviour
+      - name: PostgreSQL core transaction regression
         run: python tests/aws_readiness_postgres_test.py
+      - name: Import complete DBS Web V1 on Linux/PostgreSQL environment
+        run: python -c "from online.app import create_app; from online.webv1 import register_web_v1; print('DBS Linux/PostgreSQL imports: passed')"
