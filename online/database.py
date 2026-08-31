@@ -1,79 +1,17 @@
 from __future__ import annotations
 
 import json
-import sqlite3
-from contextlib import contextmanager
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
-from typing import Any, Iterator
+from typing import Any
 
+from sqlalchemy import insert
+
+from .config import RuntimeConfig, load_runtime_config
+from .db_compat import connect_engine
+from .db_engine import create_database_engine
+from .db_schema import audit_log, companies, metadata, sessions, users
 from .security import hash_password, new_token
-
-SCHEMA = """
-PRAGMA foreign_keys = ON;
-
-CREATE TABLE IF NOT EXISTS companies (
-    id INTEGER PRIMARY KEY AUTOINCREMENT,
-    name TEXT NOT NULL UNIQUE COLLATE NOCASE,
-    contact_email TEXT NOT NULL DEFAULT '',
-    phone TEXT NOT NULL DEFAULT '',
-    active INTEGER NOT NULL DEFAULT 1,
-    created_at TEXT NOT NULL
-);
-
-CREATE TABLE IF NOT EXISTS users (
-    id INTEGER PRIMARY KEY AUTOINCREMENT,
-    company_id INTEGER,
-    role TEXT NOT NULL CHECK(role IN ('supervisor','operator','customer')),
-    first_name TEXT NOT NULL,
-    last_name TEXT NOT NULL,
-    email TEXT NOT NULL UNIQUE COLLATE NOCASE,
-    password_hash TEXT NOT NULL,
-    active INTEGER NOT NULL DEFAULT 1,
-    created_at TEXT NOT NULL,
-    FOREIGN KEY(company_id) REFERENCES companies(id)
-);
-
-CREATE TABLE IF NOT EXISTS sessions (
-    token TEXT PRIMARY KEY,
-    user_id INTEGER NOT NULL,
-    acting_company_id INTEGER,
-    csrf_token TEXT NOT NULL,
-    created_at TEXT NOT NULL,
-    expires_at TEXT NOT NULL,
-    FOREIGN KEY(user_id) REFERENCES users(id),
-    FOREIGN KEY(acting_company_id) REFERENCES companies(id)
-);
-
-CREATE TABLE IF NOT EXISTS audit_log (
-    id INTEGER PRIMARY KEY AUTOINCREMENT,
-    company_id INTEGER,
-    actor_user_id INTEGER,
-    actor_role TEXT,
-    acting_company_id INTEGER,
-    action TEXT NOT NULL,
-    entity_type TEXT NOT NULL,
-    entity_id TEXT,
-    before_json TEXT,
-    after_json TEXT,
-    created_at TEXT NOT NULL,
-    FOREIGN KEY(company_id) REFERENCES companies(id),
-    FOREIGN KEY(actor_user_id) REFERENCES users(id),
-    FOREIGN KEY(acting_company_id) REFERENCES companies(id)
-);
-
-CREATE TRIGGER IF NOT EXISTS audit_log_no_update
-BEFORE UPDATE ON audit_log
-BEGIN
-    SELECT RAISE(ABORT, 'Audit log is append-only');
-END;
-
-CREATE TRIGGER IF NOT EXISTS audit_log_no_delete
-BEFORE DELETE ON audit_log
-BEGIN
-    SELECT RAISE(ABORT, 'Audit log is append-only');
-END;
-"""
 
 
 def utc_now() -> datetime:
@@ -85,34 +23,47 @@ def iso_now() -> str:
 
 
 class OnlineDatabase:
-    """Build 013 local data layer.
+    """Database-neutral DBS runtime.
 
-    SQLite is deliberately used only for local development. The rest of the
-    application talks through this class so the storage layer can be replaced
-    by PostgreSQL when the VPS is introduced.
+    SQLite remains the default for local Windows development. PostgreSQL uses
+    the same runtime API in hosted environments. Schema changes belong to
+    Alembic migrations rather than feature-page startup code.
     """
 
-    def __init__(self, path: str | Path):
-        self.path = Path(path)
-        self.path.parent.mkdir(parents=True, exist_ok=True)
+    def __init__(self, source: str | Path | RuntimeConfig | None = None):
+        if isinstance(source, RuntimeConfig):
+            self.config = source
+        elif source is None:
+            self.config = load_runtime_config()
+        else:
+            path = Path(source)
+            path.parent.mkdir(parents=True, exist_ok=True)
+            base = load_runtime_config()
+            self.config = RuntimeConfig(
+                environment=base.environment,
+                database_url=f"sqlite:///{path.as_posix()}",
+                seed_demo=base.seed_demo,
+                secure_cookies=base.secure_cookies,
+                host=base.host,
+                port=base.port,
+            )
+        self.engine = create_database_engine(self.config)
+        self.path = self._sqlite_path()
 
-    @contextmanager
-    def connect(self) -> Iterator[sqlite3.Connection]:
-        connection = sqlite3.connect(self.path)
-        connection.row_factory = sqlite3.Row
-        connection.execute("PRAGMA foreign_keys = ON")
-        try:
-            yield connection
-            connection.commit()
-        except Exception:
-            connection.rollback()
-            raise
-        finally:
-            connection.close()
+    def _sqlite_path(self) -> Path | None:
+        prefix = "sqlite:///"
+        if self.config.database_url.startswith(prefix):
+            return Path(self.config.database_url[len(prefix):])
+        return None
+
+    def connect(self):
+        return connect_engine(self.engine)
 
     def initialise(self, *, seed_demo: bool = True) -> None:
-        with self.connect() as connection:
-            connection.executescript(SCHEMA)
+        # Local/test SQLite remains self-contained. Hosted PostgreSQL is created
+        # and upgraded only by Alembic before the application starts.
+        if self.engine.dialect.name == "sqlite":
+            metadata.create_all(self.engine)
         if seed_demo:
             self.seed_demo_data()
 
@@ -122,33 +73,48 @@ class OnlineDatabase:
             if existing:
                 return
             now = iso_now()
-            forest = connection.execute(
-                "INSERT INTO companies(name,contact_email,phone,created_at) VALUES (?,?,?,?)",
-                ("Forest View Campsite", "bookings@forestview.test", "+33 2 00 00 00 01", now),
-            ).lastrowid
-            riverside = connection.execute(
-                "INSERT INTO companies(name,contact_email,phone,created_at) VALUES (?,?,?,?)",
-                ("Riverside Cabins", "hello@riverside.test", "+33 2 00 00 00 02", now),
-            ).lastrowid
-            users = [
+            forest = connection._connection.execute(
+                insert(companies).values(
+                    name="Forest View Campsite",
+                    contact_email="bookings@forestview.test",
+                    phone="+33 2 00 00 00 01",
+                    active=1,
+                    created_at=now,
+                ).returning(companies.c.id)
+            ).scalar_one()
+            riverside = connection._connection.execute(
+                insert(companies).values(
+                    name="Riverside Cabins",
+                    contact_email="hello@riverside.test",
+                    phone="+33 2 00 00 00 02",
+                    active=1,
+                    created_at=now,
+                ).returning(companies.c.id)
+            ).scalar_one()
+            demo_users = [
                 (None, "supervisor", "Peter", "Supervisor", "supervisor@directbooking.test", "Supervisor013!"),
                 (forest, "operator", "Forest", "Operator", "operator@forestview.test", "Operator013!"),
                 (riverside, "operator", "Riverside", "Operator", "operator@riverside.test", "Operator013!"),
                 (forest, "customer", "Test", "Customer", "customer@forestview.test", "Customer013!"),
             ]
-            for company_id, role, first_name, last_name, email, password in users:
-                connection.execute(
-                    """
-                    INSERT INTO users(company_id,role,first_name,last_name,email,password_hash,created_at)
-                    VALUES (?,?,?,?,?,?,?)
-                    """,
-                    (company_id, role, first_name, last_name, email, hash_password(password), now),
+            for company_id, role, first_name, last_name, email, password in demo_users:
+                connection._connection.execute(
+                    insert(users).values(
+                        company_id=company_id,
+                        role=role,
+                        first_name=first_name,
+                        last_name=last_name,
+                        email=email,
+                        password_hash=hash_password(password),
+                        active=1,
+                        created_at=now,
+                    )
                 )
 
     def user_by_email(self, email: str):
         with self.connect() as connection:
             return connection.execute(
-                "SELECT * FROM users WHERE email=? COLLATE NOCASE AND active=1", (email.strip(),)
+                "SELECT * FROM users WHERE lower(email)=lower(?) AND active=1", (email.strip(),)
             ).fetchone()
 
     def create_session(self, user_id: int) -> dict[str, str]:
@@ -202,7 +168,7 @@ class OnlineDatabase:
 
     def companies(self):
         with self.connect() as connection:
-            return connection.execute("SELECT * FROM companies WHERE active=1 ORDER BY name COLLATE NOCASE").fetchall()
+            return connection.execute("SELECT * FROM companies WHERE active=1 ORDER BY lower(name)").fetchall()
 
     def company(self, company_id: int):
         with self.connect() as connection:
@@ -261,10 +227,10 @@ class OnlineDatabase:
             clauses.append("a.company_id=?")
             params.append(int(company_id))
         if date_from:
-            clauses.append("date(a.created_at) >= date(?)")
+            clauses.append("CAST(a.created_at AS DATE) >= CAST(? AS DATE)")
             params.append(date_from)
         if date_to:
-            clauses.append("date(a.created_at) <= date(?)")
+            clauses.append("CAST(a.created_at AS DATE) <= CAST(? AS DATE)")
             params.append(date_to)
         where = " WHERE " + " AND ".join(clauses) if clauses else ""
         with self.connect() as connection:
