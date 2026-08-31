@@ -1,7 +1,6 @@
 from __future__ import annotations
 
 import html
-import os
 from pathlib import Path
 from urllib.parse import parse_qs
 
@@ -9,6 +8,7 @@ from fastapi import FastAPI, HTTPException, Request
 from fastapi.responses import HTMLResponse, RedirectResponse
 
 from . import BUILD
+from .config import RuntimeConfig, load_runtime_config
 from .database import OnlineDatabase
 from .security import verify_password
 
@@ -95,12 +95,34 @@ def layout(title: str, body: str, context=None) -> str:
 {support}<main>{body}</main></body></html>"""
 
 
-def create_app(db_path: str | Path | None = None, *, seed_demo: bool = True) -> FastAPI:
-    path = Path(db_path or os.environ.get("DIRECTBOOKING_DB", "online_data/direct_booking_online_dev.db"))
-    database = OnlineDatabase(path)
-    database.initialise(seed_demo=seed_demo)
+def _sqlite_path(settings: RuntimeConfig, db_path: str | Path | None) -> Path:
+    if db_path is not None:
+        return Path(db_path)
+    prefix = "sqlite:///"
+    if not settings.database_url.startswith(prefix):
+        raise RuntimeError(
+            "The legacy DBS runtime is still being converted to PostgreSQL. "
+            "Use SQLite for the application until the portability milestone is complete."
+        )
+    return Path(settings.database_url[len(prefix):])
+
+
+def create_app(
+    db_path: str | Path | None = None,
+    *,
+    seed_demo: bool | None = None,
+    runtime_config: RuntimeConfig | None = None,
+) -> FastAPI:
+    settings = runtime_config or load_runtime_config()
+    actual_seed_demo = settings.seed_demo if seed_demo is None else bool(seed_demo)
+    if settings.production and actual_seed_demo:
+        raise RuntimeError("Demo data is forbidden in production")
+
+    database = OnlineDatabase(_sqlite_path(settings, db_path))
+    database.initialise(seed_demo=actual_seed_demo)
     app = FastAPI(title=f"Direct Booking Software Online Build {BUILD}")
     app.state.database = database
+    app.state.runtime_config = settings
 
     def context_from(request: Request):
         return database.session_context(request.cookies.get(COOKIE_NAME))
@@ -124,7 +146,12 @@ def create_app(db_path: str | Path | None = None, *, seed_demo: bool = True) -> 
 
     @app.get("/health")
     def health():
-        return {"status": "ok", "build": BUILD, "mode": "online-foundation"}
+        return {
+            "status": "ok",
+            "build": BUILD,
+            "mode": "online-foundation",
+            "environment": settings.environment,
+        }
 
     @app.get("/", response_class=HTMLResponse)
     def home(request: Request):
@@ -135,19 +162,27 @@ def create_app(db_path: str | Path | None = None, *, seed_demo: bool = True) -> 
     @app.get("/login", response_class=HTMLResponse)
     def login_page(request: Request, error: str = ""):
         error_html = f'<div class="error">{esc(error)}</div>' if error else ""
-        body = f"""
-        <div class="login card"><h1>Online Build {BUILD}</h1>
-        <p>This is the first browser-based Direct Booking foundation running locally on your PC.</p>{error_html}
-        <form method="post" action="/login">
-          <label>Email</label><input name="email" type="email" required autofocus>
-          <label>Password</label><input name="password" type="password" required>
-          <p><button type="submit">Log in</button></p>
-        </form>
+        demo_html = ""
+        if actual_seed_demo:
+            demo_html = """
         <hr><p><strong>Local Build 013 test accounts</strong></p>
         <p><code>supervisor@directbooking.test</code> / <code>Supervisor013!</code><br>
         <code>operator@forestview.test</code> / <code>Operator013!</code><br>
         <code>customer@forestview.test</code> / <code>Customer013!</code></p>
-        <p class="muted">These accounts are for local development only and will not be used on the live server.</p></div>"""
+        <p class="muted">These accounts are for local development only and are never enabled in production.</p>"""
+        environment_text = (
+            "Direct Booking Software"
+            if settings.production
+            else f"Direct Booking Software — {esc(settings.environment.title())}"
+        )
+        body = f"""
+        <div class="login card"><h1>Online Build {BUILD}</h1>
+        <p>{environment_text}</p>{error_html}
+        <form method="post" action="/login">
+          <label>Email</label><input name="email" type="email" required autofocus>
+          <label>Password</label><input name="password" type="password" required>
+          <p><button type="submit">Log in</button></p>
+        </form>{demo_html}</div>"""
         return layout("Login", body)
 
     @app.post("/login")
@@ -161,7 +196,14 @@ def create_app(db_path: str | Path | None = None, *, seed_demo: bool = True) -> 
         session = database.create_session(int(user["id"]))
         database.write_audit(action="LOGIN_SUCCESS", entity_type="user", entity_id=user["id"], actor_user_id=user["id"], actor_role=user["role"], company_id=user["company_id"], acting_company_id=None, after={"email": user["email"], "role": user["role"]})
         response = RedirectResponse("/dashboard", status_code=303)
-        response.set_cookie(COOKIE_NAME, session["token"], httponly=True, samesite="lax", max_age=12 * 3600)
+        response.set_cookie(
+            COOKIE_NAME,
+            session["token"],
+            httponly=True,
+            secure=settings.secure_cookies,
+            samesite="lax",
+            max_age=12 * 3600,
+        )
         return response
 
     @app.post("/logout")
@@ -170,7 +212,9 @@ def create_app(db_path: str | Path | None = None, *, seed_demo: bool = True) -> 
         if token and context:
             database.write_audit(action="LOGOUT", entity_type="user", entity_id=context["user_id"], actor_user_id=context["user_id"], actor_role=context["role"], company_id=context["company_id"], acting_company_id=context["acting_company_id"])
             database.delete_session(token)
-        response = RedirectResponse("/login", status_code=303); response.delete_cookie(COOKIE_NAME); return response
+        response = RedirectResponse("/login", status_code=303)
+        response.delete_cookie(COOKIE_NAME, secure=settings.secure_cookies, samesite="lax")
+        return response
 
     @app.get("/dashboard", response_class=HTMLResponse)
     def dashboard(request: Request):
@@ -234,7 +278,7 @@ def create_app(db_path: str | Path | None = None, *, seed_demo: bool = True) -> 
         for row in audit_rows:
             actor="System / unknown" if not row["actor_user_id"] else f'{row["first_name"]} {row["last_name"]} ({role_label(row["actor_role"])})'; client=row["company_name"] or "—"; acting=row["acting_company_name"] or "—"
             table_rows.append(f'<tr><td>{esc(row["created_at"])}</td><td>{esc(client)}</td><td>{esc(actor)}</td><td>{esc(acting)}</td><td>{esc(row["action"])}</td><td>{esc(row["entity_type"])} {esc(row["entity_id"] or "")}</td><td><small>{esc(row["before_json"] or "")}</small></td><td><small>{esc(row["after_json"] or "")}</small></td></tr>')
-        body=f"""<h1>Global Audit</h1><div class="card"><p><strong>Supervisor only.</strong> Search by client and date.</p><form method="get" action="/audit"><div class="grid"><div><label>Client</label><select name="company_id">{''.join(options)}</select></div><div><label>From date</label><input type="date" name="date_from" value="{esc(date_from)}"></div><div><label>To date</label><input type="date" name="date_to" value="{esc(date_to)}"></div></div><p><button type="submit">Search Audit</button> <a class="button secondary" href="/audit">Clear</a></p></form></div><div class="card" style="overflow:auto"><table><thead><tr><th>When</th><th>Client</th><th>User</th><th>Acting in</th><th>Action</th><th>Item</th><th>Before</th><th>After</th></tr></thead><tbody>{''.join(table_rows) if table_rows else '<tr><td colspan="8">No audit entries match.</td></tr>'}</tbody></table></div>"""
+        body=f"""<h1>Global Audit</h1><div class="card"><p><strong>Supervisor only.</strong> Search by client and date.</p><form method="get" action="/audit"><div class="grid"><div><label>Client</label><select name="company_id">{''.join(options)}</select></div><div><label>From date</label><input type="date" name="date_from" value="{esc(date_from)}"></div><div><label>To date</label><input type="date" name="date_to" value="{esc(date_to)}"></div></div><p><button type="submit">Search Audit</button> <a class="button secondary" href="/audit">Clear</a></p></form></div><div class="card" style="overflow:auto"><table><thead><tr><th>When</th><th>Client</th><th>User</th><th>Acting in</th><th>Action</th><th>Item</th><th>Before</th><th>After</th></tr></thead><tbody>{''.join(table_rows) if table_rows else '<tr><td colspan="8">No audit entries match.</td></tr></tbody></table></div>"""
         return layout("Global Audit",body,context)
 
     return app
