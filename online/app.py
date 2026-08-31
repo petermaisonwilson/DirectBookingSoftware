@@ -95,18 +95,6 @@ def layout(title: str, body: str, context=None) -> str:
 {support}<main>{body}</main></body></html>"""
 
 
-def _sqlite_path(settings: RuntimeConfig, db_path: str | Path | None) -> Path:
-    if db_path is not None:
-        return Path(db_path)
-    prefix = "sqlite:///"
-    if not settings.database_url.startswith(prefix):
-        raise RuntimeError(
-            "The legacy DBS runtime is still being converted to PostgreSQL. "
-            "Use SQLite for the application until the portability milestone is complete."
-        )
-    return Path(settings.database_url[len(prefix):])
-
-
 def create_app(
     db_path: str | Path | None = None,
     *,
@@ -118,7 +106,7 @@ def create_app(
     if settings.production and actual_seed_demo:
         raise RuntimeError("Demo data is forbidden in production")
 
-    database = OnlineDatabase(_sqlite_path(settings, db_path))
+    database = OnlineDatabase(db_path if db_path is not None else settings)
     database.initialise(seed_demo=actual_seed_demo)
     app = FastAPI(title=f"Direct Booking Software Online Build {BUILD}")
     app.state.database = database
@@ -151,6 +139,7 @@ def create_app(
             "build": BUILD,
             "mode": "online-foundation",
             "environment": settings.environment,
+            "database": database.engine.dialect.name,
         }
 
     @app.get("/", response_class=HTMLResponse)
@@ -196,14 +185,7 @@ def create_app(
         session = database.create_session(int(user["id"]))
         database.write_audit(action="LOGIN_SUCCESS", entity_type="user", entity_id=user["id"], actor_user_id=user["id"], actor_role=user["role"], company_id=user["company_id"], acting_company_id=None, after={"email": user["email"], "role": user["role"]})
         response = RedirectResponse("/dashboard", status_code=303)
-        response.set_cookie(
-            COOKIE_NAME,
-            session["token"],
-            httponly=True,
-            secure=settings.secure_cookies,
-            samesite="lax",
-            max_age=12 * 3600,
-        )
+        response.set_cookie(COOKIE_NAME, session["token"], httponly=True, secure=settings.secure_cookies, samesite="lax", max_age=12 * 3600)
         return response
 
     @app.post("/logout")
@@ -278,9 +260,7 @@ def create_app(
         for row in audit_rows:
             actor="System / unknown" if not row["actor_user_id"] else f'{row["first_name"]} {row["last_name"]} ({role_label(row["actor_role"])})'; client=row["company_name"] or "—"; acting=row["acting_company_name"] or "—"
             table_rows.append(f'<tr><td>{esc(row["created_at"])}</td><td>{esc(client)}</td><td>{esc(actor)}</td><td>{esc(acting)}</td><td>{esc(row["action"])}</td><td>{esc(row["entity_type"])} {esc(row["entity_id"] or "")}</td><td><small>{esc(row["before_json"] or "")}</small></td><td><small>{esc(row["after_json"] or "")}</small></td></tr>')
-        empty_row = '<tr><td colspan="8">No audit entries match.</td></tr>'
-        visible_rows = ''.join(table_rows) if table_rows else empty_row
-        body=f"""<h1>Global Audit</h1><div class="card"><p><strong>Supervisor only.</strong> Search by client and date.</p><form method="get" action="/audit"><div class="grid"><div><label>Client</label><select name="company_id">{''.join(options)}</select></div><div><label>From date</label><input type="date" name="date_from" value="{esc(date_from)}"></div><div><label>To date</label><input type="date" name="date_to" value="{esc(date_to)}"></div></div><p><button type="submit">Search Audit</button> <a class="button secondary" href="/audit">Clear</a></p></form></div><div class="card" style="overflow:auto"><table><thead><tr><th>When</th><th>Client</th><th>User</th><th>Acting in</th><th>Action</th><th>Item</th><th>Before</th><th>After</th></tr></thead><tbody>{visible_rows}</tbody></table></div>"""
+        body=f"""<h1>Global Audit</h1><div class="card"><p><strong>Supervisor only.</strong> Search by client and date.</p><form method="get" action="/audit"><div class="grid"><div><label>Client</label><select name="company_id">{''.join(options)}</select></div><div><label>From date</label><input type="date" name="date_from" value="{esc(date_from)}"></div><div><label>To date</label><input type="date" name="date_to" value="{esc(date_to)}"></div></div><p><button type="submit">Search Audit</button> <a class="button secondary" href="/audit">Clear</a></p></form></div><div class="card" style="overflow:auto"><table><thead><tr><th>When</th><th>Client</th><th>User</th><th>Acting in</th><th>Action</th><th>Item</th><th>Before</th><th>After</th></tr></thead><tbody>{''.join(table_rows) if table_rows else '<tr><td colspan="8">No audit entries match.</td></tr>'}</tbody></table></div>"""
         return layout("Global Audit",body,context)
 
     return app
