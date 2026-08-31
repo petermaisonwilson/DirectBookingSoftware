@@ -10,9 +10,16 @@ env:
   PYTHONPATH: .
 
 jobs:
-  windows-sqlite:
-    runs-on: windows-latest
-    timeout-minutes: 25
+  sqlite-diagnostics:
+    name: sqlite-diagnostics-${{ matrix.os }}
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 35
+    strategy:
+      fail-fast: false
+      matrix:
+        os:
+          - windows-latest
+          - ubuntu-latest
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-python@v5
@@ -21,24 +28,101 @@ jobs:
       - run: python -m pip install -r requirements-online.txt
       - name: Compile all Python source
         run: python -m compileall -q online tests run_online.py
-      - run: python tests/aws_readiness_config_test.py
-      - run: python tests/web_v1_availability_calendar_test.py
-      - run: python tests/web_v1_booking_workflow_test.py
 
-  linux-sqlite:
-    runs-on: ubuntu-latest
-    timeout-minutes: 25
-    steps:
-      - uses: actions/checkout@v4
-      - uses: actions/setup-python@v5
-        with:
-          python-version: "3.11"
-      - run: python -m pip install -r requirements-online.txt
-      - name: Compile all Python source
-        run: python -m compileall -q online tests run_online.py
-      - run: python tests/aws_readiness_config_test.py
-      - run: python tests/web_v1_availability_calendar_test.py
-      - run: python tests/web_v1_booking_workflow_test.py
+      - id: config
+        name: AWS configuration regression
+        continue-on-error: true
+        run: python tests/aws_readiness_config_test.py
+      - id: foundation
+        name: Web V1 foundation
+        continue-on-error: true
+        run: python tests/web_v1_foundation_test.py
+      - id: availability_foundation
+        name: Availability foundation
+        continue-on-error: true
+        run: python tests/web_v1_availability_foundation_test.py
+      - id: availability_calendar
+        name: Availability calendar accepted behaviour
+        continue-on-error: true
+        run: python tests/web_v1_availability_calendar_test.py
+      - id: booking_workflow
+        name: Booking workflow accepted behaviour
+        continue-on-error: true
+        run: python tests/web_v1_booking_workflow_test.py
+      - id: addons_picker
+        name: Add-on picker
+        continue-on-error: true
+        run: python tests/web_v1_addon_picker_test.py
+      - id: addons_when
+        name: Add-on timing
+        continue-on-error: true
+        run: python tests/web_v1_addon_when_test.py
+      - id: addons_person
+        name: Add-on person pricing
+        continue-on-error: true
+        run: python tests/web_v1_addon_person_pricing_test.py
+      - id: hold_settings
+        name: Hold settings
+        continue-on-error: true
+        run: python tests/web_v1_hold_settings_test.py
+      - id: pricing
+        name: Pricing usability
+        continue-on-error: true
+        run: python tests/web_v1_pricing_usability_test.py
+      - id: enquiry
+        name: Full enquiry
+        continue-on-error: true
+        run: python tests/web_v1_full_enquiry_test.py
+      - id: enquiry_search
+        name: Enquiry search
+        continue-on-error: true
+        run: python tests/web_v1_enquiry_search_test.py
+      - id: ordering
+        name: Ordering
+        continue-on-error: true
+        run: python tests/web_v1_ordering_test.py
+      - id: persistent
+        name: Persistent data
+        continue-on-error: true
+        run: python tests/web_v1_persistent_data_test.py
+      - id: setup_maintenance
+        name: Setup maintenance
+        continue-on-error: true
+        run: python tests/web_v1_setup_maintenance_test.py
+      - id: setup_year
+        name: Setup year audit
+        continue-on-error: true
+        run: python tests/web_v1_setup_year_audit_test.py
+      - id: client_register
+        name: Client register
+        continue-on-error: true
+        run: python tests/web_v1_client_register_test.py
+      - id: navigation
+        name: Operations navigation
+        continue-on-error: true
+        run: python tests/web_v1_operations_navigation_test.py
+
+      - name: Fail if any SQLite diagnostic failed
+        if: >-
+          steps.config.outcome == 'failure' ||
+          steps.foundation.outcome == 'failure' ||
+          steps.availability_foundation.outcome == 'failure' ||
+          steps.availability_calendar.outcome == 'failure' ||
+          steps.booking_workflow.outcome == 'failure' ||
+          steps.addons_picker.outcome == 'failure' ||
+          steps.addons_when.outcome == 'failure' ||
+          steps.addons_person.outcome == 'failure' ||
+          steps.hold_settings.outcome == 'failure' ||
+          steps.pricing.outcome == 'failure' ||
+          steps.enquiry.outcome == 'failure' ||
+          steps.enquiry_search.outcome == 'failure' ||
+          steps.ordering.outcome == 'failure' ||
+          steps.persistent.outcome == 'failure' ||
+          steps.setup_maintenance.outcome == 'failure' ||
+          steps.setup_year.outcome == 'failure' ||
+          steps.client_register.outcome == 'failure' ||
+          steps.navigation.outcome == 'failure'
+        run: exit 1
 
   linux-postgresql:
     runs-on: ubuntu-latest
