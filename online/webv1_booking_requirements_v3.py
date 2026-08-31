@@ -44,3 +44,18 @@ def register_booking_requirements_v3(app):
             with database.connect() as c:c.execute('UPDATE element_holds SET lead_name=?,updated_at=CURRENT_TIMESTAMP WHERE id=? AND company_id=? AND session_token=?',(lead,edit,cid,token));item=c.execute('SELECT e.element_type FROM element_holds h JOIN setup_elements e ON e.id=h.element_id AND e.company_id=h.company_id WHERE h.id=? AND h.company_id=? AND h.session_token=?',(edit,cid,token)).fetchone()
             return RedirectResponse(f'/availability/calendar-v2?element_type={quote_plus(str(item["element_type"])) if item else ""}&arrival={arrival}&departure={departure}&edit_hold={edit}',303)
         return RedirectResponse(f'/availability/calendar-v2?arrival={arrival}&departure={departure}',303)
+
+def install_booking_requirements_v3_form(app) -> None:
+    @app.middleware('http')
+    async def booking_requirements_v3_form(request, call_next):
+        response = await call_next(request)
+        if request.url.path != '/availability/start' or response.status_code >= 400 or 'text/html' not in response.headers.get('content-type', ''):
+            return response
+        body = b''
+        async for chunk in response.body_iterator:
+            body += chunk if isinstance(chunk, bytes) else str(chunk).encode('utf-8')
+        text = body.decode('utf-8')
+        headers = {k: v for k, v in response.headers.items() if k.lower() not in {'content-length', 'content-type'}}
+        text = text.replace('action="/availability/requirements-v2"', 'action="/availability/requirements-v3"', 1)
+        from fastapi.responses import Response
+        return Response(content=text, status_code=response.status_code, headers=headers, media_type='text/html')
