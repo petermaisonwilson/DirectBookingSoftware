@@ -41,6 +41,9 @@ def initialise_setup015(database) -> None:
     initialise_setup014(database)
     with database.connect() as connection:
         connection.executescript(BUILD015_SCHEMA)
+        columns = {str(r['name']) for r in connection.execute('PRAGMA table_info(setup_person_limits)').fetchall()}
+        if 'min_count' not in columns:
+            connection.execute('ALTER TABLE setup_person_limits ADD COLUMN min_count INTEGER NOT NULL DEFAULT 0')
         connection.execute(
             """
             INSERT OR IGNORE INTO setup_element_types(company_id, name, active)
@@ -62,6 +65,15 @@ def copy_previous_year(database, company_id: int, target_year: int) -> int:
             connection.execute(
                 "INSERT INTO setup_person_prices(company_id,year,element_id,person_type_id,rate) VALUES (?,?,?,?,?)",
                 (company_id, target_year, row["element_id"], row["person_type_id"], row["rate"]),
+            )
+        minima = connection.execute(
+            "SELECT element_id,person_type_id,min_count FROM setup_person_limits WHERE company_id=? AND year=?",
+            (company_id, source_year),
+        ).fetchall()
+        for row in minima:
+            connection.execute(
+                "UPDATE setup_person_limits SET min_count=? WHERE company_id=? AND year=? AND element_id=? AND person_type_id=?",
+                (row["min_count"], company_id, target_year, row["element_id"], row["person_type_id"]),
             )
     return source_year
 
