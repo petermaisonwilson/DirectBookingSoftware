@@ -153,7 +153,7 @@ def main() -> None:
         assert 'Smith — Current Pitch 2' in progress_calendar.text and 'Jones — Current Pitch 1' in progress_calendar.text
         assert 'Current Caravan 1' in progress_calendar.text and 'Current Pets 1' in progress_calendar.text
 
-        # Explicit EDIT -> Change loads Smith, then saving updates Smith's hold immediately.
+        # Explicit EDIT -> Change loads Smith, then saving updates Smith's working requirements.
         edit_requirements = client.get('/availability/start', params={'edit_hold': smith_hold})
         assert edit_requirements.status_code == 200
         assert 'Editing this basket item' in edit_requirements.text and 'value="Smith"' in edit_requirements.text
@@ -164,7 +164,7 @@ def main() -> None:
         }, follow_redirects=False)
         assert edited.status_code == 303 and f'edit_hold={smith_hold}' in edited.headers['location']
 
-        # Complete the edit through the same basket update route used by RESERVE CHANGES.
+        # Complete the edit through the same basket update route used by the calendar.
         completed_edit = client.post('/availability/basket/update', data={
             'csrf': csrf, 'hold_id': str(smith_hold), 'element_id': str(pitch_two),
             'arrival_date': '2035-07-10', 'departure_date': '2035-07-13',
@@ -201,7 +201,9 @@ def main() -> None:
             assert c.execute('SELECT COUNT(*) AS n FROM hold_requirement_people WHERE hold_id=?', (jones_hold,)).fetchone()['n'] == 0
             assert c.execute('SELECT COUNT(*) AS n FROM hold_requirement_addons WHERE hold_id=?', (jones_hold,)).fetchone()['n'] == 0
 
-        # Automatic expiry uses the basket status endpoint and cleans snapshots too.
+        # Automatic expiry is a separate lifecycle test, so start with fresh working requirements.
+        reset_for_expiry = client.post('/availability/new-booking', data={'csrf': csrf}, follow_redirects=False)
+        assert reset_for_expiry.status_code == 303
         expiry_hold_response = client.post('/availability/hold', data={'csrf': csrf, 'element_id': str(pitch_one), 'arrival_date': '2035-08-01', 'departure_date': '2035-08-03'})
         assert expiry_hold_response.status_code == 200
         expiry_hold = int(expiry_hold_response.json()['hold']['id'])
