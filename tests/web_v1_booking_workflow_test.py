@@ -97,7 +97,9 @@ def main() -> None:
         cal = client.get('/availability/calendar-v2?element_type=Lodge&arrival=2035-06-10&departure=2035-06-13')
         assert cal.status_code == 200 and reference in cal.text and confirmed_colour in cal.text
         assert 'hold-expiry-calendar-refresh' not in cal.text
-        assert 'async function checkExpiry()' in cal.text and 'function releasedTransition()' in cal.text
+        assert 'id="global-hold-modal"' in cal.text
+        assert 'id="hold-modal"' not in cal.text
+        assert 'checkExpiry' not in cal.text and 'releasedTransition' not in cal.text
 
         with db.connect() as c:
             c.execute('UPDATE setup_element_rates SET rate=999 WHERE company_id=? AND year=? AND element_id=?', (cid, 2035, element_id))

@@ -4,7 +4,7 @@ import json
 
 
 def hold_warning_markup(context) -> str:
-    """Render the basket hold warning on every logged-in page for a selected Client."""
+    """Render the single basket hold warning on every logged-in page for a selected Client."""
     if not context:
         return ''
     company_id = context['acting_company_id'] if context['role'] == 'supervisor' else context['company_id']
@@ -23,7 +23,7 @@ def hold_warning_markup(context) -> str:
     <script>
     (()=>{{
       const modal=document.getElementById('global-hold-modal');
-      if(!modal || document.getElementById('hold-modal')) return;
+      if(!modal)return;
       const names=document.getElementById('global-hold-names');
       const keep=document.getElementById('global-hold-keep');
       const release=document.getElementById('global-hold-release');
@@ -50,7 +50,7 @@ def hold_warning_markup(context) -> str:
           modal.hidden=false;
         }} else {{modal.hidden=true;}}
       }}
-      keep.addEventListener('click',async()=>{{const r=await post('/availability/holds/renew');if(r.ok){{modal.hidden=true;hadItems=true}}else alert('Unable to renew holds.')}});
+      keep.addEventListener('click',async()=>{{const r=await post('/availability/holds/renew');if(r.ok){{modal.hidden=true;hadItems=true;await check()}}else alert('Unable to renew holds.')}});
       release.addEventListener('click',async()=>{{if(transition)return;transition=true;const r=await post('/availability/holds/release');if(r.ok)window.location.reload();else{{transition=false;alert('Unable to release holds.')}}}});
       check();setInterval(check,5000);
     }})();
