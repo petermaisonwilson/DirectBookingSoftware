@@ -121,7 +121,12 @@ def selected_year(database, company_id: int, raw: str | int | None) -> int | Non
         value = int(raw) if raw not in (None, "") else None
     except (TypeError, ValueError):
         value = None
-    return value if value in available else (available[-1] if available else None)
+    if value in available:
+        return value
+    current = date.today().year
+    if current in available:
+        return current
+    return available[-1] if available else None
 
 
 def valid_whole(value: str) -> int:

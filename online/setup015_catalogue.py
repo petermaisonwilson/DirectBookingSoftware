@@ -19,6 +19,7 @@ from .setup015_core import (
     working_company,
     years,
 )
+from .webv1_ordering import person_type_rows, setup_sortable_table_bits, sortable_menu_html
 
 
 def setup_nav() -> str:
@@ -28,6 +29,7 @@ def setup_nav() -> str:
         ("Elements", "/setup/elements"),
         ("Person Types", "/setup/person-types"),
         ("Add-ons", "/setup/addons"),
+        ("Add-on Timings", "/setup/addons/when"),
         ("Years", "/setup/years"),
         ("Seasonal pricing", "/setup/pricing"),
         ("Occupancy", "/setup/occupancy"),
@@ -110,22 +112,31 @@ def _catalog_page(database, context, table, title, action, methods=(), submitted
     cid = working_company(context)
     submitted = submitted or {}
     errors = errors or set()
-    catalog_rows = rows(database, f'SELECT * FROM {table} WHERE company_id=? ORDER BY name', (cid,))
+    is_person = table == 'setup_person_types'
+    catalog_rows = person_type_rows(database, cid) if is_person else rows(database, f'SELECT * FROM {table} WHERE company_id=? ORDER BY name', (cid,))
     method = submitted.get('pricing_method', methods[0] if methods else '')
     method_html = ''
     if methods:
         method_html = '<div><label>Pricing method</label><select style="' + field_style('pricing_method' in errors) + '" name="pricing_method">' + ''.join(f'<option {"selected" if item == method else ""}>{item}</option>' for item in methods) + '</select></div>'
-    short_html = f'<div><label>Short name</label><input name="short_name" value="{esc(submitted.get("short_name", ""))}" maxlength="8"></div>' if table == 'setup_person_types' else ''
-    body = f'<h1>{title}</h1>{setup_nav()}{error_box(message)}<div class="card"><form method="post" action="{action}"><input type="hidden" name="csrf" value="{esc(context["csrf_token"])}"><div class="grid"><div><label>Name</label><input style="{field_style("name" in errors)}" name="name" value="{esc(submitted.get("name", ""))}"></div>{short_html}{method_html}</div><p><button>Add {title[:-1] if title.endswith("s") else title}</button></p></form></div><div class="card"><table><thead><tr><th>Name</th>'
-    if table == 'setup_person_types': body += '<th>Short name</th>'
+    short_html = f'<div><label>Short name</label><input name="short_name" value="{esc(submitted.get("short_name", ""))}" maxlength="8"></div>' if is_person else ''
+    order_heading, order_script = setup_sortable_table_bits(context, 'person_types') if is_person else ('', '')
+    body = f'<h1>{title}</h1>{setup_nav()}{error_box(message)}<div class="card"><form method="post" action="{action}"><input type="hidden" name="csrf" value="{esc(context["csrf_token"])}"><div class="grid"><div><label>Name</label><input style="{field_style("name" in errors)}" name="name" value="{esc(submitted.get("name", ""))}"></div>{short_html}{method_html}</div><p><button>Add {title[:-1] if title.endswith("s") else title}</button></p></form></div><div class="card">'
+    if is_person:
+        body += '<p class="muted">Drag Person Types into the order you want them shown throughout Setup and Booking Requirements. The order is shared by the Client and a Supervisor working in Support Mode.</p>'
+    body += f'<table><thead><tr>{order_heading}<th>Name</th>'
+    if is_person: body += '<th>Short name</th>'
     if methods: body += '<th>Pricing method</th>'
-    body += '</tr></thead><tbody>'
+    tbody = ' id="setup-sort-person_types"' if is_person else ''
+    body += f'</tr></thead><tbody{tbody}>'
     for r in catalog_rows:
-        body += f'<tr><td>{esc(r["name"])}</td>'
-        if table == 'setup_person_types': body += f'<td>{esc(r["short_name"])}</td>'
+        drag = f' draggable="true" data-item-id="{int(r["id"])}"' if is_person else ''
+        body += f'<tr{drag}>'
+        if is_person: body += '<td><span class="row-sort-handle" title="Drag to reorder">☰ Drag</span></td>'
+        body += f'<td>{esc(r["name"])}</td>'
+        if is_person: body += f'<td>{esc(r["short_name"])}</td>'
         if methods: body += f'<td>{esc(r["pricing_method"])}</td>'
         body += '</tr>'
-    body += '</tbody></table></div>'
+    body += '</tbody></table></div>' + order_script
     return layout(title, body, context)
 
 
@@ -149,10 +160,19 @@ def register_catalogue_routes(app) -> None:
     @app.get('/setup', response_class=HTMLResponse)
     def setup_home(request: Request):
         context = context_for(database, request); cid = working_company(context); company = database.company(cid)
-        body = f'<h1>{esc(company["name"])} — Setup</h1>{setup_nav()}<div class="grid">'
-        cards = (("Element Types", "Create the Client-controlled groups used by Elements.", "/setup/element-types"), ("Elements", "Bookable things with their own dates and controlled Element Type.", "/setup/elements"), ("Person Types", "Adult, Child and any other occupant types you choose.", "/setup/person-types"), ("Add-ons", "Extras that inherit the dates of their parent Element.", "/setup/addons"), ("Annual setup", "Years, seasons, prices, occupancy and Add-on rules.", "/setup/years"), ("Price / Rules test", "Test real dates, people, Add-ons, occupancy and calculated price.", "/setup/price-test"))
-        for title, text, href in cards: body += f'<div class="card"><h2>{title}</h2><p>{text}</p><a class="button" href="{href}">Open</a></div>'
-        return layout('Setup', body + '</div>', context)
+        cards = [
+            ('element_types', '<h2>Element Types</h2><p>Create the Client-controlled groups used by Elements.</p><a class="button" href="/setup/element-types">Open</a>'),
+            ('elements', '<h2>Elements</h2><p>Bookable things with their own dates and controlled Element Type.</p><a class="button" href="/setup/elements">Open</a>'),
+            ('person_types', '<h2>Person Types</h2><p>Adult, Child and any other occupant types you choose.</p><a class="button" href="/setup/person-types">Open</a>'),
+            ('occupancy', '<h2>Occupancy</h2><p>Set total and Person Type limits and Person pricing for each Element.</p><a class="button" href="/setup/occupancy">Open</a>'),
+            ('features_extras', '<h2>Features & Extras</h2><p>Define requirements and optional extras used by availability and bookings.</p><a class="button" href="/setup/addons">Open</a>'),
+            ('feature_extra_rules', '<h2>Feature / Extra Rules</h2><p>Set Element Type defaults and Individual Element overrides.</p><a class="button" href="/setup/addon-rules">Open</a>'),
+            ('years', '<h2>Annual setup</h2><p>Years, seasons and annual pricing structure.</p><a class="button" href="/setup/years">Open</a>'),
+            ('pricing', '<h2>Seasonal pricing</h2><p>Set Element prices for each configured season.</p><a class="button" href="/setup/pricing">Open</a>'),
+            ('price_test', '<h2>Price / Rules test</h2><p>Test real dates, people, Features / Extras, occupancy and calculated price.</p><a class="button" href="/setup/price-test">Open</a>'),
+        ]
+        body = f'<h1>{esc(company["name"])} — Setup</h1>' + sortable_menu_html(database, context, 'setup', cards)
+        return layout('Setup', body, context)
 
     @app.get('/setup/element-types', response_class=HTMLResponse)
     def element_types(request: Request, edit: int = 0):
