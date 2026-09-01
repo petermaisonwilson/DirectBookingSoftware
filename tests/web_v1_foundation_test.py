@@ -39,7 +39,7 @@ def main() -> None:
         client = TestClient(app)
         health = client.get('/health')
         assert health.status_code == 200
-        assert health.json()['build'] == '282'
+        assert health.json()['build'] == '286'
 
         login(client, 'operator@forestview.test', 'Operator013!')
         page = client.get('/operations')
@@ -79,7 +79,7 @@ def main() -> None:
         assert page.status_code == 200
         assert 'Forest View Campsite' in page.text
         assert 'Riverside Cabins' not in page.text
-        assert 'Online Build 282' in page.text
+        assert 'Online Build 286' in page.text
 
         with db.connect() as c:
             meta = c.execute("SELECT value FROM web_schema_meta WHERE key='schema_version'").fetchone()
