@@ -12,14 +12,10 @@ from .setup015_core import rows
 def install_calendar_edit_semantics(app) -> None:
     """Human-facing calendar selection and edit behaviour.
 
-    * Initial selections turn yellow before they are reserved.
-    * EDIT opens with the original yellow hold visible but no action button.
-    * The edited hold's own yellow cells stay clickable.
-    * A new selection visually replaces the old yellow range.
-    * RESERVE CHANGES appears only after a new range has been chosen.
-    * CANCEL EDIT leaves the original hold untouched.
-    * Per-day and per-night selection both use first booked day + last booked day.
-      Storage remains end-exclusive; night bookings add a departure-morning half cell.
+    Initial selections turn yellow before they are reserved. Existing held Elements
+    remain protected during editing, while server-rendered choices for the requested
+    dates stay immediately available. Manual date selection continues to use first
+    booked day + last full booked day, with end-exclusive storage underneath.
     """
     database = app.state.database
 
@@ -78,8 +74,8 @@ def install_calendar_edit_semantics(app) -> None:
         edit_hold = request.query_params.get('edit_hold', '')
         editing = edit_hold.isdigit() and int(edit_hold) > 0
         if editing:
-            text = text.replace('>UPDATE</button>', '>RESERVE CHANGES</button>')
-            text = text.replace("qaction.textContent=editingHold?'UPDATE':'RESERVE'", "qaction.textContent=editingHold?'RESERVE CHANGES':'RESERVE'")
+            text = text.replace('>UPDATE</button>', '>USE THIS ELEMENT</button>')
+            text = text.replace("qaction.textContent=editingHold?'UPDATE':'RESERVE'", "qaction.textContent=editingHold?'USE THIS ELEMENT':'RESERVE'")
             old = ' — select new dates and/or another '
             if old in text:
                 a = request.query_params.get('arrival', '')
@@ -179,7 +175,7 @@ def install_calendar_edit_semantics(app) -> None:
             if(e<=s)e=last+1;
             const b=row.querySelector('.selection-action'); if(!b)return;
             b.style.gridColumn=(s+2)+' / '+(e+2); b.style.gridRow='1';
-            b.textContent=editMode?'RESERVE CHANGES':'RESERVE'; b.hidden=false;
+            b.textContent=editMode?'USE THIS ELEMENT':'RESERVE'; b.hidden=false;
             if(!isDay(row))addDeparture(row,internalEnd,true);
           }};
 
@@ -197,8 +193,6 @@ def install_calendar_edit_semantics(app) -> None:
           }});
 
           if(editMode){{
-            document.querySelectorAll('.selection-action').forEach(b=>b.hidden=true);
-            document.querySelectorAll('.element-row .cal-cell.selected-date,.element-row .cal-cell.selected-start').forEach(cell=>cell.classList.remove('selected-date','selected-start'));
             document.querySelectorAll('.cal-cell.editable-own').forEach(cell=>{{cell.style.pointerEvents='auto';cell.style.cursor='pointer';}});
           }}
 
@@ -207,7 +201,7 @@ def install_calendar_edit_semantics(app) -> None:
             if(!cell||!calendar.contains(cell))return;
             ev.preventDefault(); ev.stopImmediatePropagation();
             const pop=document.getElementById('quick-popover'); if(pop)pop.hidden=true;
-            const row=cell.closest('.element-row'); if(!row)return;
+            const row=cell.closest('.element-row'); if(!row||row.classList.contains('party-unsuitable'))return;
             const eid=Number(row.dataset.element), picked=cell.dataset.date;
 
             if(!first||chosenElement!==eid){{
@@ -236,7 +230,7 @@ def install_calendar_edit_semantics(app) -> None:
             setTimeout(()=>{{
               const row=cell.closest('.element-row');
               const qdates=document.getElementById('quick-dates'), qaction=document.getElementById('quick-action');
-              if(qaction&&!qaction.hidden&&editMode)qaction.textContent='RESERVE CHANGES';
+              if(qaction&&!qaction.hidden&&editMode)qaction.textContent='USE THIS ELEMENT';
               if(!qdates||!row||!arrival.value||!departure.value)return;
               const ms=(new Date(departure.value+'T12:00:00')-new Date(arrival.value+'T12:00:00'))/86400000;
               if(isDay(row))qdates.textContent=arrival.value+' to '+dayBefore(departure.value)+' · '+ms+' day'+(ms===1?'':'s');

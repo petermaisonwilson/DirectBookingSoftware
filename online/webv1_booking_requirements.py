@@ -112,19 +112,38 @@ def _fmt_user_date(value):
         return value or ''
 
 
-def _requirements_page(database, context, cid, token, message='', edit_hold: int = 0):
+def _held_element_type(database, cid: int, token: str, hold_id: int) -> str:
+    if not hold_id:
+        return ''
+    item = one(database, '''SELECT e.element_type FROM element_holds h
+                            JOIN setup_elements e ON e.id=h.element_id AND e.company_id=h.company_id
+                            WHERE h.id=? AND h.company_id=? AND h.session_token=?''', (hold_id, cid, token))
+    return str(item['element_type']) if item else ''
+
+
+def _requirements_page(database, context, cid, token, message='', edit_hold: int = 0, selected_element_type: str = ''):
     people_rows = person_type_rows(database, cid, active_only=True)
     addon_rows = rows(database, 'SELECT * FROM setup_addons WHERE company_id=? AND active=1 AND ask_before_availability=1 ORDER BY name COLLATE NOCASE', (cid,))
+    element_types = [str(r['name']) for r in rows(database, 'SELECT name FROM setup_element_types WHERE company_id=? AND active=1 ORDER BY name COLLATE NOCASE', (cid,))]
+    if edit_hold and not selected_element_type:
+        selected_element_type = _held_element_type(database, cid, token, edit_hold)
+    if selected_element_type not in element_types:
+        selected_element_type = ''
     saved_people, saved_addons, _, saved_arrival, saved_departure = _saved_requirements(database, cid, token)
     saved_lead_name = _saved_lead_name(database, cid, token)
     error = f'<div class="error">{esc(message)}</div>' if message else ''
     progress = booking_progress_strip(database, context, cid, token)
     edit_hidden = f'<input type="hidden" name="edit_hold" value="{int(edit_hold)}">' if edit_hold else ''
-    edit_note = '<div class="card edit-notice"><strong>Editing this basket item’s requirements.</strong> Saving will update only this held Element and return you to it on the Availability Calendar.</div>' if edit_hold else ''
+    edit_note = ''
+    if edit_hold:
+        edit_note = '<div class="card edit-notice"><strong>Editing this basket item.</strong> You are using the normal Booking Requirements screen. Change anything below, including Element Type, then click <strong>SEARCH AVAILABILITY</strong>. Your current Element stays held until you choose a replacement or remove it.</div>'
+    type_options = '<option value="">Select Element Type</option>' + ''.join(
+        f'<option value="{esc(t)}" {"selected" if t == selected_element_type else ""}>{esc(t)}</option>' for t in element_types
+    )
     body = f'''<h1>Booking requirements</h1>{progress}{edit_note}{error}
-    <div class="card"><p>Tell us who is coming, when they are staying and anything that the Element <strong>must</strong> provide. We use this only to prevent you choosing an unsuitable Element.</p><p class="muted">For privacy, age is requested only for Person Types where the Client has enabled <strong>Ask for age</strong>. Date of birth is not collected.</p></div>
+    <div class="card"><p>Tell us who is coming, when they are staying, the <strong>Element Type</strong> they want and anything the Element <strong>must</strong> provide. The Availability Calendar will still show every Element of that type and explain why any are unsuitable.</p><p class="muted">For privacy, age is requested only for Person Types where the Client has enabled <strong>Ask for age</strong>. Date of birth is not collected.</p></div>
     <form method="post" action="/availability/requirements">{edit_hidden}<input type="hidden" name="csrf" value="{esc(context['csrf_token'])}">
-    <div class="card"><h2>Who's coming and when?</h2><div class="grid"><div><label>Please enter the lead name</label><input name="lead_name" placeholder="NAME" required value="{esc(saved_lead_name)}"></div><div><label>Arrival</label><input id="requirements-arrival" type="date" name="arrival" required value="{esc(saved_arrival)}"></div><div><label>Departure</label><input id="requirements-departure" type="date" name="departure" required value="{esc(saved_departure)}"></div>'''
+    <div class="card"><h2>Who's coming and when?</h2><div class="grid"><div><label>Please enter the lead name</label><input name="lead_name" placeholder="NAME" required value="{esc(saved_lead_name)}"></div><div><label>Element Type</label><select name="element_type" required>{type_options}</select></div><div><label>Arrival</label><input id="requirements-arrival" type="date" name="arrival" required value="{esc(saved_arrival)}"></div><div><label>Departure</label><input id="requirements-departure" type="date" name="departure" required value="{esc(saved_departure)}"></div>'''
     for p in people_rows:
         pid = int(p['id'])
         saved = saved_people.get(pid, {'quantity': 0, 'ages': []})
@@ -202,7 +221,8 @@ def register_booking_requirement_routes(app):
         edit_hold = int(raw_edit) if raw_edit.isdigit() and int(raw_edit) > 0 else 0
         if edit_hold and not _load_hold_requirements_into_working(database, cid, token, edit_hold):
             edit_hold = 0
-        return _requirements_page(database, context, cid, token, edit_hold=edit_hold)
+        selected_element_type = str(request.query_params.get('element_type', '') or '').strip()
+        return _requirements_page(database, context, cid, token, edit_hold=edit_hold, selected_element_type=selected_element_type)
 
     @app.post('/setup/person-types/age-toggle')
     async def person_age_toggle(request: Request):

@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from datetime import date
+from urllib.parse import quote_plus
 
 from fastapi.responses import Response
 
@@ -47,12 +48,16 @@ def install_booking_requirements_ui(app) -> None:
             for aid,qty in addons.items():
                 if int(qty):
                     a=one(database,'SELECT name FROM setup_addons WHERE company_id=? AND id=?',(cid,aid));summary.append(f'{str(a["name"]) if a else "Requirement"} {int(qty)}')
-            summary_html=' · '.join(esc(x) for x in summary) or 'No special requirements';name_html=f'<strong>Name:</strong> {esc(lead_name)} &nbsp; ' if lead_name else '';edit_hold=request.query_params.get('edit_hold','')
-            if edit_hold.isdigit() and int(edit_hold)>0:
-                action_href=f'/availability/basket/edit?hold_id={int(edit_hold)}';action_text='EDIT BOOKING'
-            else:
-                action_href='/availability/start';action_text='CHANGE PEOPLE & REQUIREMENTS'
-            card=f'<div class="card requirement-summary">{name_html}<strong>Your requirements:</strong> {summary_html} <a class="button secondary" style="margin-left:10px" href="{action_href}">{action_text}</a></div>';text=text.replace('<h1>Availability Calendar</h1>','<h1>Availability Calendar</h1>'+card,1)
+            summary_html=' · '.join(esc(x) for x in summary) or 'No special requirements';name_html=f'<strong>Name:</strong> {esc(lead_name)} &nbsp; ' if lead_name else ''
+            edit_hold=request.query_params.get('edit_hold','')
+            element_type=str(request.query_params.get('element_type','') or '')
+            q=''
+            if edit_hold.isdigit() and int(edit_hold)>0:q=f'?edit_hold={int(edit_hold)}'
+            if element_type:q+=('&' if q else '?')+'element_type='+quote_plus(element_type)
+            action_href='/availability/start'+q
+            action_text='CHANGE REQUIREMENTS'
+            type_html=f'<strong>Element Type:</strong> {esc(element_type)} &nbsp; ' if element_type else ''
+            card=f'<div class="card requirement-summary">{name_html}{type_html}<strong>Your requirements:</strong> {summary_html} <a class="button secondary" style="margin-left:10px" href="{action_href}">{action_text}</a></div>';text=text.replace('<h1>Availability Calendar</h1>','<h1>Availability Calendar</h1>'+card,1)
             raw_day=request.query_params.get('arrival') or request.query_params.get('start') or date.today().isoformat()
             try:year=date.fromisoformat(raw_day).year
             except ValueError:year=date.today().year
@@ -65,6 +70,6 @@ def install_booking_requirements_ui(app) -> None:
                 if row_start>=0:
                     name_end=text.find('</div>',row_start)
                     if name_end>=0:text=text[:name_end]+f'<small class="party-reason">{esc(reason_text)}</small>'+text[name_end:]
-            legend_marker='<span class="legend mini available-key">Available</span>';text=text.replace(legend_marker,legend_marker+'<span class="legend mini party-unsuitable-key">Not suitable for your party</span>',1)
+            legend_marker='<span class="legend mini available-key">Available</span>';text=text.replace(legend_marker,legend_marker+'<span class="legend mini party-unsuitable-key">Not suitable for your requirements</span>',1)
             injection='''<style id="booking-requirements-style">.party-unsuitable-key{background:#eadcf4}#calendar-scroll .element-row.party-unsuitable .cal-cell.available{background:#eadcf4!important;pointer-events:none;cursor:not-allowed}#calendar-scroll .element-row.party-unsuitable .selection-action{display:none!important}.party-reason{display:block;color:#6d3f7c;font-size:10px;line-height:1.15;margin-top:2px}</style>''';text=text.replace('</body>',injection+'</body>',1)
         return Response(content=text,status_code=response.status_code,headers=headers,media_type='text/html')

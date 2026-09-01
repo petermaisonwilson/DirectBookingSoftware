@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from datetime import timedelta
+from datetime import date, timedelta
 
 from fastapi import Request
 from fastapi.responses import JSONResponse
@@ -9,6 +9,8 @@ from .app import COOKIE_NAME, form_data
 from .database import iso_now
 from .setup015_core import audit, require_csrf
 from . import webv1_availability as availability
+from .webv1_booking_requirements import _saved_requirements
+from .webv1_booking_requirements_core import element_reasons
 
 
 def _basket_row(connection, company_id: int, token: str, hold_id: int):
@@ -121,8 +123,17 @@ def register_basket_routes(app) -> None:
             element_id = int(data.get('element_id', ''))
         except (TypeError, ValueError):
             return JSONResponse({'ok': False, 'error': 'Invalid booking item.'}, status_code=400)
-        arrival = data.get('arrival_date', '')
-        departure = data.get('departure_date', '')
+        arrival = str(data.get('arrival_date', '') or '')
+        departure = str(data.get('departure_date', '') or '')
+        try:
+            arrival_day = date.fromisoformat(arrival)
+            departure_day = date.fromisoformat(departure)
+        except ValueError:
+            return JSONResponse({'ok': False, 'error': 'Enter valid arrival and departure dates.'}, status_code=400)
+        if departure_day <= arrival_day:
+            return JSONResponse({'ok': False, 'error': 'Departure must be after arrival.'}, status_code=400)
+
+        people, requirements, ready, _, _ = _saved_requirements(database, company_id, token)
 
         with database.connect() as c:
             _purge_expired_basket_rows(c, company_id, token)
@@ -131,11 +142,15 @@ def register_basket_routes(app) -> None:
                 return JSONResponse({'ok': False, 'error': 'That booking item has expired or been removed.'}, status_code=404)
             before = dict(current)
             element = c.execute(
-                'SELECT name,element_type FROM setup_elements WHERE id=? AND company_id=? AND active=1',
+                'SELECT * FROM setup_elements WHERE id=? AND company_id=? AND active=1',
                 (element_id, company_id),
             ).fetchone()
             if element is None:
                 return JSONResponse({'ok': False, 'error': 'That Element is no longer active.'}, status_code=409)
+            if ready:
+                reasons = element_reasons(database, company_id, arrival_day.year, element, people, requirements)
+                if reasons:
+                    return JSONResponse({'ok': False, 'error': 'That Element is not suitable: ' + ' · '.join(reasons)}, status_code=409)
             competing_hold = c.execute(
                 '''SELECT id FROM element_holds
                    WHERE company_id=? AND element_id=? AND id<>?

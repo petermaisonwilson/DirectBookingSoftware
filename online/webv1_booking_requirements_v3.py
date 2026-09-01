@@ -8,8 +8,8 @@ from fastapi import HTTPException, Request
 from fastapi.responses import HTMLResponse, RedirectResponse
 
 from .app import COOKIE_NAME, form_data
-from .setup015_core import rows
-from .webv1_booking_requirements import _requirements_page, _snapshot_hold_requirements
+from .setup015_core import one, rows
+from .webv1_booking_requirements import _requirements_page
 from .webv1_booking_requirements_refinements import _addon_caps, _working_context
 from .webv1_ordering import person_type_rows
 
@@ -27,15 +27,30 @@ def register_booking_requirements_v3(app) -> None:
 
         raw_edit = str(data.get('edit_hold', '') or '').strip()
         edit_hold = int(raw_edit) if raw_edit.isdigit() and int(raw_edit) > 0 else 0
+        held_type = ''
         if edit_hold:
             with database.connect() as c:
-                owned = c.execute('SELECT id FROM element_holds WHERE id=? AND company_id=? AND session_token=?', (edit_hold, cid, token)).fetchone()
+                owned = c.execute(
+                    '''SELECT h.id,e.element_type FROM element_holds h
+                       JOIN setup_elements e ON e.id=h.element_id AND e.company_id=h.company_id
+                       WHERE h.id=? AND h.company_id=? AND h.session_token=?''',
+                    (edit_hold, cid, token),
+                ).fetchone()
             if owned is None:
                 edit_hold = 0
+            else:
+                held_type = str(owned['element_type'])
+
+        element_type = str(data.get('element_type', '') or '').strip() or held_type
+        active_types = {str(r['name']) for r in rows(database, 'SELECT name FROM setup_element_types WHERE company_id=? AND active=1', (cid,))}
+        # The on-screen form always requires Element Type. Blank remains accepted only
+        # for older direct/API callers so previously proven integrations keep working.
+        if element_type and element_type not in active_types:
+            return HTMLResponse(_requirements_page(database, context, cid, token, 'Please select a valid Element Type.', edit_hold=edit_hold, selected_element_type=element_type), 400)
 
         lead_name = str(data.get('lead_name', '') or '').strip()
         if not lead_name:
-            return HTMLResponse(_requirements_page(database, context, cid, token, 'Please enter the lead name.', edit_hold=edit_hold), 400)
+            return HTMLResponse(_requirements_page(database, context, cid, token, 'Please enter the lead name.', edit_hold=edit_hold, selected_element_type=element_type), 400)
 
         arrival = str(data.get('arrival', '')).strip()
         departure = str(data.get('departure', '')).strip()
@@ -43,11 +58,11 @@ def register_booking_requirements_v3(app) -> None:
             arrival_day = date.fromisoformat(arrival)
             departure_day = date.fromisoformat(departure)
         except ValueError:
-            return HTMLResponse(_requirements_page(database, context, cid, token, 'Enter valid arrival and departure dates.', edit_hold=edit_hold), 400)
+            return HTMLResponse(_requirements_page(database, context, cid, token, 'Enter valid arrival and departure dates.', edit_hold=edit_hold, selected_element_type=element_type), 400)
         if departure_day <= arrival_day:
-            return HTMLResponse(_requirements_page(database, context, cid, token, 'Departure must be after arrival.', edit_hold=edit_hold), 400)
+            return HTMLResponse(_requirements_page(database, context, cid, token, 'Departure must be after arrival.', edit_hold=edit_hold, selected_element_type=element_type), 400)
         if arrival_day.year != date.fromordinal(departure_day.toordinal() - 1).year:
-            return HTMLResponse(_requirements_page(database, context, cid, token, 'The stay must remain within one pricing year.', edit_hold=edit_hold), 400)
+            return HTMLResponse(_requirements_page(database, context, cid, token, 'The stay must remain within one pricing year.', edit_hold=edit_hold, selected_element_type=element_type), 400)
 
         people_rows = person_type_rows(database, cid, active_only=True)
         addon_rows = rows(database, 'SELECT * FROM setup_addons WHERE company_id=? AND active=1 AND ask_before_availability=1 ORDER BY name COLLATE NOCASE', (cid,))
@@ -58,7 +73,7 @@ def register_booking_requirements_v3(app) -> None:
             try:
                 qty = max(0, int(data.get(f'person_{pid}', '0') or 0))
             except ValueError:
-                return HTMLResponse(_requirements_page(database, context, cid, token, f'Enter a valid number for {p["name"]}.', edit_hold=edit_hold), 400)
+                return HTMLResponse(_requirements_page(database, context, cid, token, f'Enter a valid number for {p["name"]}.', edit_hold=edit_hold, selected_element_type=element_type), 400)
             total += qty
             ages = []
             if int(p['ask_age'] or 0):
@@ -66,13 +81,13 @@ def register_booking_requirements_v3(app) -> None:
                     try:
                         age = int(str(data.get(f'age_{pid}_{i}', '')).strip())
                     except ValueError:
-                        return HTMLResponse(_requirements_page(database, context, cid, token, f'Enter the age at arrival for every {p["name"]}.', edit_hold=edit_hold), 400)
+                        return HTMLResponse(_requirements_page(database, context, cid, token, f'Enter the age at arrival for every {p["name"]}.', edit_hold=edit_hold, selected_element_type=element_type), 400)
                     if age < 0 or age > 120:
-                        return HTMLResponse(_requirements_page(database, context, cid, token, 'Age must be between 0 and 120.', edit_hold=edit_hold), 400)
+                        return HTMLResponse(_requirements_page(database, context, cid, token, 'Age must be between 0 and 120.', edit_hold=edit_hold, selected_element_type=element_type), 400)
                     ages.append(age)
             parsed_people.append((pid, qty, json.dumps(ages)))
         if people_rows and total <= 0:
-            return HTMLResponse(_requirements_page(database, context, cid, token, 'Enter at least one person.', edit_hold=edit_hold), 400)
+            return HTMLResponse(_requirements_page(database, context, cid, token, 'Enter at least one person.', edit_hold=edit_hold, selected_element_type=element_type), 400)
 
         caps = _addon_caps(database, cid)
         parsed_addons = []
@@ -84,9 +99,9 @@ def register_booking_requirements_v3(app) -> None:
                 values = [max(0, int(v or 0)) for v in raw_values]
                 qty = max(values) if values else 0
             except (ValueError, TypeError):
-                return HTMLResponse(_requirements_page(database, context, cid, token, f'Enter a valid quantity for {a["name"]}.', edit_hold=edit_hold), 400)
+                return HTMLResponse(_requirements_page(database, context, cid, token, f'Enter a valid quantity for {a["name"]}.', edit_hold=edit_hold, selected_element_type=element_type), 400)
             if qty > cap:
-                return HTMLResponse(_requirements_page(database, context, cid, token, f'{a["name"]} can be requested up to a maximum of {cap}.', edit_hold=edit_hold), 400)
+                return HTMLResponse(_requirements_page(database, context, cid, token, f'{a["name"]} can be requested up to a maximum of {cap}.', edit_hold=edit_hold, selected_element_type=element_type), 400)
             parsed_addons.append((aid, qty))
 
         with database.connect() as c:
@@ -103,19 +118,13 @@ def register_booking_requirements_v3(app) -> None:
                            lead_name=excluded.lead_name,updated_at=CURRENT_TIMESTAMP''',
                       (token, cid, arrival, departure, lead_name))
 
+        parts = []
+        if element_type:
+            parts.append('element_type=' + quote_plus(element_type))
+        parts.extend([f'arrival={arrival}', f'departure={departure}'])
         if edit_hold:
-            _snapshot_hold_requirements(database, cid, token, edit_hold)
-            with database.connect() as c:
-                c.execute('UPDATE element_holds SET lead_name=?,updated_at=CURRENT_TIMESTAMP WHERE id=? AND company_id=? AND session_token=?', (lead_name, edit_hold, cid, token))
-                item = c.execute(
-                    '''SELECT e.element_type FROM element_holds h
-                       JOIN setup_elements e ON e.id=h.element_id AND e.company_id=h.company_id
-                       WHERE h.id=? AND h.company_id=? AND h.session_token=?''',
-                    (edit_hold, cid, token),
-                ).fetchone()
-            element_type = quote_plus(str(item['element_type'])) if item else ''
-            return RedirectResponse(f'/availability/calendar-v2?element_type={element_type}&arrival={arrival}&departure={departure}&edit_hold={edit_hold}', 303)
-        return RedirectResponse(f'/availability/calendar-v2?arrival={arrival}&departure={departure}', 303)
+            parts.append(f'edit_hold={edit_hold}')
+        return RedirectResponse('/availability/calendar-v2?' + '&'.join(parts), 303)
 
 
 def install_booking_requirements_v3_form(app) -> None:

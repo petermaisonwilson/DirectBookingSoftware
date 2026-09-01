@@ -40,7 +40,8 @@ def register_calendar_v5_routes(app) -> None:
         if edit_hold and editing is None:
             edit_hold = 0
         if editing:
-            selected_type = str(editing['element_type'])
+            if not selected_type:
+                selected_type = str(editing['element_type'])
             if not arrival:
                 arrival = str(editing['arrival_date'])
                 arrival_day = _parse(arrival)
@@ -58,7 +59,7 @@ def register_calendar_v5_routes(app) -> None:
         body = booking_progress_strip(database, context, cid, token) + '<h1>Availability Calendar</h1>'
         body += f'''<div class="card"><form id="availability-form" method="get" action="/availability/calendar-v2">
         <input type="hidden" id="edit-hold" name="edit_hold" value="{edit_hold or ''}"><input type="hidden" id="calendar-start" name="start" value="{visible_start.isoformat()}">
-        <div class="grid"><div><label>ADD Element</label><select id="element-type" name="element_type">{options}</select></div>
+        <div class="grid"><div><label>Element Type</label><select id="element-type" name="element_type">{options}</select></div>
         <div><label>Arrival</label><input id="arrival-date" type="date" name="arrival" value="{esc(arrival)}"></div>
         <div><label>Departure</label><input id="departure-date" type="date" name="departure" value="{esc(departure)}"></div></div><p>
         <a class="button secondary" href="/availability/calendar-v2?{preserve}&start={(visible_start-timedelta(days=14)).isoformat()}">← Previous 14 days</a>
@@ -67,7 +68,10 @@ def register_calendar_v5_routes(app) -> None:
 
         if editing:
             edit_name = str(editing['lead_name'] or '').strip() or str(editing['element_name'])
-            body += f'<div class="card edit-notice"><strong>Editing {esc(edit_name)} — Element & Dates</strong><br>Your current Element and dates are selected below. Change either if required, then click <strong>RESERVE CHANGES</strong>. That saves this part of the booking and returns you to Edit Booking. <a class="button secondary" style="margin-left:8px" href="/availability/basket/edit?hold_id={int(edit_hold)}">BACK TO EDIT BOOKING</a></div>'
+            current_type = str(editing['element_type'])
+            changed_type = selected_type and selected_type != current_type
+            type_note = f' You are now viewing <strong>{esc(selected_type)}</strong>; your current <strong>{esc(editing["element_name"])}</strong> ({esc(current_type)}) remains held until you choose a replacement.' if changed_type else f' Your current held Element is <strong>{esc(editing["element_name"])}</strong>.'
+            body += f'<div class="card edit-notice"><strong>Editing {esc(edit_name)}</strong>.{type_note} Every Element of the selected type is shown below. Suitable Elements can be selected; unsuitable Elements remain visible with the reason why. <a class="button secondary" style="margin-left:8px" href="/availability/start?edit_hold={int(edit_hold)}&element_type={quote_plus(selected_type)}">BACK TO REQUIREMENTS</a></div>'
 
         held_status = default_status(database, cid, 'HELD')
         held_colour = str(held_status['colour']) if held_status else '#FFE39A'
@@ -165,12 +169,12 @@ def register_calendar_v5_routes(app) -> None:
             )
             selection_style = ''
             selection_hidden = ' hidden'
-            if not edit_hold and selected_range_available and arrival_day and departure_day:
+            if selected_range_available and arrival_day and departure_day:
                 selection_start = (arrival_day - visible_start).days + 2
                 selection_end = (departure_day - visible_start).days + 2
                 selection_style = f' style="grid-column:{selection_start} / {selection_end};grid-row:1"'
                 selection_hidden = ''
-            selection = f'<button type="button" class="selection-action" data-element="{eid}" data-name="{esc(element["name"])}"{selection_style}{selection_hidden}>{"RESERVE CHANGES" if edit_hold else "RESERVE"}</button>'
+            selection = f'<button type="button" class="selection-action" data-element="{eid}" data-name="{esc(element["name"])}"{selection_style}{selection_hidden}>{"USE THIS ELEMENT" if edit_hold else "RESERVE"}</button>'
             cal_rows += f'<div class="cal-row element-row" data-element="{eid}" data-name="{esc(element["name"])}" data-features="{feature_json}"><div class="cal-name" style="grid-column:1;grid-row:1">{name_html}</div>{cells}{bars}{selection}</div>'
 
         if not cal_rows:
@@ -178,7 +182,7 @@ def register_calendar_v5_routes(app) -> None:
 
         body += f'''<div class="card availability-card"><div class="availability-head"><h2>Availability</h2><div class="legend-row compact"><strong>Key:</strong>{legend}</div></div>
         <div id="calendar-scroll" class="calendar-scroll"><div class="calendar-grid" style="--days:{display_days}">{cal_header}{cal_rows}</div></div>
-        <p class="muted">Pale green days are available. Click the first day you want and then the last full day you want. Hover over an Element name or select More info for full Element details.</p></div>'''
+        <p class="muted">Every Element of the selected type is shown. Pale green days are available. Elements that do not meet the booking requirements remain visible with the reason why, so you can change the requirements if you want a particular Element.</p></div>'''
 
         body += f'''<div id="quick-element-info" class="quick-element-info" hidden></div>
         <div id="info-modal" class="hold-modal" hidden><div class="hold-dialog"><button id="info-close" type="button" class="secondary close-info">Close</button><h2 id="info-title"></h2><p class="muted">Element information</p><div id="info-features"></div></div></div>
@@ -203,18 +207,17 @@ def register_calendar_v5_routes(app) -> None:
         <script>
         const csrf={json.dumps(str(context['csrf_token']))}; const editingHold={int(edit_hold or 0)}; const anchorArr={json.dumps(anchor_arrival)},anchorDep={json.dumps(anchor_departure)};
         const elementType=document.getElementById('element-type'),arrivalInput=document.getElementById('arrival-date'),departureInput=document.getElementById('departure-date'),scrollBox=document.getElementById('calendar-scroll');
-        let selectedElement={int(editing['element_id']) if editing else 0},firstPick='';
+        let selectedElement=0,firstPick='';
         const dayAfter=iso=>{{const d=new Date(iso+'T12:00:00');d.setDate(d.getDate()+1);return d.toISOString().slice(0,10)}};
         function qsFor(a,d){{const q=new URLSearchParams();if(elementType.value)q.set('element_type',elementType.value);if(a)q.set('arrival',a);if(d)q.set('departure',d);if(editingHold)q.set('edit_hold',editingHold);return q}}
         function submitDates(){{const a=arrivalInput.value,d=departureInput.value;if(!a||!d||d<=a)return;window.location='/availability/calendar-v2?'+qsFor(a,d)}}
         elementType.addEventListener('change',()=>{{window.location='/availability/calendar-v2?'+qsFor(arrivalInput.value||anchorArr,departureInput.value||anchorDep)}});
         arrivalInput.addEventListener('change',()=>{{if(!arrivalInput.value)return;const n=dayAfter(arrivalInput.value);departureInput.min=n;departureInput.value=n;submitDates()}}); departureInput.addEventListener('change',submitDates);
         function clearBars(){{document.querySelectorAll('.selection-action').forEach(x=>x.hidden=true)}}
-        function showSelection(eid,a,d){{clearBars();const row=document.querySelector('.element-row[data-element="'+eid+'"]');if(!row)return;const ds=[...document.querySelectorAll('#calendar-scroll .cal-date')].map(x=>x.dataset.date),s=ds.indexOf(a),e=ds.indexOf(d);if(s<0||e<=s)return;const b=row.querySelector('.selection-action');b.style.gridColumn=(s+2)+' / '+(e+2);b.style.gridRow='1';b.hidden=false;selectedElement=Number(eid)}}
-        if(editingHold&&arrivalInput.value&&departureInput.value&&selectedElement)showSelection(selectedElement,arrivalInput.value,departureInput.value);
+        function showSelection(eid,a,d){{clearBars();const row=document.querySelector('.element-row[data-element="'+eid+'"]');if(!row||row.classList.contains('party-unsuitable'))return;const ds=[...document.querySelectorAll('#calendar-scroll .cal-date')].map(x=>x.dataset.date),s=ds.indexOf(a),e=ds.indexOf(d);if(s<0||e<=s)return;const b=row.querySelector('.selection-action');b.style.gridColumn=(s+2)+' / '+(e+2);b.style.gridRow='1';b.hidden=false;selectedElement=Number(eid)}}
         document.querySelectorAll('.date-pick').forEach(cell=>cell.addEventListener('click',()=>{{const chosen=cell.dataset.date,eid=Number(cell.dataset.element);if(!firstPick||selectedElement!==eid){{firstPick=chosen;selectedElement=eid;arrivalInput.value=chosen;departureInput.value='';clearBars();return}}if(chosen<=firstPick){{firstPick=chosen;arrivalInput.value=chosen;departureInput.value='';return}}arrivalInput.value=firstPick;departureInput.value=chosen;showSelection(eid,firstPick,chosen);firstPick=''}}));
         async function post(url,data={{}}){{const body=new URLSearchParams();body.set('csrf',csrf);Object.entries(data).forEach(([k,v])=>body.set(k,v));return fetch(url,{{method:'POST',headers:{{'Content-Type':'application/x-www-form-urlencoded;charset=UTF-8'}},body:body.toString()}})}}
-        document.querySelectorAll('.selection-action').forEach(btn=>btn.addEventListener('click',async()=>{{const a=arrivalInput.value,d=departureInput.value;if(!a||!d)return;const url=editingHold?'/availability/basket/update':'/availability/hold',data=editingHold?{{hold_id:editingHold,element_id:btn.dataset.element,arrival_date:a,departure_date:d}}:{{element_id:btn.dataset.element,arrival_date:a,departure_date:d}};const r=await post(url,data);let p={{}};try{{p=await r.json()}}catch(e){{}}if(!r.ok){{alert(p.error||'Unable to save that Element.');return}}if(editingHold){{window.location='/availability/basket/edit?hold_id='+editingHold+'&saved=1';return}}const q=new URLSearchParams();q.set('arrival',a);q.set('departure',d);window.location='/availability/calendar-v2?'+q.toString()}}));
+        document.querySelectorAll('.selection-action').forEach(btn=>btn.addEventListener('click',async()=>{{const a=arrivalInput.value,d=departureInput.value;if(!a||!d)return;const url=editingHold?'/availability/basket/update':'/availability/hold',data=editingHold?{{hold_id:editingHold,element_id:btn.dataset.element,arrival_date:a,departure_date:d}}:{{element_id:btn.dataset.element,arrival_date:a,departure_date:d}};const r=await post(url,data);let p={{}};try{{p=await r.json()}}catch(e){{}}if(!r.ok){{alert(p.error||'Unable to save that Element.');return}}if(editingHold){{window.location='/availability/basket/review';return}}const q=new URLSearchParams();q.set('element_type',elementType.value);q.set('arrival',a);q.set('departure',d);window.location='/availability/calendar-v2?'+q.toString()}}));
         function featureHtml(features){{return '<ul>'+features.map(f=>'<li>'+(f.available?'✓ ':'✕ ')+f.name+'</li>').join('')+'</ul>'}}
         const info=document.getElementById('info-modal'); function showFullInfo(btn){{document.getElementById('info-title').textContent=btn.dataset.elementName;document.getElementById('info-features').innerHTML=featureHtml(JSON.parse(btn.dataset.features||'[]'));info.hidden=false}}
         document.querySelectorAll('.more-info').forEach(btn=>btn.addEventListener('click',()=>showFullInfo(btn))); document.getElementById('info-close').addEventListener('click',()=>info.hidden=true);

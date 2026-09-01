@@ -1,13 +1,14 @@
 from __future__ import annotations
 
 import json
+from datetime import date
 
 from fastapi import Request
 from fastapi.responses import JSONResponse, RedirectResponse
 
 from .app import COOKIE_NAME, form_data
 from .setup015 import register_setup015
-from .setup015_core import require_csrf
+from .setup015_core import one, require_csrf
 from .webv1_addon_person import initialise_addon_person
 from .webv1_addon_popup import initialise_addon_popup, register_addon_popup_routes
 from .webv1_addon_when import initialise_addon_when, register_addon_when_routes
@@ -15,11 +16,12 @@ from .webv1_availability import initialise_availability, register_availability_r
 from .webv1_basket import register_basket_routes
 from .webv1_booking_progress import register_booking_progress_routes
 from .webv1_booking_requirements import (
+    _saved_requirements,
     _snapshot_hold_requirements,
     initialise_booking_requirements,
     register_booking_requirement_routes,
 )
-from .webv1_booking_requirements_core import register_booking_requirements_core
+from .webv1_booking_requirements_core import element_reasons, register_booking_requirements_core
 from .webv1_booking_requirements_refinements import (
     install_booking_requirements_refinements,
     register_booking_requirements_refinement_routes,
@@ -33,7 +35,6 @@ from .webv1_booking_status import initialise_booking_statuses, register_booking_
 from .webv1_bookings import initialise_booking_workflow, register_booking_routes
 from .webv1_calendar_edit_semantics import install_calendar_edit_semantics
 from .webv1_duration_display import install_duration_display
-from .webv1_edit_action_box import install_edit_action_box
 from .webv1_feature_booking_ui import install_feature_booking_ui
 from .webv1_feature_wording import install_feature_wording
 from .webv1_features_extras_v2 import initialise_features_extras, register_features_extras_routes
@@ -104,7 +105,6 @@ def register_web_v1(app) -> None:
     webv1_calendar_v2.register_calendar_v2_routes(app)
     install_calendar_edit_semantics(app)
     install_user_display_rules(app)
-    install_edit_action_box(app)
     install_duration_display(app)
     install_booking_requirements_ui(app)
     install_booking_requirements_refinements(app)
@@ -125,13 +125,26 @@ def register_web_v1(app) -> None:
         token = request.cookies.get(COOKIE_NAME, '')
         try:
             element_id = int(data.get('element_id', ''))
+            arrival = str(data.get('arrival_date', '') or '')
+            element = one(app.state.database, 'SELECT * FROM setup_elements WHERE id=? AND company_id=? AND active=1', (element_id, cid))
+            if element is None:
+                raise ValueError('That Element is no longer active.')
+            people, requirements, ready, _, _ = _saved_requirements(app.state.database, cid, token)
+            if ready:
+                try:
+                    year = date.fromisoformat(arrival).year
+                except ValueError as exc:
+                    raise ValueError('Enter a valid arrival date.') from exc
+                reasons = element_reasons(app.state.database, cid, year, element, people, requirements)
+                if reasons:
+                    raise ValueError('That Element is not suitable: ' + ' · '.join(reasons))
             hold = create_timed_hold(
                 app.state.database,
                 context,
                 cid,
                 token,
                 element_id,
-                data.get('arrival_date', ''),
+                arrival,
                 data.get('departure_date', ''),
             )
             with app.state.database.connect() as c:

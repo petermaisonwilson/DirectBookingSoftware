@@ -2,7 +2,6 @@ from __future__ import annotations
 
 import json
 from datetime import date, timedelta
-from urllib.parse import quote_plus
 
 from fastapi import Request
 from fastapi.responses import HTMLResponse, RedirectResponse
@@ -42,7 +41,7 @@ def _item_requirements(database,hold_id):
 
 
 def _edit_url(item):
-    return '/availability/basket/edit?hold_id='+str(int(item['id']))
+    return '/availability/start?edit_hold='+str(int(item['id']))
 
 
 def booking_progress_strip(database,context,company_id,token):
@@ -85,19 +84,7 @@ def register_booking_progress_routes(app):
         context,company_id=_session_company(database,request);token=request.cookies.get(COOKIE_NAME,'')
         item=_load_item_into_working(database,company_id,token,hold_id)
         if item is None:return RedirectResponse('/availability/basket/review',303)
-        details=_item_requirements(database,hold_id)
-        detail_html=' · '.join(esc(x) for x in details) or 'No special requirements'
-        lead=str(item['lead_name'] or '').strip() or 'This booking'
-        calendar_q='element_type='+quote_plus(str(item['element_type']))+'&arrival='+quote_plus(str(item['arrival_date']))+'&departure='+quote_plus(str(item['departure_date']))+'&edit_hold='+str(hold_id)
-        saved_html='<div class="ok"><strong>Changes saved.</strong> You can change another part of this booking or finish editing.</div>' if saved else ''
-        body=f'''<h1>Edit booking — {esc(lead)}</h1>{booking_progress_strip(database,context,company_id,token)}{saved_html}
-        <div class="card"><h2>Current booking</h2><p><strong>Element:</strong> {esc(item['element_name'])} ({esc(item['element_type'])})</p><p><strong>Dates:</strong> {_fmt_user_date(str(item['arrival_date']))}–{_display_end(str(item['departure_date']),str(item['pricing_method']))}</p><p><strong>People & requirements:</strong> {detail_html}</p></div>
-        <div class="grid edit-booking-choices">
-          <div class="card"><h2>People & requirements</h2><p>Change the lead name, adults, children and ages, vehicle type, must-have features or extras.</p><p><a class="button" href="/availability/start?edit_hold={hold_id}">PEOPLE & REQUIREMENTS</a></p></div>
-          <div class="card"><h2>Element & dates</h2><p>Change the selected Element or use the coloured availability calendar to change the stay dates.</p><p><a class="button" href="/availability/calendar-v2?{calendar_q}">ELEMENT & DATES</a></p></div>
-        </div>
-        <div class="card"><p><a class="button secondary" href="/availability/basket/review">FINISH EDITING — BACK TO BASKET</a></p></div>'''
-        return HTMLResponse(layout('Edit booking',body,context))
+        return RedirectResponse(f'/availability/start?edit_hold={int(hold_id)}',303)
 
     @app.post('/availability/basket/remove-view')
     async def remove_from_progress(request:Request):
@@ -116,5 +103,5 @@ def register_booking_progress_routes(app):
         for item in items:
             hid=int(item['id']);details=_item_requirements(database,hid);detail_html=' · '.join(esc(x) for x in details) or 'No special requirements';lead=esc(str(item['lead_name'] or '').strip() or '—');rows_html+='<tr>'+f'<td><strong>{lead}</strong></td><td><strong>{esc(item["element_name"])}</strong><br><span class="muted">{esc(item["element_type"])}</span></td><td>{_fmt_user_date(str(item["arrival_date"]))}</td><td>{_display_end(str(item["departure_date"]),str(item["pricing_method"]))}</td><td>{detail_html}</td><td><a class="button secondary mini-action" href="{_edit_url(item)}">EDIT BOOKING</a> '+'<form method="post" action="/availability/basket/remove-view" class="inline-form">'+f'<input type="hidden" name="csrf" value="{esc(context["csrf_token"])}"><input type="hidden" name="hold_id" value="{hid}"><input type="hidden" name="return_to" value="/availability/basket/review"><button class="secondary mini-action" type="submit">REMOVE</button></form></td></tr>'
         next_text='Review the held Elements above. The next workflow stage will create an Offer or Confirm the Booking from this verified basket.' if str(context['role']) in {'operator','supervisor'} else 'Review the held Elements above. The next workflow stage will confirm the booking from this verified basket.'
-        body='<h1>Basket</h1>'+booking_progress_strip(database,context,company_id,token)+'<div class="card"><h2>Verify booking contents</h2><table><thead><tr><th>Name</th><th>Element</th><th>Arrival</th><th>End / Departure</th><th>Requirements</th><th>Actions</th></tr></thead><tbody>'+rows_html+'</tbody></table>'+f'<p class="muted">{esc(next_text)}</p><p><a class="button secondary" href="/availability/calendar-v2">BACK TO AVAILABILITY</a></p></div><style>.inline-form{{display:inline;margin:0}}.mini-action{{font-size:12px;padding:5px 8px}}</style>'
+        body='<h1>Basket</h1>'+booking_progress_strip(database,context,company_id,token)+'<div class="card"><h2>Verify booking contents</h2><table><thead><tr><th>Name</th><th>Element</th><th>Arrival</th><th>End / Departure</th><th>Requirements</th><th>Actions</th></tr></thead><tbody>'+rows_html+'</tbody></table>'+f'<p class="muted">{esc(next_text)}</p><p><a class="button secondary" href="/availability/start">NEW / CHANGE REQUIREMENTS</a></p></div><style>.inline-form{{display:inline;margin:0}}.mini-action{{font-size:12px;padding:5px 8px}}</style>'
         return HTMLResponse(layout('Basket',body,context))
