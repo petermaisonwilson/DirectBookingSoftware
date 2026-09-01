@@ -9,6 +9,13 @@ on:
       - web-v1-operations-navigation
       - web-v1-full-enquiry
       - web-v1-integrated-enquiry
+      - web-v1-addon-when
+      - web-v1-persistent-data
+      - web-v1-addon-person-pricing
+      - web-v1-addon-picker
+      - web-v1-setup-maintenance
+      - web-v1-availability-foundation
+      - web-v1-availability-calendar
   pull_request:
     branches:
       - main
@@ -37,7 +44,13 @@ jobs:
             "online/webv1_customers.py",
             "online/webv1_enquiries.py",
             "online/webv1_enquiry_builder.py",
+            "online/webv1_addon_when.py",
+            "online/webv1_addon_person.py",
+            "online/webv1_availability.py",
+            "online/webv1_calendar.py",
             "online/setup015.py",
+            "online/setup015_maintenance.py",
+            "online/setup015_element_availability_page.py",
             "run_online.py",
             "START_WEB_V1.bat",
             "requirements-online.txt",
@@ -46,6 +59,13 @@ jobs:
             "tests/web_v1_enquiry_search_test.py",
             "tests/web_v1_operations_navigation_test.py",
             "tests/web_v1_full_enquiry_test.py",
+            "tests/web_v1_addon_when_test.py",
+            "tests/web_v1_addon_person_pricing_test.py",
+            "tests/web_v1_addon_picker_test.py",
+            "tests/web_v1_setup_maintenance_test.py",
+            "tests/web_v1_availability_foundation_test.py",
+            "tests/web_v1_availability_calendar_test.py",
+            "tests/web_v1_persistent_data_test.py",
             "tests/online_setup015_test.py",
             "WEB_V1_FOUNDATION.md"
           )
@@ -69,7 +89,7 @@ jobs:
       - name: Verify Web V1 imports
         shell: pwsh
         run: |
-          python -c "from online.app import app; from online.webv1 import register_web_v1, initialise_web_v1; from online.webv1_customers import register_customer_routes; from online.webv1_enquiries import register_enquiry_routes; from online.webv1_enquiry_builder import register_enquiry_builder_routes; assert app and register_web_v1 and initialise_web_v1 and register_customer_routes and register_enquiry_routes and register_enquiry_builder_routes; print('Web V1 imports: passed')"
+          python -c "from online.app import app; from online.webv1 import register_web_v1, initialise_web_v1; from online.webv1_customers import register_customer_routes; from online.webv1_enquiries import register_enquiry_routes; from online.webv1_enquiry_builder import register_enquiry_builder_routes; from online.webv1_addon_when import register_addon_when_routes; from online.webv1_addon_person import initialise_addon_person; from online.webv1_availability import initialise_availability, register_availability_routes, availability_state, available_elements; from online.webv1_calendar import register_calendar_routes; from online.setup015_maintenance import register_setup_maintenance_routes; from online.setup015_element_availability_page import register_element_availability_page; assert app and register_web_v1 and initialise_web_v1 and register_customer_routes and register_enquiry_routes and register_enquiry_builder_routes and register_addon_when_routes and initialise_addon_person and initialise_availability and register_availability_routes and availability_state and available_elements and register_calendar_routes and register_setup_maintenance_routes and register_element_availability_page; print('Web V1 imports: passed')"
           if ($LASTEXITCODE -ne 0) { throw "Web V1 import verification failed" }
 
       - name: Run proven Setup regression test
@@ -108,6 +128,48 @@ jobs:
           python tests/web_v1_full_enquiry_test.py
           if ($LASTEXITCODE -ne 0) { throw "Integrated New/Edit Enquiry test failed" }
 
+      - name: Run Add-on When test
+        shell: pwsh
+        run: |
+          python tests/web_v1_addon_when_test.py
+          if ($LASTEXITCODE -ne 0) { throw "Add-on When test failed" }
+
+      - name: Run Add-on Person Type pricing test
+        shell: pwsh
+        run: |
+          python tests/web_v1_addon_person_pricing_test.py
+          if ($LASTEXITCODE -ne 0) { throw "Add-on Person Type pricing test failed" }
+
+      - name: Run Add-on picker test
+        shell: pwsh
+        run: |
+          python tests/web_v1_addon_picker_test.py
+          if ($LASTEXITCODE -ne 0) { throw "Add-on picker test failed" }
+
+      - name: Run Setup maintenance test
+        shell: pwsh
+        run: |
+          python tests/web_v1_setup_maintenance_test.py
+          if ($LASTEXITCODE -ne 0) { throw "Setup maintenance test failed" }
+
+      - name: Run availability foundation test
+        shell: pwsh
+        run: |
+          python tests/web_v1_availability_foundation_test.py
+          if ($LASTEXITCODE -ne 0) { throw "Availability foundation test failed" }
+
+      - name: Run coloured Availability Calendar test
+        shell: pwsh
+        run: |
+          python tests/web_v1_availability_calendar_test.py
+          if ($LASTEXITCODE -ne 0) { throw "Availability Calendar test failed" }
+
+      - name: Run persistent local data test
+        shell: pwsh
+        run: |
+          python tests/web_v1_persistent_data_test.py
+          if ($LASTEXITCODE -ne 0) { throw "Persistent local data test failed" }
+
       - name: Launch local server and health check
         shell: pwsh
         run: |
@@ -142,7 +204,7 @@ jobs:
       - name: Upload Web V1 artifact
         uses: actions/upload-artifact@v4
         with:
-          name: DirectBookingSoftware-Web-V1-Integrated-Enquiry
+          name: DirectBookingSoftware-Web-V1-Availability-Calendar
           path: artifact/
           if-no-files-found: error
           retention-days: 30
