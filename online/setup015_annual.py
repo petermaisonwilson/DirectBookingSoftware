@@ -52,7 +52,7 @@ def _occupancy_page(database, context, year: int | None, submitted: dict[str, st
     body = f'<h1>Occupancy & Person pricing</h1>{setup_nav()}{_error_html(message)}{_year_select(available, selected, "/setup/occupancy")}'
     if selected is None: return layout('Occupancy', body, context)
     elements = rows(database, 'SELECT * FROM setup_elements WHERE company_id=? AND active=1 ORDER BY element_type,name', (cid,)); people = rows(database, 'SELECT * FROM setup_person_types WHERE company_id=? AND active=1 ORDER BY name', (cid,))
-    body += f'<form method="post" action="/setup/occupancy"><input type="hidden" name="csrf" value="{esc(context["csrf_token"])}"><input type="hidden" name="year" value="{selected}"><div class="card" style="overflow:auto"><p><strong>No blanks:</strong> every Max and € box must contain a value. 0 is valid. A Person price of 0 means no extra charge.</p><table><thead><tr><th rowspan="2">Element</th><th rowspan="2">Total max</th>' + ''.join(f'<th colspan="2" style="text-align:center">{esc(p["name"])}</th>' for p in people) + '</tr><tr>' + ''.join('<th style="text-align:center">Max</th><th style="text-align:center">€</th>' for _ in people) + '</tr></thead><tbody>'
+    body += f'<form method="post" action="/setup/occupancy"><input type="hidden" name="csrf" value="{esc(context["csrf_token"])}"><input type="hidden" name="year" value="{selected}"><div class="card" style="overflow:auto"><p><strong>No blanks:</strong> every Min, Max and € box must contain a value. 0 is valid. Use Min 1 where an Element must contain at least one of that Person Type.</p><table><thead><tr><th rowspan="2">Element</th><th rowspan="2">Total max</th>' + ''.join(f'<th colspan="3" style="text-align:center">{esc(p["name"])}</th>' for p in people) + '</tr><tr>' + ''.join('<th style="text-align:center">Min</th><th style="text-align:center">Max</th><th style="text-align:center">€</th>' for _ in people) + '</tr></thead><tbody>'
     for element in elements:
         total_key = f't_{element["id"]}'
         if submitted: total_value = submitted.get(total_key, '')
@@ -60,13 +60,13 @@ def _occupancy_page(database, context, year: int | None, submitted: dict[str, st
             total = one(database, 'SELECT max_total FROM setup_occupancy WHERE company_id=? AND year=? AND element_id=?', (cid, selected, element['id'])); total_value = '' if total is None else str(total['max_total'])
         body += f'<tr><td>{esc(element["name"])}</td><td><input style="{_style(total_key, errors, "64px")}" name="{total_key}" value="{esc(total_value)}"></td>'
         for person in people:
-            max_key = f'p_{element["id"]}_{person["id"]}'; rate_key = f'pr_{element["id"]}_{person["id"]}'
+            min_key = f'pmin_{element["id"]}_{person["id"]}'; max_key = f'p_{element["id"]}_{person["id"]}'; rate_key = f'pr_{element["id"]}_{person["id"]}'
             if submitted:
-                max_value = submitted.get(max_key, ''); rate_value = submitted.get(rate_key, '')
+                min_value = submitted.get(min_key, ''); max_value = submitted.get(max_key, ''); rate_value = submitted.get(rate_key, '')
             else:
-                limit = one(database, 'SELECT max_count FROM setup_person_limits WHERE company_id=? AND year=? AND element_id=? AND person_type_id=?', (cid, selected, element['id'], person['id'])); price = one(database, 'SELECT rate FROM setup_person_prices WHERE company_id=? AND year=? AND element_id=? AND person_type_id=?', (cid, selected, element['id'], person['id']))
-                max_value = '' if limit is None else str(limit['max_count']); rate_value = '' if price is None else f'{float(price["rate"]):.2f}'
-            body += f'<td><input style="{_style(max_key, errors, "58px")}" name="{max_key}" value="{esc(max_value)}"></td><td><input style="{_style(rate_key, errors, "70px")}" name="{rate_key}" value="{esc(rate_value)}"></td>'
+                limit = one(database, 'SELECT min_count,max_count FROM setup_person_limits WHERE company_id=? AND year=? AND element_id=? AND person_type_id=?', (cid, selected, element['id'], person['id'])); price = one(database, 'SELECT rate FROM setup_person_prices WHERE company_id=? AND year=? AND element_id=? AND person_type_id=?', (cid, selected, element['id'], person['id']))
+                min_value = '' if limit is None else str(limit['min_count']); max_value = '' if limit is None else str(limit['max_count']); rate_value = '' if price is None else f'{float(price["rate"]):.2f}'
+            body += f'<td><input style="{_style(min_key, errors, "58px")}" name="{min_key}" value="{esc(min_value)}"></td><td><input style="{_style(max_key, errors, "58px")}" name="{max_key}" value="{esc(max_value)}"></td><td><input style="{_style(rate_key, errors, "70px")}" name="{rate_key}" value="{esc(rate_value)}"></td>'
         body += '</tr>'
     body += '</tbody></table><p><button>Save occupancy & Person prices</button></p></div></form>'
     return layout('Occupancy', body, context)
@@ -155,15 +155,17 @@ def register_annual_routes(app) -> None:
             try: totals.append((element['id'], valid_whole(data.get(total_key, ''))))
             except (TypeError, ValueError): errors.add(total_key)
             for person in people:
-                max_key = f'p_{element["id"]}_{person["id"]}'; rate_key = f'pr_{element["id"]}_{person["id"]}'
-                try: limits.append((element['id'], person['id'], valid_whole(data.get(max_key, ''))))
-                except (TypeError, ValueError): errors.add(max_key)
+                min_key = f'pmin_{element["id"]}_{person["id"]}'; max_key = f'p_{element["id"]}_{person["id"]}'; rate_key = f'pr_{element["id"]}_{person["id"]}'
+                try: minimum = valid_whole(data.get(min_key, '')); maximum = valid_whole(data.get(max_key, ''))
+                except (TypeError, ValueError): errors.update({min_key, max_key}); continue
+                if minimum > maximum: errors.update({min_key, max_key}); continue
+                limits.append((element['id'], person['id'], minimum, maximum))
                 try: prices.append((element['id'], person['id'], valid_money(data.get(rate_key, ''))))
                 except (TypeError, ValueError): errors.add(rate_key)
-        if errors: return HTMLResponse(_occupancy_page(database, context, year, data, errors, 'Every Total Max, Person Max and Person € box must contain a valid zero or positive value. Max values must be whole numbers. Zero is valid.'), 400)
+        if errors: return HTMLResponse(_occupancy_page(database, context, year, data, errors, 'Every Total Max, Person Min, Person Max and Person € box must contain a valid zero or positive value. Minimum cannot be greater than maximum.'), 400)
         with database.connect() as c:
             for eid, total in totals: c.execute('INSERT OR REPLACE INTO setup_occupancy VALUES (?,?,?,?)', (cid, year, eid, total))
-            for eid, pid, limit in limits: c.execute('INSERT OR REPLACE INTO setup_person_limits VALUES (?,?,?,?,?)', (cid, year, eid, pid, limit))
+            for eid, pid, minimum, maximum in limits: c.execute('INSERT OR REPLACE INTO setup_person_limits(company_id,year,element_id,person_type_id,max_count,min_count) VALUES (?,?,?,?,?,?)', (cid, year, eid, pid, maximum, minimum))
             for eid, pid, rate in prices: c.execute('INSERT OR REPLACE INTO setup_person_prices(company_id,year,element_id,person_type_id,rate) VALUES (?,?,?,?,?)', (cid, year, eid, pid, rate))
         audit(database, context, cid, 'OCCUPANCY_SAVED', 'pricing_year', year, None, {'elements': len(elements), 'person_prices': len(prices)}); return RedirectResponse(f'/setup/occupancy?year={year}', 303)
 
