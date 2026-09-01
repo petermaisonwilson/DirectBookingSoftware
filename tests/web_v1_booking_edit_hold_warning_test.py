@@ -69,8 +69,6 @@ def main() -> None:
                 return int(c.execute('''INSERT INTO element_holds(company_id,element_id,session_token,holder_user_id,arrival_date,departure_date,renewal_required_at,expires_at,created_at,updated_at,lead_name) VALUES (?,?,?,?,?,?,?,?,?,?,?)''', (cid, element_id, token, int(context['user_id']), '2035-08-10', '2035-08-13', (now + timedelta(minutes=9)).isoformat(timespec='seconds'), (now + timedelta(minutes=10)).isoformat(timespec='seconds'), now.isoformat(timespec='seconds'), now.isoformat(timespec='seconds'), lead)).lastrowid)
 
             camping_hold = make_hold(pitch1, 'Smith'); fishing_hold = make_hold(fishing, 'Smith'); jones_hold = make_hold(cabin, 'Jones')
-            # Old stored snapshots deliberately contain irrelevant Fishing values. #286
-            # must stop displaying/evaluating those values against the Fishing Peg.
             for hold_id in (camping_hold, fishing_hold, jones_hold):
                 c.execute('INSERT INTO hold_requirement_people(hold_id,company_id,person_type_id,quantity,ages_json) VALUES (?,?,?,?,?)', (hold_id, cid, adult, 1, '[]'))
                 c.execute('INSERT INTO hold_requirement_people(hold_id,company_id,person_type_id,quantity,ages_json) VALUES (?,?,?,?,?)', (hold_id, cid, child, 2, '[]'))
@@ -90,15 +88,15 @@ def main() -> None:
 
         review = client.get('/availability/basket/review')
         assert review.status_code == 200 and 'Edit Test Pitch' in review.text and 'Edit Test Peg A' in review.text and 'Edit Test Cabin 1' in review.text
-        # Motorhome and Child are relevant to Camping and Cabin, but not Fishing: only
-        # two copies should be visible despite three deliberately stale snapshots.
-        assert review.text.count('Edit Test Motorhome 1') == 2
-        assert review.text.count('2 Edit Test Child') == 2
+        # Each relevant value appears once in the persistent strip and once in the
+        # Basket table. Fishing's deliberately stale Child/Motorhome values are hidden.
+        assert review.text.count('Edit Test Motorhome 1') == 4
+        assert review.text.count('2 Edit Test Child') == 4
 
         edit = client.get('/availability/start', params={'edit_hold': camping_hold})
         assert edit.status_code == 200 and 'Editing this basket item' in edit.text
         assert 'value="Edit Test Camping" selected' in edit.text
-        assert 'Only the Person Types, Features and Extras' in edit.text or 'only the Person Types, Features and Extras' in edit.text
+        assert 'only the Person Types, Features and Extras' in edit.text
 
         changed = client.post('/availability/requirements-v3', data={
             'csrf': csrf, 'edit_hold': str(camping_hold), 'lead_name': 'Smith', 'element_type': 'Edit Test Camping',
@@ -109,16 +107,15 @@ def main() -> None:
         with db.connect() as c:
             assert int(c.execute('SELECT quantity FROM hold_requirement_people WHERE hold_id=? AND person_type_id=?', (camping_hold, adult)).fetchone()['quantity']) == 2
             assert int(c.execute('SELECT quantity FROM hold_requirement_people WHERE hold_id=? AND person_type_id=?', (camping_hold, child)).fetchone()['quantity']) == 0
-            # Fishing intentionally remains its own one-adult booking; no cross-Element copying.
             assert int(c.execute('SELECT quantity FROM hold_requirement_people WHERE hold_id=? AND person_type_id=?', (fishing_hold, adult)).fetchone()['quantity']) == 1
             assert int(c.execute('SELECT quantity FROM hold_requirement_people WHERE hold_id=? AND person_type_id=?', (fishing_hold, child)).fetchone()['quantity']) == 2
             assert int(c.execute('SELECT quantity FROM hold_requirement_addons WHERE hold_id=? AND addon_id=?', (fishing_hold, motorhome)).fetchone()['quantity']) == 1
             assert int(c.execute('SELECT quantity FROM hold_requirement_people WHERE hold_id=? AND person_type_id=?', (jones_hold, child)).fetchone()['quantity']) == 2
 
         changed_review = client.get('/availability/basket/review')
-        assert changed_review.text.count('Edit Test Caravan 1') == 1
-        assert changed_review.text.count('Edit Test Motorhome 1') == 1
-        assert changed_review.text.count('2 Edit Test Child') == 1
+        assert changed_review.text.count('Edit Test Caravan 1') == 2
+        assert changed_review.text.count('Edit Test Motorhome 1') == 2
+        assert changed_review.text.count('2 Edit Test Child') == 2
 
         calendar = client.get(changed.headers['location'])
         assert calendar.status_code == 200
@@ -131,8 +128,6 @@ def main() -> None:
         updated = client.post('/availability/basket/update', data={'csrf': csrf, 'hold_id': str(camping_hold), 'element_id': str(pitch2), 'arrival_date': '2035-08-10', 'departure_date': '2035-08-13'})
         assert updated.status_code == 200
 
-        # No hard-coded Adult rule: the configured minimum is what rejects a
-        # children-only Camping request.
         children_only = client.post('/availability/requirements-v3', data={
             'csrf': csrf, 'edit_hold': str(camping_hold), 'lead_name': 'Smith', 'element_type': 'Edit Test Camping',
             'arrival': '2035-08-10', 'departure': '2035-08-13', f'person_{adult}': '0', f'person_{child}': '2',
@@ -142,8 +137,6 @@ def main() -> None:
         children_calendar = client.get(children_only.headers['location'])
         assert 'Edit Test Adult minimum 1' in children_calendar.text
 
-        # Editing Fishing cleans its old irrelevant snapshot and keeps only the one
-        # Person Type Fishing actually uses. Landing Net is not an Ask question.
         fishing_edit = client.get('/availability/start', params={'edit_hold': fishing_hold})
         assert fishing_edit.status_code == 200 and 'value="Edit Test Fishing" selected' in fishing_edit.text
         fishing_saved = client.post('/availability/requirements-v3', data={
