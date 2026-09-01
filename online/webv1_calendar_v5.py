@@ -8,9 +8,11 @@ from fastapi import Request
 from fastapi.responses import HTMLResponse
 
 from .app import COOKIE_NAME, esc, layout
-from .setup015_core import rows
+from .setup015_core import one, rows
 from .webv1_addon_popup import popup_addons_for_element
 from .webv1_booking_progress import booking_progress_strip
+from .webv1_booking_requirements import _saved_lead_name, _saved_requirements
+from .webv1_booking_requirements_core import element_reasons
 from .webv1_booking_status import default_status
 from .webv1_calendar_v2 import _bar, _cols, _records, _session_context
 from .webv1_calendar_v4 import _basket_rows, _header, _parse, _window
@@ -49,6 +51,9 @@ def register_calendar_v5_routes(app) -> None:
                 departure = str(editing['departure_date'])
                 departure_day = _parse(departure)
 
+        people, requirements, requirements_ready, _, _ = _saved_requirements(database, cid, token)
+        working_lead = _saved_lead_name(database, cid, token).strip()
+
         options = '<option value="">Select Element Type</option>' + ''.join(
             f'<option value="{esc(t)}" {"selected" if t == selected_type else ""}>{esc(t)}</option>' for t in types
         )
@@ -57,6 +62,32 @@ def register_calendar_v5_routes(app) -> None:
             preserve += f'&edit_hold={edit_hold}'
 
         body = booking_progress_strip(database, context, cid, token) + '<h1>Availability Calendar</h1>'
+
+        if requirements_ready:
+            summary = []
+            for pid, data in people.items():
+                qty = int(data.get('quantity', 0))
+                if qty:
+                    p = one(database, 'SELECT name FROM setup_person_types WHERE company_id=? AND id=?', (cid, pid))
+                    label = f'{qty} {str(p["name"]) if p else "person"}'
+                    ages = data.get('ages', [])
+                    if ages:
+                        label += ' (age' + ('s ' if len(ages) != 1 else ' ') + ', '.join(str(x) for x in ages) + ')'
+                    summary.append(label)
+            for aid, qty in requirements.items():
+                if int(qty):
+                    a = one(database, 'SELECT name FROM setup_addons WHERE company_id=? AND id=?', (cid, aid))
+                    summary.append(f'{str(a["name"]) if a else "Requirement"} {int(qty)}')
+            summary_html = ' · '.join(esc(x) for x in summary) or 'No special requirements'
+            name_html = f'<strong>Name:</strong> {esc(working_lead)} &nbsp; ' if working_lead else ''
+            type_html = f'<strong>Element Type:</strong> {esc(selected_type)} &nbsp; ' if selected_type else ''
+            q = ''
+            if edit_hold:
+                q = f'?edit_hold={int(edit_hold)}'
+            if selected_type:
+                q += ('&' if q else '?') + 'element_type=' + quote_plus(selected_type)
+            body += f'<div class="card requirement-summary">{name_html}{type_html}<strong>Your requirements:</strong> {summary_html} <a class="button secondary" style="margin-left:10px" href="/availability/start{q}">CHANGE REQUIREMENTS</a></div>'
+
         body += f'''<div class="card"><form id="availability-form" method="get" action="/availability/calendar-v2">
         <input type="hidden" id="edit-hold" name="edit_hold" value="{edit_hold or ''}"><input type="hidden" id="calendar-start" name="start" value="{visible_start.isoformat()}">
         <div class="grid"><div><label>Element Type</label><select id="element-type" name="element_type">{options}</select></div>
@@ -81,7 +112,8 @@ def register_calendar_v5_routes(app) -> None:
             status_legend = ''.join(f'<span class="legend mini" style="background:{esc(r["colour"])}">{esc(r["name"])}</span>' for r in status_rows)
         else:
             status_legend = '<span class="legend mini unavailable">Unavailable</span>'
-        legend = f'<span class="legend mini available-key">Available</span>{status_legend}<span class="legend mini own-held">In this booking</span><span class="legend mini closed">Closed</span>'
+        unsuitable_legend = '<span class="legend mini party-unsuitable-key">Not suitable for your requirements</span>' if requirements_ready else ''
+        legend = f'<span class="legend mini available-key">Available</span>{unsuitable_legend}{status_legend}<span class="legend mini own-held">In this booking</span><span class="legend mini closed">Closed</span>'
 
         cal_header = _header(dates, arrival_day, departure_day)
         cal_rows = ''
@@ -101,6 +133,11 @@ def register_calendar_v5_routes(app) -> None:
 
         for element in elements:
             eid = int(element['id'])
+            reasons = element_reasons(database, cid, feature_year, element, people, requirements) if requirements_ready else []
+            party_unsuitable = bool(reasons)
+            same_party_hold = next((r for r in basket if int(r['element_id']) == eid and working_lead and str(r['lead_name'] or '').strip() == working_lead), None)
+            held_now_unsuitable = bool(party_unsuitable and same_party_hold)
+
             features = popup_addons_for_element(database, cid, feature_year, element)
             feature_json = esc(json.dumps(features, ensure_ascii=False))
             bookings, enquiries, closures, holds = _records(database, cid, eid, visible_start, visible_end)
@@ -110,7 +147,7 @@ def register_calendar_v5_routes(app) -> None:
             selected_range_available = bool(
                 arrival_day and departure_day and departure_day > arrival_day
                 and arrival_day >= visible_start and departure_day <= visible_end
-                and not locked_in_basket
+                and not locked_in_basket and not party_unsuitable
             )
 
             for i, day in enumerate(dates):
@@ -126,15 +163,20 @@ def register_calendar_v5_routes(app) -> None:
                     selected_range_available = False
                 col = i + 2
 
-                if code == 'AVAILABLE' and not locked_in_basket:
+                if code == 'AVAILABLE' and party_unsuitable:
+                    cells += f'<span class="cal-cell unsuitable{selected}" style="grid-column:{col};grid-row:1" data-date="{day.isoformat()}" data-element="{eid}" data-name="{esc(element["name"])}"></span>'
+                elif code == 'AVAILABLE' and not locked_in_basket:
                     cells += f'<button type="button" class="cal-cell available date-pick{selected}" style="grid-column:{col};grid-row:1" data-date="{day.isoformat()}" data-element="{eid}" data-name="{esc(element["name"])}"></button>'
                 elif code == 'AVAILABLE':
                     cells += f'<button type="button" class="cal-cell available basket-locked{selected}" style="grid-column:{col};grid-row:1" data-date="{day.isoformat()}" data-element="{eid}" data-name="{esc(element["name"])}"></button>'
                 elif code == 'HELD_BY_YOU':
-                    cls = ' editable-own date-pick' if own_editing_day else ''
-                    tag = 'button type="button"' if own_editing_day else 'span'
-                    endtag = 'button' if own_editing_day else 'span'
-                    cells += f'<{tag} class="cal-cell own-held{cls}{selected}" style="grid-column:{col};grid-row:1" data-date="{day.isoformat()}" data-element="{eid}" data-name="{esc(element["name"])}"></{endtag}>'
+                    if held_now_unsuitable:
+                        cells += f'<span class="cal-cell own-held now-unsuitable{selected}" style="grid-column:{col};grid-row:1" data-date="{day.isoformat()}" data-element="{eid}" data-name="{esc(element["name"])}"></span>'
+                    else:
+                        cls = ' editable-own date-pick' if own_editing_day else ''
+                        tag = 'button type="button"' if own_editing_day else 'span'
+                        endtag = 'button' if own_editing_day else 'span'
+                        cells += f'<{tag} class="cal-cell own-held{cls}{selected}" style="grid-column:{col};grid-row:1" data-date="{day.isoformat()}" data-element="{eid}" data-name="{esc(element["name"])}"></{endtag}>'
                 elif code in {'BOOKED', 'ENQUIRY', 'HELD'}:
                     cells += f'<span class="cal-cell unavailable{selected}" style="grid-column:{col};grid-row:1" data-date="{day.isoformat()}"></span>'
                 else:
@@ -163,9 +205,15 @@ def register_calendar_v5_routes(app) -> None:
                     continue
                 bars += _bar(held_name if staff else 'Unavailable', held_colour if staff else '#F3C5C9', _cols(hold['arrival_date'], hold['departure_date'], visible_start, visible_end), css='held')
 
+            if held_now_unsuitable:
+                reason_html = f'<small class="held-unsuitable-warning"><strong>CURRENTLY HELD — NOW UNSUITABLE</strong>: {esc(" · ".join(reasons))}</small>'
+            elif party_unsuitable:
+                reason_html = f'<small class="party-reason">{esc("Not suitable: " + " · ".join(reasons))}</small>'
+            else:
+                reason_html = ''
             name_html = (
                 f'<button type="button" class="element-info-title" data-element-name="{esc(element["name"])}" data-features="{feature_json}"><strong>{esc(element["name"])}</strong></button>'
-                f'<button type="button" class="more-info" data-element-name="{esc(element["name"])}" data-features="{feature_json}">More info</button>'
+                f'<button type="button" class="more-info" data-element-name="{esc(element["name"])}" data-features="{feature_json}">More info</button>{reason_html}'
             )
             selection_style = ''
             selection_hidden = ' hidden'
@@ -175,14 +223,19 @@ def register_calendar_v5_routes(app) -> None:
                 selection_style = f' style="grid-column:{selection_start} / {selection_end};grid-row:1"'
                 selection_hidden = ''
             selection = f'<button type="button" class="selection-action" data-element="{eid}" data-name="{esc(element["name"])}"{selection_style}{selection_hidden}>{"USE THIS ELEMENT" if edit_hold else "RESERVE"}</button>'
-            cal_rows += f'<div class="cal-row element-row" data-element="{eid}" data-name="{esc(element["name"])}" data-features="{feature_json}"><div class="cal-name" style="grid-column:1;grid-row:1">{name_html}</div>{cells}{bars}{selection}</div>'
+            row_classes = 'cal-row element-row'
+            if party_unsuitable:
+                row_classes += ' party-unsuitable'
+            if held_now_unsuitable:
+                row_classes += ' held-now-unsuitable'
+            cal_rows += f'<div class="{row_classes}" data-element="{eid}" data-name="{esc(element["name"])}" data-features="{feature_json}"><div class="cal-name" style="grid-column:1;grid-row:1">{name_html}</div>{cells}{bars}{selection}</div>'
 
         if not cal_rows:
             cal_rows = '<div class="card"><p>No active Elements exist for this Element Type.</p></div>' if selected_type else '<div class="card"><p>Select an Element Type to see matching Elements.</p></div>'
 
         body += f'''<div class="card availability-card"><div class="availability-head"><h2>Availability</h2><div class="legend-row compact"><strong>Key:</strong>{legend}</div></div>
         <div id="calendar-scroll" class="calendar-scroll"><div class="calendar-grid" style="--days:{display_days}">{cal_header}{cal_rows}</div></div>
-        <p class="muted">Every Element of the selected type is shown. Pale green days are available. Elements that do not meet the booking requirements remain visible with the reason why, so you can change the requirements if you want a particular Element.</p></div>'''
+        <p class="muted">Every Element of the selected type is shown. Pale green days are available. Elements that do not meet the booking requirements remain visible with the reason why, so you can change the requirements if you want a particular Element. A yellow Element remains protected while held; if revised requirements make it unsuitable it is clearly marked and must be replaced before proceeding.</p></div>'''
 
         body += f'''<div id="quick-element-info" class="quick-element-info" hidden></div>
         <div id="info-modal" class="hold-modal" hidden><div class="hold-dialog"><button id="info-close" type="button" class="secondary close-info">Close</button><h2 id="info-title"></h2><p class="muted">Element information</p><div id="info-features"></div></div></div>
@@ -191,12 +244,13 @@ def register_calendar_v5_routes(app) -> None:
         .calendar-grid{{min-width:calc(190px + (var(--days) * 48px));background:white;position:relative}}
         .cal-row{{display:grid;grid-template-columns:190px repeat(var(--days),48px);grid-template-rows:52px;width:calc(190px + (var(--days) * 48px));min-width:calc(190px + (var(--days) * 48px));position:relative;height:52px;border-bottom:2px solid #fff;box-sizing:border-box;overflow:visible}}
         .element-row .cal-cell{{height:50px;box-sizing:border-box}} #calendar-scroll .element-row>.cal-name{{position:sticky!important;left:0!important;grid-column:1!important;z-index:50!important;height:50px;background:#fff!important}}
-        .element-row.party-unsuitable{{grid-template-rows:62px;height:62px}} .element-row.party-unsuitable .cal-cell{{height:60px}} .element-row.party-unsuitable .cal-name{{height:60px!important}}
+        .element-row.party-unsuitable{{grid-template-rows:68px;height:68px}} .element-row.party-unsuitable .cal-cell{{height:66px}} .element-row.party-unsuitable .cal-name{{height:66px!important}}
         .cal-head{{background:#f4f6f8;position:sticky;top:0;z-index:60}} .cal-name{{padding:7px;position:sticky;left:0;z-index:50;width:190px;box-sizing:border-box;background:white;border-right:2px solid #c5cdd6}}
         .element-info-title{{display:block;border:0;background:none;color:#1f2937;padding:0;margin:0;text-align:left;font:inherit;cursor:help}} .cal-name .more-info{{border:0;background:none;color:#365f86;padding:2px 0;font-size:12px;text-decoration:underline}}
         .cal-head .cal-name{{background:#f4f6f8!important;z-index:70!important}} .cal-date{{padding:6px 2px;text-align:center;border-right:1px solid #e5e9ee;font-size:12px;background:#f4f6f8}} .cal-date small{{display:block;color:#66717f}}
-        .cal-cell{{border:0;border-right:1px solid rgba(255,255,255,.6);display:block;z-index:1;padding:0;margin:0}} button.cal-cell{{cursor:pointer}} .cal-cell.available{{background:#dff2df}} .cal-cell.unavailable{{background:#f6d6d9}} .cal-cell.own-held{{background:#ffe39a}} .cal-cell.closed{{background:#e1e4e8}}
-        .cal-cell.basket-locked{{cursor:help}} .cal-cell.selected-date,.cal-date.selected-date{{box-shadow:inset 0 0 0 2px #6d8196}}
+        .cal-cell{{border:0;border-right:1px solid rgba(255,255,255,.6);display:block;z-index:1;padding:0;margin:0}} button.cal-cell{{cursor:pointer}} .cal-cell.available{{background:#dff2df}} .cal-cell.unavailable{{background:#f6d6d9}} .cal-cell.own-held{{background:#ffe39a}} .cal-cell.closed{{background:#e1e4e8}} .cal-cell.unsuitable{{background:#eadcf4;cursor:not-allowed}}
+        .element-row.held-now-unsuitable .cal-cell.own-held{{outline:3px solid #b42318;outline-offset:-3px}} .held-unsuitable-warning{{display:block;color:#b42318;font-size:10px;line-height:1.15;margin-top:2px}} .party-reason{{display:block;color:#6d3f7c;font-size:10px;line-height:1.15;margin-top:2px}}
+        .party-unsuitable-key{{background:#eadcf4}} .cal-cell.basket-locked{{cursor:help}} .cal-cell.selected-date,.cal-date.selected-date{{box-shadow:inset 0 0 0 2px #6d8196}}
         .selection-action{{z-index:7;align-self:center;height:34px;margin:0 2px;padding:4px 12px;border-radius:6px;font-weight:bold}} .selection-action[hidden]{{display:none!important}}
         .availability-head{{display:flex;justify-content:space-between;align-items:center;gap:14px;flex-wrap:wrap}} .availability-head h2{{margin:0}} .legend-row{{display:flex;gap:6px;flex-wrap:wrap;align-items:center}} .legend.mini{{padding:2px 6px;border-radius:4px;font-size:11px}} .available-key{{background:#dff2df}} .own-held{{background:#ffe39a}} .legend.closed{{background:#e1e4e8}}
         .cal-bar{{z-index:4;align-self:center;height:30px;margin:0 2px;border-radius:5px;overflow:hidden;white-space:nowrap;display:flex;align-items:center}} .cal-bar a,.cal-bar span{{display:block;padding:6px 8px;color:#26313d;text-decoration:none;width:100%;overflow:hidden;text-overflow:ellipsis}}
