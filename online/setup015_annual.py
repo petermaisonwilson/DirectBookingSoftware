@@ -62,7 +62,7 @@ def _occupancy_page(database, context, year: int | None, submitted: dict[str, st
         for person in people:
             min_key = f'pmin_{element["id"]}_{person["id"]}'; max_key = f'p_{element["id"]}_{person["id"]}'; rate_key = f'pr_{element["id"]}_{person["id"]}'
             if submitted:
-                min_value = submitted.get(min_key, ''); max_value = submitted.get(max_key, ''); rate_value = submitted.get(rate_key, '')
+                min_value = submitted.get(min_key, '0'); max_value = submitted.get(max_key, ''); rate_value = submitted.get(rate_key, '')
             else:
                 limit = one(database, 'SELECT min_count,max_count FROM setup_person_limits WHERE company_id=? AND year=? AND element_id=? AND person_type_id=?', (cid, selected, element['id'], person['id'])); price = one(database, 'SELECT rate FROM setup_person_prices WHERE company_id=? AND year=? AND element_id=? AND person_type_id=?', (cid, selected, element['id'], person['id']))
                 min_value = '' if limit is None else str(limit['min_count']); max_value = '' if limit is None else str(limit['max_count']); rate_value = '' if price is None else f'{float(price["rate"]):.2f}'
@@ -156,7 +156,7 @@ def register_annual_routes(app) -> None:
             except (TypeError, ValueError): errors.add(total_key)
             for person in people:
                 min_key = f'pmin_{element["id"]}_{person["id"]}'; max_key = f'p_{element["id"]}_{person["id"]}'; rate_key = f'pr_{element["id"]}_{person["id"]}'
-                try: minimum = valid_whole(data.get(min_key, '')); maximum = valid_whole(data.get(max_key, ''))
+                try: minimum = valid_whole(data.get(min_key, '0')); maximum = valid_whole(data.get(max_key, ''))
                 except (TypeError, ValueError): errors.update({min_key, max_key}); continue
                 if minimum > maximum: errors.update({min_key, max_key}); continue
                 limits.append((element['id'], person['id'], minimum, maximum))
