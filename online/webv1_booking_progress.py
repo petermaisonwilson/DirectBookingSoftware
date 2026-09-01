@@ -7,6 +7,7 @@ from fastapi import Request
 from fastapi.responses import HTMLResponse, RedirectResponse
 
 from .app import COOKIE_NAME, esc, form_data, layout
+from .setup015_calculator import _addon_rule
 from .setup015_core import require_csrf, rows
 from .webv1_availability import _session_company
 
@@ -27,16 +28,21 @@ def _held_items(database,company_id,token):
     return rows(database,'''SELECT h.id,h.element_id,h.arrival_date,h.departure_date,h.expires_at,h.lead_name,e.name AS element_name,e.element_type,e.pricing_method FROM element_holds h JOIN setup_elements e ON e.id=h.element_id AND e.company_id=h.company_id WHERE h.company_id=? AND h.session_token=? ORDER BY h.created_at,h.id''',(company_id,token))
 
 
-def _item_requirements(database,hold_id):
-    details=[]
-    for p in rows(database,'''SELECT hp.quantity,hp.ages_json,pt.name FROM hold_requirement_people hp LEFT JOIN setup_person_types pt ON pt.id=hp.person_type_id AND pt.company_id=hp.company_id WHERE hp.hold_id=? AND hp.quantity>0 ORDER BY pt.name''',(hold_id,)):
+def _item_requirements(database,item):
+    details=[];hold_id=int(item['id']);element_id=int(item['element_id'])
+    try:year=date.fromisoformat(str(item['arrival_date'])).year
+    except ValueError:year=date.today().year
+    for p in rows(database,'''SELECT hp.quantity,hp.ages_json,pt.name,l.min_count,l.max_count FROM hold_requirement_people hp LEFT JOIN setup_person_types pt ON pt.id=hp.person_type_id AND pt.company_id=hp.company_id LEFT JOIN setup_person_limits l ON l.company_id=hp.company_id AND l.year=? AND l.element_id=? AND l.person_type_id=hp.person_type_id WHERE hp.hold_id=? AND hp.quantity>0 AND l.person_type_id IS NOT NULL AND (l.max_count>0 OR l.min_count>0) ORDER BY pt.name''',(year,element_id,hold_id)):
         label=f'{int(p["quantity"])} {str(p["name"] or "person")}'
         try:ages=json.loads(p['ages_json'] or '[]')
         except json.JSONDecodeError:ages=[]
         if ages:label+=' (age'+('s ' if len(ages)!=1 else ' ')+', '.join(str(x) for x in ages)+')'
         details.append(label)
-    for a in rows(database,'''SELECT ha.quantity,sa.name FROM hold_requirement_addons ha LEFT JOIN setup_addons sa ON sa.id=ha.addon_id AND sa.company_id=ha.company_id WHERE ha.hold_id=? AND ha.quantity>0 ORDER BY sa.name''',(hold_id,)):
-        details.append(f'{str(a["name"] or "Requirement")} {int(a["quantity"])}')
+    element_rows=rows(database,'SELECT * FROM setup_elements WHERE id=?',(element_id,));element=element_rows[0] if element_rows else None
+    if element:
+        for a in rows(database,'''SELECT ha.addon_id,ha.quantity,sa.name,sa.ask_before_availability FROM hold_requirement_addons ha LEFT JOIN setup_addons sa ON sa.id=ha.addon_id AND sa.company_id=ha.company_id WHERE ha.hold_id=? AND ha.quantity>0 AND sa.ask_before_availability=1 ORDER BY sa.name''',(hold_id,)):
+            if _addon_rule(database,int(a.get('company_id',item.get('company_id',0)) or 0),year,element,int(a['addon_id'])).get('allowed'):
+                details.append(f'{str(a["name"] or "Requirement")} {int(a["quantity"])}')
     return details
 
 
@@ -49,10 +55,7 @@ def booking_progress_strip(database,context,company_id,token):
     if not items:return ''
     chips=[]
     for item in items:
-        details=_item_requirements(database,int(item['id']))
-        detail_html=' · '.join(esc(x) for x in details) or 'No special requirements'
-        lead=str(item['lead_name'] or '').strip()
-        heading=(esc(lead)+' — ' if lead else '')+esc(item['element_name'])
+        details=_item_requirements(database,item);detail_html=' · '.join(esc(x) for x in details) or 'No special requirements';lead=str(item['lead_name'] or '').strip();heading=(esc(lead)+' — ' if lead else '')+esc(item['element_name'])
         chips.append('<div class="booking-progress-item">'+f'<strong>{heading}</strong> <span>{_fmt_user_date(str(item["arrival_date"]))}–{_display_end(str(item["departure_date"]),str(item["pricing_method"]))}</span> <span class="booking-progress-requirements">{detail_html}</span> <a class="button secondary mini-action" href="{_edit_url(item)}">EDIT BOOKING</a> '+'<form method="post" action="/availability/basket/remove-view" class="inline-form">'+f'<input type="hidden" name="csrf" value="{esc(context["csrf_token"])}"><input type="hidden" name="hold_id" value="{int(item["id"])}"><button type="submit" class="secondary mini-action">REMOVE</button></form></div>')
     return '<div class="card persistent-booking-progress"><div class="booking-progress-heading"><strong>Booking in progress</strong><span class="booking-progress-actions"><form method="post" action="/availability/new-booking" class="inline-form">'+f'<input type="hidden" name="csrf" value="{esc(context["csrf_token"])}"><button type="submit">NEW BOOKING</button></form> '+'<a class="button secondary" href="/availability/basket/review">VIEW BASKET</a></span></div>'+''.join(chips)+'''<style>.persistent-booking-progress{border-color:#9bb3c9;background:#f7fbff}.booking-progress-heading{display:flex;justify-content:space-between;align-items:center;gap:12px;flex-wrap:wrap;margin-bottom:8px}.booking-progress-actions{display:inline-flex;gap:6px;align-items:center;flex-wrap:wrap}.booking-progress-item{display:flex;align-items:center;gap:8px;flex-wrap:wrap;padding:7px 0;border-top:1px solid #d8e2eb}.booking-progress-item:first-of-type{border-top:0}.booking-progress-requirements{color:#52606d;font-size:13px}.inline-form{display:inline;margin:0}.mini-action{font-size:12px;padding:5px 8px}</style></div>'''
 
@@ -61,8 +64,7 @@ def _load_item_into_working(database,company_id,token,hold_id):
     with database.connect() as c:
         item=c.execute('''SELECT h.*,e.name AS element_name,e.element_type,e.pricing_method FROM element_holds h JOIN setup_elements e ON e.id=h.element_id AND e.company_id=h.company_id WHERE h.id=? AND h.company_id=? AND h.session_token=?''',(hold_id,company_id,token)).fetchone()
         if item is None:return None
-        c.execute('DELETE FROM booking_requirement_people WHERE company_id=? AND session_token=?',(company_id,token))
-        c.execute('DELETE FROM booking_requirement_addons WHERE company_id=? AND session_token=?',(company_id,token))
+        c.execute('DELETE FROM booking_requirement_people WHERE company_id=? AND session_token=?',(company_id,token));c.execute('DELETE FROM booking_requirement_addons WHERE company_id=? AND session_token=?',(company_id,token))
         c.execute('''INSERT INTO booking_requirement_people(session_token,company_id,person_type_id,quantity,ages_json) SELECT ?,company_id,person_type_id,quantity,ages_json FROM hold_requirement_people WHERE hold_id=?''',(token,hold_id))
         c.execute('''INSERT INTO booking_requirement_addons(session_token,company_id,addon_id,quantity) SELECT ?,company_id,addon_id,quantity FROM hold_requirement_addons WHERE hold_id=?''',(token,hold_id))
         c.execute('''INSERT INTO booking_requirement_sessions(session_token,company_id,ready,arrival_date,departure_date,lead_name,updated_at) VALUES (?,?,1,?,?,?,CURRENT_TIMESTAMP) ON CONFLICT(session_token,company_id) DO UPDATE SET ready=1,arrival_date=excluded.arrival_date,departure_date=excluded.departure_date,lead_name=excluded.lead_name,updated_at=CURRENT_TIMESTAMP''',(token,company_id,str(item['arrival_date']),str(item['departure_date']),str(item['lead_name'] or '')))
@@ -81,8 +83,7 @@ def register_booking_progress_routes(app):
 
     @app.get('/availability/basket/edit',response_class=HTMLResponse)
     def edit_basket_item(request:Request,hold_id:int,saved:int=0):
-        context,company_id=_session_company(database,request);token=request.cookies.get(COOKIE_NAME,'')
-        item=_load_item_into_working(database,company_id,token,hold_id)
+        context,company_id=_session_company(database,request);token=request.cookies.get(COOKIE_NAME,'');item=_load_item_into_working(database,company_id,token,hold_id)
         if item is None:return RedirectResponse('/availability/basket/review',303)
         return RedirectResponse(f'/availability/start?edit_hold={int(hold_id)}',303)
 
@@ -101,7 +102,7 @@ def register_booking_progress_routes(app):
         if not items:return HTMLResponse(layout('Basket','<h1>Basket</h1><div class="card"><p>Your basket is empty.</p><p><a class="button" href="/availability/start">Start booking</a></p></div>',context))
         rows_html=''
         for item in items:
-            hid=int(item['id']);details=_item_requirements(database,hid);detail_html=' · '.join(esc(x) for x in details) or 'No special requirements';lead=esc(str(item['lead_name'] or '').strip() or '—');rows_html+='<tr>'+f'<td><strong>{lead}</strong></td><td><strong>{esc(item["element_name"])}</strong><br><span class="muted">{esc(item["element_type"])}</span></td><td>{_fmt_user_date(str(item["arrival_date"]))}</td><td>{_display_end(str(item["departure_date"]),str(item["pricing_method"]))}</td><td>{detail_html}</td><td><a class="button secondary mini-action" href="{_edit_url(item)}">EDIT BOOKING</a> '+'<form method="post" action="/availability/basket/remove-view" class="inline-form">'+f'<input type="hidden" name="csrf" value="{esc(context["csrf_token"])}"><input type="hidden" name="hold_id" value="{hid}"><input type="hidden" name="return_to" value="/availability/basket/review"><button class="secondary mini-action" type="submit">REMOVE</button></form></td></tr>'
+            hid=int(item['id']);details=_item_requirements(database,item);detail_html=' · '.join(esc(x) for x in details) or 'No special requirements';lead=esc(str(item['lead_name'] or '').strip() or '—');rows_html+='<tr>'+f'<td><strong>{lead}</strong></td><td><strong>{esc(item["element_name"])}</strong><br><span class="muted">{esc(item["element_type"])}</span></td><td>{_fmt_user_date(str(item["arrival_date"]))}</td><td>{_display_end(str(item["departure_date"]),str(item["pricing_method"]))}</td><td>{detail_html}</td><td><a class="button secondary mini-action" href="{_edit_url(item)}">EDIT BOOKING</a> '+'<form method="post" action="/availability/basket/remove-view" class="inline-form">'+f'<input type="hidden" name="csrf" value="{esc(context["csrf_token"])}"><input type="hidden" name="hold_id" value="{hid}"><input type="hidden" name="return_to" value="/availability/basket/review"><button class="secondary mini-action" type="submit">REMOVE</button></form></td></tr>'
         next_text='Review the held Elements above. The next workflow stage will create an Offer or Confirm the Booking from this verified basket.' if str(context['role']) in {'operator','supervisor'} else 'Review the held Elements above. The next workflow stage will confirm the booking from this verified basket.'
         body='<h1>Basket</h1>'+booking_progress_strip(database,context,company_id,token)+'<div class="card"><h2>Verify booking contents</h2><table><thead><tr><th>Name</th><th>Element</th><th>Arrival</th><th>End / Departure</th><th>Requirements</th><th>Actions</th></tr></thead><tbody>'+rows_html+'</tbody></table>'+f'<p class="muted">{esc(next_text)}</p><p><a class="button secondary" href="/availability/start">NEW / CHANGE REQUIREMENTS</a></p></div><style>.inline-form{{display:inline;margin:0}}.mini-action{{font-size:12px;padding:5px 8px}}</style>'
         return HTMLResponse(layout('Basket',body,context))
