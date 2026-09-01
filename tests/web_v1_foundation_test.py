@@ -34,13 +34,12 @@ def main() -> None:
             booking = c.execute("INSERT INTO bookings(company_id,reference,customer_id,enquiry_id,offer_id,status,arrival_date,departure_date,total_amount,created_at,updated_at) VALUES (?,?,?,?,?,?,?,?,?,?,?)", (forest,'FV-DEMO-001',forest_customer,enquiry,offer,'confirmed','2026-09-01','2026-09-03',100.0,now,now)).lastrowid
             c.execute("INSERT INTO arrivals(company_id,booking_id,customer_id,arrival_type,status,created_at,updated_at) VALUES (?,?,?,?,?,?,?)", (forest,booking,forest_customer,'booked','expected',now,now))
             c.execute("INSERT INTO arrivals(company_id,customer_id,arrival_type,status,created_at,updated_at) VALUES (?,?,?,?,?,?)", (forest,None,'walk_in','arrived',now,now))
-            # Keep the second client populated so isolation is meaningful.
             c.execute("INSERT INTO enquiries(company_id,customer_id,status,source,created_at,updated_at) VALUES (?,?,?,?,?,?)", (riverside,riverside_customer,'new','phone',now,now))
 
         client = TestClient(app)
         health = client.get('/health')
         assert health.status_code == 200
-        assert health.json()['build'] == 'WEB-V1'
+        assert health.json()['build'] == '279'
 
         login(client, 'operator@forestview.test', 'Operator013!')
         page = client.get('/operations')
@@ -80,6 +79,7 @@ def main() -> None:
         assert page.status_code == 200
         assert 'Forest View Campsite' in page.text
         assert 'Riverside Cabins' not in page.text
+        assert 'Online Build 279' in page.text
 
         with db.connect() as c:
             meta = c.execute("SELECT value FROM web_schema_meta WHERE key='schema_version'").fetchone()

@@ -65,6 +65,7 @@ jobs:
             "START_WEB_V1.bat",
             "requirements-online.txt",
             "tests/web_v1_foundation_test.py",
+            "tests/web_v1_launcher_identity_test.py",
             "tests/web_v1_client_register_test.py",
             "tests/web_v1_enquiry_search_test.py",
             "tests/web_v1_operations_navigation_test.py",
@@ -98,6 +99,12 @@ jobs:
           python -m pip install --upgrade pip
           python -m pip install -r requirements-online.txt
           if ($LASTEXITCODE -ne 0) { throw "Web dependency installation failed" }
+
+      - name: Verify launcher identity and occupied-port protection
+        shell: pwsh
+        run: |
+          python tests/web_v1_launcher_identity_test.py
+          if ($LASTEXITCODE -ne 0) { throw "Launcher identity / occupied-port protection failed" }
 
       - name: Verify Web V1 imports
         shell: pwsh
@@ -213,7 +220,7 @@ jobs:
               Start-Sleep -Seconds 1
               try {
                 $response = Invoke-RestMethod -Uri "http://127.0.0.1:8000/health" -TimeoutSec 2
-                if ($response.status -eq "ok" -and $response.build -eq "WEB-V1") { $ok = $true; break }
+                if ($response.status -eq "ok" -and $response.build -eq "279") { $ok = $true; break }
               } catch {}
             }
             if (-not $ok) { throw "Web V1 local server did not pass health check" }
