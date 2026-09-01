@@ -14,14 +14,12 @@ register_web_v1(app)
 
 
 def port_is_available(host: str, port: int) -> bool:
-    """Return True only when this process can bind the requested local server address."""
+    """Return True only when nothing is already listening on the requested address."""
     try:
-        with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as probe:
-            probe.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
-            probe.bind((host, port))
-        return True
+        with socket.create_connection((host, port), timeout=0.35):
+            return False
     except OSError:
-        return False
+        return True
 
 
 def main() -> int:
