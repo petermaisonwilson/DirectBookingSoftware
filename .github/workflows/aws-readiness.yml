@@ -5,6 +5,7 @@ on:
   push:
     branches:
       - aws-readiness-276-restoration
+      - web-v1-booking-edit-hold-warning
 
 env:
   PYTHONPATH: .
@@ -34,6 +35,8 @@ jobs:
         run: python tests/web_v1_availability_foundation_test.py
       - name: Availability calendar accepted behaviour
         run: python tests/web_v1_availability_calendar_test.py
+      - name: Booking edit and global hold warning
+        run: python tests/web_v1_booking_edit_hold_warning_test.py
       - name: Booking workflow accepted behaviour
         run: python tests/web_v1_booking_workflow_test.py
       - name: Add-on picker

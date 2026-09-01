@@ -36,7 +36,7 @@ def _item_requirements(database,hold_id):
     for a in rows(database,'''SELECT ha.quantity,sa.name FROM hold_requirement_addons ha LEFT JOIN setup_addons sa ON sa.id=ha.addon_id AND sa.company_id=ha.company_id WHERE ha.hold_id=? AND ha.quantity>0 ORDER BY sa.name''',(hold_id,)):details.append(f'{str(a["name"] or "Requirement")} {int(a["quantity"])}')
     return details
 
-def _edit_url(item):return '/availability/basket/edit?hold_id='+str(int(item['id']))
+def _edit_url(item):return '/availability/start?edit_hold='+str(int(item['id']))
 
 def booking_progress_strip(database,context,company_id,token):
     items=_held_items(database,company_id,token)

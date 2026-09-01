@@ -11,6 +11,7 @@ from fastapi.responses import HTMLResponse, RedirectResponse
 from . import BUILD
 from .database import OnlineDatabase
 from .security import verify_password
+from .webv1_hold_warning_ui import hold_warning_markup
 
 COOKIE_NAME = "directbooking_session"
 
@@ -88,11 +89,12 @@ def layout(title: str, body: str, context=None) -> str:
             '<form method="post" action="/logout" style="display:inline"><button class="link-button" type="submit">Log out</button></form>'
         )
         nav = "<nav>" + "".join(links) + "</nav>"
+    hold_warning = hold_warning_markup(context)
     return f"""<!doctype html>
 <html><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
 <title>{esc(title)} — Direct Booking</title><style>{css()}</style></head>
 <body><header><div><strong>Direct Booking Software</strong> <span class="muted" style="color:#c9d5df">Online Build {BUILD}</span></div>{nav}</header>
-{support}<main>{body}</main></body></html>"""
+{support}<main>{body}</main>{hold_warning}</body></html>"""
 
 
 def create_app(db_path: str | Path | None = None, *, seed_demo: bool = True) -> FastAPI:

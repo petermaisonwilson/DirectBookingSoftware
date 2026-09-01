@@ -18,6 +18,7 @@ on:
       - web-v1-availability-calendar
       - web-v1-booking-status-workflow
       - web-v1-booking-workflow
+      - web-v1-booking-edit-hold-warning
   pull_request:
     branches:
       - main
@@ -52,6 +53,7 @@ jobs:
             "online/webv1_booking_status.py",
             "online/webv1_bookings.py",
             "online/webv1_hold_settings.py",
+            "online/webv1_hold_warning_ui.py",
             "online/webv1_status_availability.py",
             "online/webv1_calendar_v2.py",
             "online/webv1_calendar_v3.py",
@@ -73,6 +75,7 @@ jobs:
             "tests/web_v1_setup_maintenance_test.py",
             "tests/web_v1_availability_foundation_test.py",
             "tests/web_v1_availability_calendar_test.py",
+            "tests/web_v1_booking_edit_hold_warning_test.py",
             "tests/web_v1_hold_settings_test.py",
             "tests/web_v1_booking_workflow_test.py",
             "tests/web_v1_persistent_data_test.py",
@@ -173,6 +176,12 @@ jobs:
         run: |
           python tests/web_v1_availability_calendar_test.py
           if ($LASTEXITCODE -ne 0) { throw "Status-aware Availability Calendar test failed" }
+
+      - name: Run booking edit and global hold warning test
+        shell: pwsh
+        run: |
+          python tests/web_v1_booking_edit_hold_warning_test.py
+          if ($LASTEXITCODE -ne 0) { throw "Booking edit / global hold warning regression failed" }
 
       - name: Run client-defined hold timing test
         shell: pwsh
