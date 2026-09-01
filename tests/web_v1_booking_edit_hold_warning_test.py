@@ -97,8 +97,9 @@ def main() -> None:
         assert edit.status_code == 200 and 'Editing this basket item' in edit.text
         assert 'value="Edit Test Camping" selected' in edit.text
         assert 'only the Person Types, Features and Extras' in edit.text
+        assert 'action="/availability/requirements"' in edit.text
 
-        changed = client.post('/availability/requirements-v3', data={
+        changed = client.post('/availability/requirements', data={
             'csrf': csrf, 'edit_hold': str(camping_hold), 'lead_name': 'Smith', 'element_type': 'Edit Test Camping',
             'arrival': '2035-08-10', 'departure': '2035-08-13', f'person_{adult}': '2', f'person_{child}': '0',
             f'addon_{motorhome}': '0', f'addon_{caravan}': '1',
@@ -128,7 +129,7 @@ def main() -> None:
         updated = client.post('/availability/basket/update', data={'csrf': csrf, 'hold_id': str(camping_hold), 'element_id': str(pitch2), 'arrival_date': '2035-08-10', 'departure_date': '2035-08-13'})
         assert updated.status_code == 200
 
-        children_only = client.post('/availability/requirements-v3', data={
+        children_only = client.post('/availability/requirements', data={
             'csrf': csrf, 'edit_hold': str(camping_hold), 'lead_name': 'Smith', 'element_type': 'Edit Test Camping',
             'arrival': '2035-08-10', 'departure': '2035-08-13', f'person_{adult}': '0', f'person_{child}': '2',
             f'addon_{motorhome}': '0', f'addon_{caravan}': '1',
@@ -139,7 +140,7 @@ def main() -> None:
 
         fishing_edit = client.get('/availability/start', params={'edit_hold': fishing_hold})
         assert fishing_edit.status_code == 200 and 'value="Edit Test Fishing" selected' in fishing_edit.text
-        fishing_saved = client.post('/availability/requirements-v3', data={
+        fishing_saved = client.post('/availability/requirements', data={
             'csrf': csrf, 'edit_hold': str(fishing_hold), 'lead_name': 'Smith', 'element_type': 'Edit Test Fishing',
             'arrival': '2035-08-10', 'departure': '2035-08-13', f'person_{adult}': '1',
         }, follow_redirects=False)
