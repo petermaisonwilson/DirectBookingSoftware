@@ -28,6 +28,7 @@ def setup_nav() -> str:
         ("Elements", "/setup/elements"),
         ("Person Types", "/setup/person-types"),
         ("Add-ons", "/setup/addons"),
+        ("Add-on Timings", "/setup/addons/when"),
         ("Years", "/setup/years"),
         ("Seasonal pricing", "/setup/pricing"),
         ("Occupancy", "/setup/occupancy"),
