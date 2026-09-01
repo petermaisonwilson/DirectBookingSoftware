@@ -21,6 +21,7 @@ from .webv1_ordering import person_type_rows
 def register_booking_requirements_v3(app) -> None:
     database = app.state.database
 
+    @app.post('/availability/requirements')
     @app.post('/availability/requirements-v3')
     async def requirements_save_v3(request: Request):
         context, cid = _working_context(database, request)
@@ -140,19 +141,3 @@ def register_booking_requirements_v3(app) -> None:
         parts.extend([f'arrival={arrival}', f'departure={departure}'])
         if edit_hold: parts.append(f'edit_hold={edit_hold}')
         return RedirectResponse('/availability/calendar-v2?' + '&'.join(parts), 303)
-
-
-def install_booking_requirements_v3_form(app) -> None:
-    @app.middleware('http')
-    async def booking_requirements_v3_form(request, call_next):
-        response = await call_next(request)
-        if request.url.path != '/availability/start' or response.status_code >= 400 or 'text/html' not in response.headers.get('content-type', ''):
-            return response
-        body = b''
-        async for chunk in response.body_iterator:
-            body += chunk if isinstance(chunk, bytes) else str(chunk).encode('utf-8')
-        text = body.decode('utf-8')
-        headers = {k: v for k, v in response.headers.items() if k.lower() not in {'content-length', 'content-type'}}
-        text = text.replace('action="/availability/requirements-v2"', 'action="/availability/requirements-v3"', 1)
-        from fastapi.responses import Response
-        return Response(content=text, status_code=response.status_code, headers=headers, media_type='text/html')
