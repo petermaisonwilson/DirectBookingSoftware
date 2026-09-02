@@ -41,6 +41,9 @@ def initialise_setup015(database) -> None:
     initialise_setup014(database)
     with database.connect() as connection:
         connection.executescript(BUILD015_SCHEMA)
+        person_type_columns = {str(r['name']) for r in connection.execute('PRAGMA table_info(setup_person_types)').fetchall()}
+        if 'ask_age' not in person_type_columns:
+            connection.execute('ALTER TABLE setup_person_types ADD COLUMN ask_age INTEGER NOT NULL DEFAULT 0')
         columns = {str(r['name']) for r in connection.execute('PRAGMA table_info(setup_person_limits)').fetchall()}
         if 'min_count' not in columns:
             connection.execute('ALTER TABLE setup_person_limits ADD COLUMN min_count INTEGER NOT NULL DEFAULT 0')

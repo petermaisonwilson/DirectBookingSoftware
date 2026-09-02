@@ -24,12 +24,14 @@ def _person_types_page(database, context, *, edit: int = 0, message: str = '') -
     <div class="grid"><div><label>Name</label><input name="name" value="{esc(name)}"></div><div><label>Short name</label><input name="short_name" maxlength="8" value="{esc(short)}"><p class="muted">Maximum 8 characters.</p></div></div>
     <p><button>{"Save changes" if current else "Add Person Type"}</button>{' &nbsp; <a class="button secondary" href="/setup/person-types">Cancel</a>' if current else ''}</p></form></div>'''
 
-    body += '<div class="card"><p class="muted">Drag Person Types into the order you want them shown throughout Setup and Booking Requirements. The order is shared by the Client and a Supervisor working in Support Mode.</p>'
-    body += f'<table><thead><tr>{order_heading}<th>Name</th><th>Short name</th><th>Status</th><th>Actions</th></tr></thead><tbody id="setup-sort-person_types">'
+    body += '<div class="card"><p class="muted">Drag Person Types into the order you want them shown throughout Setup and Booking Requirements. Use <strong>Ask Age</strong> only where age at arrival is genuinely required; date of birth is never collected.</p>'
+    body += f'<table><thead><tr>{order_heading}<th>Name</th><th>Short name</th><th>Ask Age</th><th>Status</th><th>Actions</th></tr></thead><tbody id="setup-sort-person_types">'
     for item in items:
         iid = int(item['id'])
         active = bool(item['active'])
+        ask_age = bool(item['ask_age'])
         body += f'<tr data-item-id="{iid}"><td><span class="row-sort-handle" title="Drag to reorder">☰ Drag</span></td><td>{esc(item["name"])}</td><td>{esc(item["short_name"])}</td>'
+        body += '<td>' + _confirm_form(context, '/setup/person-types/age-toggle', {'person_type_id': iid}, '✓ Yes' if ask_age else 'No', secondary=True) + '</td>'
         body += f'<td>{"Active" if active else "Inactive"}</td><td><a href="/setup/person-types?edit={iid}">Edit</a> &nbsp; '
         body += _confirm_form(context, '/setup/maintenance/catalog/toggle', {'kind': 'person', 'id': iid}, 'Deactivate' if active else 'Reactivate', secondary=True)
         body += ' &nbsp; ' + _confirm_form(context, '/setup/maintenance/catalog/delete', {'kind': 'person', 'id': iid}, 'Delete', secondary=True, confirm='Delete this Person Type? Used records will be protected and cannot be deleted.')

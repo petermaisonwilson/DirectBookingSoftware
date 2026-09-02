@@ -86,6 +86,26 @@ def main() -> None:
         assert f'name="pmin_{fishing}_{adult}" value="1"' in occupancy.text
         assert f'name="pmin_{fishing}_{child}" value="0"' in occupancy.text
 
+        # Ask Age is owned by the Person Types page and drives Booking Requirements directly.
+        person_types = client.get('/setup/person-types')
+        assert person_types.status_code == 200
+        assert 'Ask Age' in person_types.text
+        assert '/setup/person-types/age-toggle' in person_types.text
+        age_on = client.post('/setup/person-types/age-toggle', data={'csrf': csrf, 'person_type_id': str(child)}, follow_redirects=False)
+        assert age_on.status_code == 303
+        with db.connect() as c:
+            assert int(c.execute('SELECT ask_age FROM setup_person_types WHERE id=? AND company_id=?', (child, cid)).fetchone()['ask_age']) == 1
+        age_requirements = client.get('/availability/start', params={'element_type': 'Edit Test Camping'})
+        assert age_requirements.status_code == 200
+        assert '<label>Choose Element Type</label>' in age_requirements.text
+        assert f'data-person="{child}" data-ask-age="1"' in age_requirements.text
+        assert f'id="ages-{child}"' in age_requirements.text
+        assert f'data-person="{adult}" data-ask-age="0"' in age_requirements.text
+        age_off = client.post('/setup/person-types/age-toggle', data={'csrf': csrf, 'person_type_id': str(child)}, follow_redirects=False)
+        assert age_off.status_code == 303
+        with db.connect() as c:
+            assert int(c.execute('SELECT ask_age FROM setup_person_types WHERE id=? AND company_id=?', (child, cid)).fetchone()['ask_age']) == 0
+
         review = client.get('/availability/basket/review')
         assert review.status_code == 200 and 'Edit Test Pitch' in review.text and 'Edit Test Peg A' in review.text and 'Edit Test Cabin 1' in review.text
         # Each relevant value appears once in the persistent strip and once in the
@@ -98,6 +118,7 @@ def main() -> None:
         assert 'value="Edit Test Camping" selected' in edit.text
         assert 'only the Person Types, Features and Extras' in edit.text
         assert 'action="/availability/requirements"' in edit.text
+        assert '<label>Choose Element Type</label>' in edit.text
 
         changed = client.post('/availability/requirements', data={
             'csrf': csrf, 'edit_hold': str(camping_hold), 'lead_name': 'Smith', 'element_type': 'Edit Test Camping',
