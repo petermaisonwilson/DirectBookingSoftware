@@ -43,24 +43,33 @@ def main() -> None:
         register = client.get('/operations/customers')
         assert register.status_code == 200
         assert 'Client Register' in register.text
+        assert 'Mobile' in register.text and 'Fixed telephone' in register.text
         assert 'River Guest' not in register.text
 
         csrf = csrf_for(client, db)
         bad_customer = client.post('/operations/customers/new', data={
-            'csrf': csrf, 'first_name': '', 'last_name': '', 'email': 'blank@example.test', 'phone': '', 'notes': ''
+            'csrf': csrf, 'first_name': '', 'last_name': '', 'email': 'blank@example.test', 'mobile_phone': '', 'fixed_phone': '', 'notes': ''
         })
         assert bad_customer.status_code == 400
-        assert 'Enter at least a first name or last name.' in bad_customer.text
+        assert 'Enter both Family name and First name.' in bad_customer.text
         with db.connect() as c:
             assert c.execute('SELECT COUNT(*) AS n FROM customer_records WHERE company_id=?', (forest,)).fetchone()['n'] == 0
 
         create = client.post('/operations/customers/new', data={
             'csrf': csrf, 'first_name': 'Alice', 'last_name': 'Walker', 'email': 'alice@example.test',
-            'phone': '0612345678', 'notes': 'Returning guest test'
+            'mobile_phone': '0612345678', 'fixed_phone': '0299001122', 'address1': '1 Lake Road', 'address2': '',
+            'town': 'Testville', 'postcode': '53000', 'country': 'France', 'notes': 'Returning guest test'
         }, follow_redirects=False)
         assert create.status_code == 303
         assert create.headers['location'].startswith('/operations/customers/')
         customer_id = int(create.headers['location'].split('/')[3].split('?')[0])
+
+        with db.connect() as c:
+            saved_customer = c.execute('SELECT * FROM customer_records WHERE id=?', (customer_id,)).fetchone()
+            assert saved_customer['mobile_phone'] == '0612345678'
+            assert saved_customer['fixed_phone'] == '0299001122'
+            assert saved_customer['address1'] == '1 Lake Road'
+            assert saved_customer['country'] == 'France'
 
         search = client.get('/operations/customers?q=0612345678')
         assert search.status_code == 200
@@ -70,7 +79,23 @@ def main() -> None:
         detail = client.get(f'/operations/customers/{customer_id}')
         assert detail.status_code == 200
         assert 'Alice Walker' in detail.text
+        assert 'Customer master details' in detail.text
+        assert '1 Lake Road' in detail.text
+        assert 'Booking history' in detail.text
         assert 'Returning guest test' in detail.text
+
+        # Exact email/mobile/fixed matching suggests the existing master record rather than silently creating a duplicate.
+        duplicate = client.post('/operations/customers/new', data={
+            'csrf': csrf, 'first_name': 'Alicia', 'last_name': 'Walker', 'email': 'alice@example.test',
+            'mobile_phone': '06 12 34 56 78', 'fixed_phone': '02 99 00 11 22', 'address1': '', 'address2': '',
+            'town': '', 'postcode': '', 'country': '', 'notes': ''
+        })
+        assert duplicate.status_code == 409
+        assert 'Possible existing Customer found' in duplicate.text
+        assert 'Email + Mobile + Fixed telephone' in duplicate.text
+        assert 'Use this Customer' in duplicate.text
+        with db.connect() as c:
+            assert c.execute('SELECT COUNT(*) AS n FROM customer_records WHERE company_id=?', (forest,)).fetchone()['n'] == 1
 
         csrf = csrf_for(client, db)
         bad_enquiry = client.post(f'/operations/customers/{customer_id}/enquiries/new', data={
@@ -115,6 +140,30 @@ def main() -> None:
             actions = [r['action'] for r in c.execute("SELECT action FROM audit_log WHERE company_id=? AND action IN ('CUSTOMER_CREATED','ENQUIRY_CREATED') ORDER BY id", (forest,)).fetchall()]
             assert actions == ['CUSTOMER_CREATED', 'ENQUIRY_CREATED', 'ENQUIRY_CREATED']
 
+            # A newly arrived direct Booking can be explicitly re-linked to the existing master Customer; never automatically.
+            second_customer = int(c.execute('''INSERT INTO customer_records(company_id,first_name,last_name,email,phone,mobile_phone,fixed_phone,created_at,updated_at)
+                VALUES (?,?,?,?,?,?,?,?,?)''', (forest, 'Alice', 'Online', 'alice@example.test', '0612345678', '0612345678', '', now, now)).lastrowid)
+            booking_id = int(c.execute('''INSERT INTO bookings(company_id,reference,customer_id,status,arrival_date,departure_date,total_amount,pricing_snapshot_json,created_at,updated_at)
+                VALUES (?,?,?,?,?,?,?,?,?,?)''', (forest, 'DB26-99999', second_customer, 'confirmed', '2026-10-01', '2026-10-03', 100.0, '{}', now, now)).lastrowid)
+
+        match_page = client.get(f'/operations/bookings/{booking_id}/customer-matches')
+        assert match_page.status_code == 200
+        assert 'Possible existing Customer' in match_page.text
+        assert 'Alice Walker' in match_page.text
+        assert 'Add Booking to this Customer master file' in match_page.text
+        with db.connect() as c:
+            assert int(c.execute('SELECT customer_id FROM bookings WHERE id=?', (booking_id,)).fetchone()['customer_id']) == second_customer
+
+        linked = client.post(f'/operations/bookings/{booking_id}/link-customer', data={'csrf': csrf, 'customer_id': str(customer_id)}, follow_redirects=False)
+        assert linked.status_code == 303
+        with db.connect() as c:
+            assert int(c.execute('SELECT customer_id FROM bookings WHERE id=?', (booking_id,)).fetchone()['customer_id']) == customer_id
+            linked_audit = c.execute("SELECT action FROM audit_log WHERE company_id=? AND entity_type='booking' AND entity_id=? ORDER BY id DESC LIMIT 1", (forest, str(booking_id))).fetchone()
+            assert linked_audit['action'] == 'BOOKING_LINKED_TO_CUSTOMER'
+
+        detail_after_link = client.get(f'/operations/customers/{customer_id}')
+        assert 'DB26-99999' in detail_after_link.text
+
         # Cross-client record IDs must not leak through direct URLs.
         assert client.get(f'/operations/customers/{river_customer}').status_code == 404
         client.post('/logout', follow_redirects=False)
@@ -141,7 +190,7 @@ def main() -> None:
         assert 'River Guest' not in support_register.text
         assert 'SUPPORT MODE' in support_register.text
 
-    print('Direct Booking Web V1 Client Register + New Enquiry test: passed')
+    print('Direct Booking Web V1 Client Register + Customer matching + New Enquiry test: passed')
 
 
 if __name__ == '__main__':
