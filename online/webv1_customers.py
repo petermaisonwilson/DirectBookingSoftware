@@ -65,7 +65,7 @@ def _match_table(matches, *, choose_prefix: str = '') -> str:
     trs = []
     for row, reasons in matches:
         history = f"{int(row['booking_count'] or 0)} previous Booking(s), {int(row['enquiry_count'] or 0)} Enquiry(ies)"
-        action = f'<a class="button" href="{choose_prefix}{int(row["id"])}">Use this Customer</a>' if choose_prefix else f'<a class="button" href="/operations/customers/{int(row["id"])}">Open Customer</a>'
+        action = f'<a class="button" href="{choose_prefix}{int(row["id"])}">Use this Customer</a>' if choose_prefix else f'<a class="button" href="/operations/customers/{int(row["id"])}">Use this Customer</a>'
         trs.append(f'''<tr><td>{esc(_customer_name(row))}</td><td>{esc(' + '.join(reasons))}</td><td>{esc(history)}</td><td>{action}</td></tr>''')
     return '<table><thead><tr><th>Possible existing Customer</th><th>Match</th><th>History</th><th>Action</th></tr></thead><tbody>' + ''.join(trs) + '</tbody></table>'
 
