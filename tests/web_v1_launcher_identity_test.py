@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import os
 import socket
 import sys
 from pathlib import Path
@@ -11,7 +12,11 @@ from run_online import port_is_available
 
 
 def main() -> None:
-    assert BUILD == '292'
+    expected_build = os.environ.get('GITHUB_RUN_NUMBER')
+    if expected_build:
+        assert BUILD == expected_build
+    else:
+        assert BUILD.isdigit()
 
     with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as occupied:
         occupied.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)

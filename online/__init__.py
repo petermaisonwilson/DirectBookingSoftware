@@ -6,7 +6,7 @@ import os
 import shutil
 from pathlib import Path
 
-BUILD = "292"
+BUILD = "294"
 DATABASE_FILENAME = "direct_booking_online_dev.db"
 
 

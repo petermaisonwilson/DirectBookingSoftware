@@ -8,6 +8,7 @@ sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
 from fastapi.testclient import TestClient
 
+from online import BUILD
 from online.app import COOKIE_NAME, create_app
 from online.webv1 import register_web_v1
 
@@ -39,7 +40,7 @@ def main() -> None:
         client = TestClient(app)
         health = client.get('/health')
         assert health.status_code == 200
-        assert health.json()['build'] == '286'
+        assert health.json()['build'] == BUILD
 
         login(client, 'operator@forestview.test', 'Operator013!')
         page = client.get('/operations')
@@ -79,7 +80,7 @@ def main() -> None:
         assert page.status_code == 200
         assert 'Forest View Campsite' in page.text
         assert 'Riverside Cabins' not in page.text
-        assert 'Online Build 286' in page.text
+        assert f'Online Build {BUILD}' in page.text
 
         with db.connect() as c:
             meta = c.execute("SELECT value FROM web_schema_meta WHERE key='schema_version'").fetchone()

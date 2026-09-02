@@ -10,6 +10,7 @@ sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
 from fastapi.testclient import TestClient
 
+from online import BUILD
 from online.app import COOKIE_NAME, can_view_booking_log, create_app
 
 
@@ -37,7 +38,7 @@ def main() -> None:
         with TestClient(app) as anonymous:
             health = anonymous.get("/health")
             assert health.status_code == 200
-            assert health.json()["build"] == "015"
+            assert health.json()["build"] == BUILD
 
         with TestClient(app) as supervisor:
             dashboard = login(supervisor, "supervisor@directbooking.test", "Supervisor013!")
