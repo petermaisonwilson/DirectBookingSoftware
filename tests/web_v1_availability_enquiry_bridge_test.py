@@ -34,13 +34,9 @@ def main() -> None:
             season_id = int(c.execute("INSERT INTO setup_seasons(company_id,year,name,start_date,end_date) VALUES (?,?,?,?,?)", (cid, 2036, 'Bridge Season', '2036-01-01', '2036-12-31')).lastrowid)
             c.execute('INSERT INTO setup_element_rates(company_id,year,element_id,season_id,rate) VALUES (?,?,?,?,?)', (cid, 2036, element_id, season_id, 20.0))
             c.execute('INSERT INTO setup_occupancy(company_id,year,element_id,max_total) VALUES (?,?,?,?)', (cid, 2036, element_id, 6))
-            people = c.execute('SELECT id FROM setup_person_types WHERE company_id=? AND active=1 ORDER BY id', (cid,)).fetchall()
-            assert people
-            chosen_person = int(people[0]['id'])
-            for person in people:
-                pid = int(person['id'])
-                c.execute('INSERT INTO setup_person_limits(company_id,year,element_id,person_type_id,max_count,min_count) VALUES (?,?,?,?,?,?)', (cid, 2036, element_id, pid, 6, 0))
-                c.execute('INSERT INTO setup_person_prices(company_id,year,element_id,person_type_id,rate) VALUES (?,?,?,?,?)', (cid, 2036, element_id, pid, 0.0))
+            chosen_person = int(c.execute("INSERT INTO setup_person_types(company_id,name,short_name,active,ask_age) VALUES (?,?,?,?,?)", (cid, 'Bridge Adult', 'BA', 1, 0)).lastrowid)
+            c.execute('INSERT INTO setup_person_limits(company_id,year,element_id,person_type_id,max_count,min_count) VALUES (?,?,?,?,?,?)', (cid, 2036, element_id, chosen_person, 6, 0))
+            c.execute('INSERT INTO setup_person_prices(company_id,year,element_id,person_type_id,rate) VALUES (?,?,?,?,?)', (cid, 2036, element_id, chosen_person, 0.0))
             customer_id = int(c.execute('''INSERT INTO customer_records(company_id,first_name,last_name,email,phone,mobile_phone,fixed_phone,address1,address2,town,postcode,country,notes,created_at,updated_at)
                 VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)''', (cid, 'Alice', 'Walker', 'alice.bridge@example.test', '0611223344', '0611223344', '0299001122', '1 Test Road', '', 'Testville', '12345', 'France', '', now.isoformat(timespec='seconds'), now.isoformat(timespec='seconds'))).lastrowid)
             hold_id = int(c.execute('''INSERT INTO element_holds(company_id,element_id,session_token,holder_user_id,arrival_date,departure_date,renewal_required_at,expires_at,created_at,updated_at,lead_name)
