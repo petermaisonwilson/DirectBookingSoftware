@@ -7,9 +7,12 @@ from fastapi import Request
 from fastapi.responses import HTMLResponse, RedirectResponse
 
 from .app import COOKIE_NAME, esc, form_data, layout
+from .database import iso_now
 from .setup015_calculator import _addon_rule
-from .setup015_core import require_csrf, rows
+from .setup015_core import audit, require_csrf, rows
 from .webv1_availability import _session_company
+from .webv1_customers import customer_matches
+from .webv1_enquiry_builder import _calculate, _save
 
 
 def _fmt_user_date(value):
@@ -71,6 +74,58 @@ def _load_item_into_working(database,company_id,token,hold_id):
         return item
 
 
+def _hold_enquiry_values(database,company_id,token,hold_id):
+    items=[r for r in _held_items(database,company_id,token) if int(r['id'])==int(hold_id)]
+    if not items:return None,None
+    item=items[0]
+    values={'arrival_date':str(item['arrival_date']),'departure_date':str(item['departure_date']),'party_size':'','source':'Availability','notes':'','element_type':str(item['element_type']),'element_id':str(int(item['element_id']))}
+    total=0
+    for p in rows(database,'SELECT person_type_id,quantity FROM hold_requirement_people WHERE hold_id=? AND company_id=?',(hold_id,company_id)):
+        qty=int(p['quantity'] or 0);values[f'person_{int(p["person_type_id"])}']=str(qty);total+=qty
+    values['party_size']=str(total)
+    for a in rows(database,'SELECT addon_id,quantity FROM hold_requirement_addons WHERE hold_id=? AND company_id=?',(hold_id,company_id)):
+        aid=int(a['addon_id']);qty=int(a['quantity'] or 0)
+        if qty>0:
+            values[f'addon_{aid}']=str(qty);values[f'addon_selected_{aid}']='1';values[f'addon_when_{aid}']='every_day'
+    return item,values
+
+
+def _customer_values(data):
+    keys=('first_name','last_name','email','mobile_phone','fixed_phone','address1','address2','town','postcode','country','notes')
+    return {key:str(data.get(key,'') or '').strip() for key in keys}
+
+
+def _customer_stage(database,context,company_id,token,hold_id,values,error='',matches=None):
+    item,enquiry_values=_hold_enquiry_values(database,company_id,token,hold_id)
+    if item is None:return layout('Basket','<h1>Basket</h1><div class="error">That held Element has expired or been removed.</div>',context)
+    details=' · '.join(esc(x) for x in _item_requirements(database,item,company_id)) or 'No special requirements'
+    match_html=''
+    if matches:
+        rows_html=''
+        for row,reasons in matches:
+            history=f"{int(row['booking_count'] or 0)} previous Booking(s), {int(row['enquiry_count'] or 0)} Enquiry(ies)"
+            rows_html+=f'<tr><td><strong>{esc(str(row["first_name"] or "")+" "+str(row["last_name"] or ""))}</strong></td><td>{esc(" + ".join(reasons))}</td><td>{esc(history)}</td><td><button type="submit" name="existing_customer_id" value="{int(row["id"])}">USE THIS CUSTOMER</button></td></tr>'
+        match_html=f'<div class="card"><h2>Possible existing Customer</h2><p>DBS found existing Customer records matching the email or telephone entered. Choose one deliberately, or create a separate Customer.</p><table><thead><tr><th>Customer</th><th>Match</th><th>History</th><th>Action</th></tr></thead><tbody>{rows_html}</tbody></table><p><button class="secondary" type="submit" name="confirm_new" value="1">CREATE SEPARATE CUSTOMER &amp; SAVE ENQUIRY</button></p></div>'
+    error_html=f'<div class="error">{esc(error)}</div>' if error else ''
+    body=f'''<h1>Customer Details</h1><p><a href="/availability/basket/review">← Back to Basket</a></p>{error_html}
+    <div class="card"><h2>Enquiry being saved</h2><p><strong>{esc(item['element_name'])}</strong> — {_fmt_user_date(str(item['arrival_date']))} to {_display_end(str(item['departure_date']),str(item['pricing_method']))}<br>{details}</p><p class="muted">Nothing is written to the Enquiry Register until SAVE ENQUIRY is completed.</p></div>
+    <form method="post" action="/availability/basket/customer"><input type="hidden" name="csrf" value="{esc(context['csrf_token'])}"><input type="hidden" name="hold_id" value="{int(hold_id)}">{match_html}
+    <div class="card"><h2>Lead Customer</h2><div class="grid">
+    <div><label>Family name *</label><input name="last_name" required value="{esc(values.get('last_name',''))}"></div>
+    <div><label>First name *</label><input name="first_name" required value="{esc(values.get('first_name',''))}"></div>
+    <div><label>Email address *</label><input type="email" name="email" required value="{esc(values.get('email',''))}"></div>
+    <div><label>Mobile telephone</label><input name="mobile_phone" value="{esc(values.get('mobile_phone',''))}"></div>
+    <div><label>Fixed telephone</label><input name="fixed_phone" value="{esc(values.get('fixed_phone',''))}"></div>
+    <div><label>Address line 1</label><input name="address1" value="{esc(values.get('address1',''))}"></div>
+    <div><label>Address line 2</label><input name="address2" value="{esc(values.get('address2',''))}"></div>
+    <div><label>Town / City</label><input name="town" value="{esc(values.get('town',''))}"></div>
+    <div><label>Postcode</label><input name="postcode" value="{esc(values.get('postcode',''))}"></div>
+    <div><label>Country</label><input name="country" value="{esc(values.get('country',''))}"></div></div>
+    <label>Enquiry notes</label><textarea name="notes" rows="4" style="width:100%;padding:9px;border:1px solid #aeb8c4;border-radius:6px">{esc(values.get('notes',''))}</textarea>
+    <p><button type="submit">SAVE ENQUIRY</button></p></div></form>'''
+    return layout('Customer Details',body,context)
+
+
 def register_booking_progress_routes(app):
     database=app.state.database
 
@@ -96,13 +151,54 @@ def register_booking_progress_routes(app):
             c.execute('DELETE FROM hold_requirement_people WHERE hold_id=?',(hold_id,));c.execute('DELETE FROM hold_requirement_addons WHERE hold_id=?',(hold_id,));c.execute('DELETE FROM element_holds WHERE id=? AND company_id=? AND session_token=?',(hold_id,company_id,token))
         return_to=str(data.get('return_to','') or '');return RedirectResponse(return_to if return_to.startswith('/') else '/availability/basket/review',303)
 
+    @app.get('/availability/basket/customer',response_class=HTMLResponse)
+    def basket_customer(request:Request,hold_id:int):
+        context,company_id=_session_company(database,request);token=request.cookies.get(COOKIE_NAME,'')
+        return HTMLResponse(_customer_stage(database,context,company_id,token,hold_id,{}))
+
+    @app.post('/availability/basket/customer',response_class=HTMLResponse)
+    async def basket_customer_save(request:Request):
+        context,company_id=_session_company(database,request);data=await form_data(request);require_csrf(context,data);token=request.cookies.get(COOKIE_NAME,'')
+        try:hold_id=int(data.get('hold_id',''))
+        except (TypeError,ValueError):return RedirectResponse('/availability/basket/review',303)
+        item,enquiry_values=_hold_enquiry_values(database,company_id,token,hold_id)
+        if item is None:return RedirectResponse('/availability/basket/review',303)
+        values=_customer_values(data)
+        if not values['first_name'] or not values['last_name']:
+            return HTMLResponse(_customer_stage(database,context,company_id,token,hold_id,values,'Enter both Family name and First name.'),400)
+        if not values['email']:
+            return HTMLResponse(_customer_stage(database,context,company_id,token,hold_id,values,'Email address is compulsory.'),400)
+        if not values['mobile_phone'] and not values['fixed_phone']:
+            return HTMLResponse(_customer_stage(database,context,company_id,token,hold_id,values,'Enter a mobile or fixed telephone number.'),400)
+        existing_id=0
+        try:existing_id=int(data.get('existing_customer_id','') or 0)
+        except (TypeError,ValueError):existing_id=0
+        customer_id=None
+        if existing_id:
+            with database.connect() as c: existing=c.execute('SELECT id FROM customer_records WHERE id=? AND company_id=? AND active=1',(existing_id,company_id)).fetchone()
+            if existing is None:return HTMLResponse(_customer_stage(database,context,company_id,token,hold_id,values,'That Customer record is no longer available.'),409)
+            customer_id=existing_id
+        else:
+            matches=customer_matches(database,company_id,email=values['email'],mobile_phone=values['mobile_phone'],fixed_phone=values['fixed_phone'])
+            if matches and str(data.get('confirm_new','') or '')!='1':
+                return HTMLResponse(_customer_stage(database,context,company_id,token,hold_id,values,'Possible existing Customer found. Choose the correct master Customer or deliberately create a separate Customer.',matches),409)
+            now=iso_now()
+            with database.connect() as c:
+                customer_id=int(c.execute('''INSERT INTO customer_records(company_id,first_name,last_name,email,phone,mobile_phone,fixed_phone,address1,address2,town,postcode,country,notes,created_at,updated_at) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)''',(company_id,values['first_name'],values['last_name'],values['email'],values['mobile_phone'] or values['fixed_phone'],values['mobile_phone'],values['fixed_phone'],values['address1'],values['address2'],values['town'],values['postcode'],values['country'],'',now,now)).lastrowid)
+            audit(database,context,company_id,'CUSTOMER_CREATED','customer',customer_id,after={k:values[k] for k in values if k!='notes'})
+        enquiry_values['notes']=values['notes'];calculation,_,calc_error=_calculate(database,company_id,enquiry_values)
+        if calc_error:
+            return HTMLResponse(_customer_stage(database,context,company_id,token,hold_id,values,'The held booking cannot yet be saved as an Enquiry: '+calc_error),409)
+        enquiry_id=_save(database,context,company_id,int(customer_id),enquiry_values,calculation)
+        return RedirectResponse(f'/operations/enquiries/{enquiry_id}?saved=1',303)
+
     @app.get('/availability/basket/review',response_class=HTMLResponse)
     def basket_review(request:Request):
         context,company_id=_session_company(database,request);token=request.cookies.get(COOKIE_NAME,'');items=_held_items(database,company_id,token)
         if not items:return HTMLResponse(layout('Basket','<h1>Basket</h1><div class="card"><p>Your basket is empty.</p><p><a class="button" href="/availability/start">Start booking</a></p></div>',context))
         rows_html=''
         for item in items:
-            hid=int(item['id']);details=_item_requirements(database,item,company_id);detail_html=' · '.join(esc(x) for x in details) or 'No special requirements';lead=esc(str(item['lead_name'] or '').strip() or '—');rows_html+='<tr>'+f'<td><strong>{lead}</strong></td><td><strong>{esc(item["element_name"])}</strong><br><span class="muted">{esc(item["element_type"])}</span></td><td>{_fmt_user_date(str(item["arrival_date"]))}</td><td>{_display_end(str(item["departure_date"]),str(item["pricing_method"]))}</td><td>{detail_html}</td><td><a class="button secondary mini-action" href="{_edit_url(item)}">EDIT BOOKING</a> '+'<form method="post" action="/availability/basket/remove-view" class="inline-form">'+f'<input type="hidden" name="csrf" value="{esc(context["csrf_token"])}"><input type="hidden" name="hold_id" value="{hid}"><input type="hidden" name="return_to" value="/availability/basket/review"><button class="secondary mini-action" type="submit">REMOVE</button></form></td></tr>'
-        next_text='Review the held Elements above. The next workflow stage will create an Offer or Confirm the Booking from this verified basket.' if str(context['role']) in {'operator','supervisor'} else 'Review the held Elements above. The next workflow stage will confirm the booking from this verified basket.'
+            hid=int(item['id']);details=_item_requirements(database,item,company_id);detail_html=' · '.join(esc(x) for x in details) or 'No special requirements';lead=esc(str(item['lead_name'] or '').strip() or '—');rows_html+='<tr>'+f'<td><strong>{lead}</strong></td><td><strong>{esc(item["element_name"])}</strong><br><span class="muted">{esc(item["element_type"])}</span></td><td>{_fmt_user_date(str(item["arrival_date"]))}</td><td>{_display_end(str(item["departure_date"]),str(item["pricing_method"]))}</td><td>{detail_html}</td><td><a class="button" href="/availability/basket/customer?hold_id={hid}">CUSTOMER DETAILS / SAVE ENQUIRY</a> <a class="button secondary mini-action" href="{_edit_url(item)}">EDIT BOOKING</a> '+'<form method="post" action="/availability/basket/remove-view" class="inline-form">'+f'<input type="hidden" name="csrf" value="{esc(context["csrf_token"])}"><input type="hidden" name="hold_id" value="{hid}"><input type="hidden" name="return_to" value="/availability/basket/review"><button class="secondary mini-action" type="submit">REMOVE</button></form></td></tr>'
+        next_text='Each held booking now continues directly to Customer Details. Customer matching is checked before the Client deliberately saves the Enquiry.' if str(context['role']) in {'operator','supervisor'} else 'Review the held Elements above.'
         body='<h1>Basket</h1>'+booking_progress_strip(database,context,company_id,token)+'<div class="card"><h2>Verify booking contents</h2><table><thead><tr><th>Name</th><th>Element</th><th>Arrival</th><th>End / Departure</th><th>Requirements</th><th>Actions</th></tr></thead><tbody>'+rows_html+'</tbody></table>'+f'<p class="muted">{esc(next_text)}</p><p><a class="button secondary" href="/availability/start">NEW / CHANGE REQUIREMENTS</a></p></div><style>.inline-form{{display:inline;margin:0}}.mini-action{{font-size:12px;padding:5px 8px}}</style>'
         return HTMLResponse(layout('Basket',body,context))

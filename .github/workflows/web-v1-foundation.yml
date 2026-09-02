@@ -77,6 +77,7 @@ jobs:
             "tests/web_v1_availability_foundation_test.py",
             "tests/web_v1_availability_calendar_test.py",
             "tests/web_v1_booking_edit_hold_warning_test.py",
+            "tests/web_v1_availability_enquiry_bridge_test.py",
             "tests/web_v1_hold_settings_test.py",
             "tests/web_v1_booking_workflow_test.py",
             "tests/web_v1_persistent_data_test.py",
@@ -189,6 +190,12 @@ jobs:
         run: |
           python tests/web_v1_booking_edit_hold_warning_test.py
           if ($LASTEXITCODE -ne 0) { throw "Booking edit / global hold warning regression failed" }
+
+      - name: Run Availability to Enquiry bridge test
+        shell: pwsh
+        run: |
+          python tests/web_v1_availability_enquiry_bridge_test.py
+          if ($LASTEXITCODE -ne 0) { throw "Availability to Customer matching to Enquiry bridge failed" }
 
       - name: Run client-defined hold timing test
         shell: pwsh
