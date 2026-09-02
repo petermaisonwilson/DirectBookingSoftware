@@ -13,6 +13,21 @@ def _fallback_source(database, company_id: int, target: int) -> int | None:
     return max(candidates) if candidates else None
 
 
+def _copy_person_minima(database, company_id: int, source_year: int | None, target_year: int) -> None:
+    if source_year is None:
+        return
+    with database.connect() as c:
+        minima = c.execute(
+            'SELECT element_id,person_type_id,min_count FROM setup_person_limits WHERE company_id=? AND year=?',
+            (company_id, source_year),
+        ).fetchall()
+        for row in minima:
+            c.execute(
+                'UPDATE setup_person_limits SET min_count=? WHERE company_id=? AND year=? AND element_id=? AND person_type_id=?',
+                (row['min_count'], company_id, target_year, row['element_id'], row['person_type_id']),
+            )
+
+
 def register_year_action_routes(app) -> None:
     database = app.state.database
 
@@ -28,6 +43,7 @@ def register_year_action_routes(app) -> None:
             return HTMLResponse(_years_page(database, context, submitted, {'blank_year'}, 'Enter a valid new year and source year.'), 400)
         try:
             _clone_year(database, cid, target, source, copy_prices=False)
+            _copy_person_minima(database, cid, source, target)
         except ValueError as exc:
             return HTMLResponse(_years_page(database, context, submitted, {'blank_year'}, str(exc)), 400)
         audit(database, context, cid, 'PRICING_YEAR_CREATED_BLANK', 'pricing_year', target, None, {'year': target, 'structure_from': source, 'prices_copied': False})
@@ -49,6 +65,7 @@ def register_year_action_routes(app) -> None:
         round_up = data.get('round_up') == '1'
         try:
             _clone_year(database, cid, target, source, copy_prices=True, percent=percent, round_up=round_up)
+            _copy_person_minima(database, cid, source, target)
         except ValueError as exc:
             return HTMLResponse(_years_page(database, context, submitted, {'copy_year'}, str(exc)), 400)
         audit(database, context, cid, 'PRICING_YEAR_COPIED_ADJUSTED', 'pricing_year', target, {'source': source}, {'year': target, 'source': source, 'percent': percent, 'round_up': round_up})

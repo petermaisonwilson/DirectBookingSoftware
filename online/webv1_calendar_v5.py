@@ -90,7 +90,7 @@ def register_calendar_v5_routes(app) -> None:
 
         body += f'''<div class="card"><form id="availability-form" method="get" action="/availability/calendar-v2">
         <input type="hidden" id="edit-hold" name="edit_hold" value="{edit_hold or ''}"><input type="hidden" id="calendar-start" name="start" value="{visible_start.isoformat()}">
-        <div class="grid"><div><label>Element Type</label><select id="element-type" name="element_type">{options}</select></div>
+        <div class="grid"><div><label>Add/Change Element</label><select id="element-type" name="element_type">{options}</select></div>
         <div><label>Arrival</label><input id="arrival-date" type="date" name="arrival" value="{esc(arrival)}"></div>
         <div><label>Departure</label><input id="departure-date" type="date" name="departure" value="{esc(departure)}"></div></div><p>
         <a class="button secondary" href="/availability/calendar-v2?{preserve}&start={(visible_start-timedelta(days=14)).isoformat()}">← Previous 14 days</a>

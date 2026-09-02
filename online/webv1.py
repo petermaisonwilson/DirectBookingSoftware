@@ -27,10 +27,7 @@ from .webv1_booking_requirements_refinements import (
     register_booking_requirements_refinement_routes,
 )
 from .webv1_booking_requirements_ui import install_booking_requirements_ui
-from .webv1_booking_requirements_v3 import (
-    install_booking_requirements_v3_form,
-    register_booking_requirements_v3,
-)
+from .webv1_booking_requirements_v3 import register_booking_requirements_v3
 from .webv1_booking_status import initialise_booking_statuses, register_booking_status_routes
 from .webv1_bookings import initialise_booking_workflow, register_booking_routes
 from .webv1_calendar_edit_semantics import install_calendar_edit_semantics
@@ -98,6 +95,17 @@ def register_web_v1(app) -> None:
     register_addon_popup_routes(app)
     register_booking_requirement_routes(app)
     register_booking_requirements_refinement_routes(app)
+
+    # Replace only the old POST handler; the existing Requirements GET/start routes
+    # stay intact. Build 286 therefore submits directly to the relevance-aware save
+    # handler without rewriting the rendered page afterwards.
+    app.router.routes[:] = [
+        route for route in app.router.routes
+        if not (
+            getattr(route, 'path', None) == '/availability/requirements'
+            and 'POST' in getattr(route, 'methods', set())
+        )
+    ]
     register_booking_requirements_v3(app)
     register_booking_requirements_core(app)
     register_features_extras_routes(app)
@@ -108,7 +116,6 @@ def register_web_v1(app) -> None:
     install_duration_display(app)
     install_booking_requirements_ui(app)
     install_booking_requirements_refinements(app)
-    install_booking_requirements_v3_form(app)
     install_feature_booking_ui(app)
     install_feature_wording(app)
 

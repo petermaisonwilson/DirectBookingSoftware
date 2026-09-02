@@ -11,7 +11,7 @@ from run_online import port_is_available
 
 
 def main() -> None:
-    assert BUILD == '282'
+    assert BUILD == '286'
 
     with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as occupied:
         occupied.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)

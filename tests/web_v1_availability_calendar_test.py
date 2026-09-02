@@ -40,7 +40,7 @@ def main() -> None:
         assert 'Booking requirements' in start.text and 'coming and when?' in start.text
         assert 'Please enter the lead name' in start.text and 'name="lead_name"' in start.text and 'placeholder="NAME"' in start.text
         assert 'name="arrival"' in start.text and 'name="departure"' in start.text
-        assert 'Date of birth is not collected' in start.text
+        assert 'age is requested only where the Client has enabled' in start.text and 'Ask for age' in start.text
 
         with db.connect() as c:
             c.execute("INSERT OR IGNORE INTO setup_element_types(company_id,name,active) VALUES (?,?,1)", (company, 'Current Camping'))

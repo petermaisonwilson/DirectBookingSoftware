@@ -9,7 +9,11 @@ from fastapi.responses import HTMLResponse, RedirectResponse
 
 from .app import COOKIE_NAME, form_data
 from .setup015_core import rows
-from .webv1_booking_requirements import _requirements_page
+from .webv1_booking_requirements import (
+    _requirements_page,
+    _relevant_addon_ids_for_type,
+    _relevant_person_ids_for_type,
+)
 from .webv1_booking_requirements_refinements import _addon_caps, _working_context
 from .webv1_ordering import person_type_rows
 
@@ -17,6 +21,7 @@ from .webv1_ordering import person_type_rows
 def register_booking_requirements_v3(app) -> None:
     database = app.state.database
 
+    @app.post('/availability/requirements')
     @app.post('/availability/requirements-v3')
     async def requirements_save_v3(request: Request):
         context, cid = _working_context(database, request)
@@ -28,11 +33,10 @@ def register_booking_requirements_v3(app) -> None:
         raw_edit = str(data.get('edit_hold', '') or '').strip()
         edit_hold = int(raw_edit) if raw_edit.isdigit() and int(raw_edit) > 0 else 0
         held_type = ''
-        held_lead = ''
         if edit_hold:
             with database.connect() as c:
                 owned = c.execute(
-                    '''SELECT h.id,h.lead_name,e.element_type FROM element_holds h
+                    '''SELECT h.id,e.element_type FROM element_holds h
                        JOIN setup_elements e ON e.id=h.element_id AND e.company_id=h.company_id
                        WHERE h.id=? AND h.company_id=? AND h.session_token=?''',
                     (edit_hold, cid, token),
@@ -41,12 +45,9 @@ def register_booking_requirements_v3(app) -> None:
                 edit_hold = 0
             else:
                 held_type = str(owned['element_type'])
-                held_lead = str(owned['lead_name'] or '').strip()
 
         element_type = str(data.get('element_type', '') or '').strip() or held_type
         active_types = {str(r['name']) for r in rows(database, 'SELECT name FROM setup_element_types WHERE company_id=? AND active=1', (cid,))}
-        # The on-screen form always requires Element Type. Blank remains accepted only
-        # for older direct/API callers so previously proven integrations keep working.
         if element_type and element_type not in active_types:
             return HTMLResponse(_requirements_page(database, context, cid, token, 'Please select a valid Element Type.', edit_hold=edit_hold, selected_element_type=element_type), 400)
 
@@ -66,8 +67,12 @@ def register_booking_requirements_v3(app) -> None:
         if arrival_day.year != date.fromordinal(departure_day.toordinal() - 1).year:
             return HTMLResponse(_requirements_page(database, context, cid, token, 'The stay must remain within one pricing year.', edit_hold=edit_hold, selected_element_type=element_type), 400)
 
-        people_rows = person_type_rows(database, cid, active_only=True)
-        addon_rows = rows(database, 'SELECT * FROM setup_addons WHERE company_id=? AND active=1 AND ask_before_availability=1 ORDER BY name COLLATE NOCASE', (cid,))
+        year = arrival_day.year
+        relevant_people = _relevant_person_ids_for_type(database, cid, element_type, year)
+        relevant_addons = _relevant_addon_ids_for_type(database, cid, element_type, year)
+        people_rows = [p for p in person_type_rows(database, cid, active_only=True) if int(p['id']) in relevant_people]
+        addon_rows = [a for a in rows(database, 'SELECT * FROM setup_addons WHERE company_id=? AND active=1 AND ask_before_availability=1 ORDER BY name COLLATE NOCASE', (cid,)) if int(a['id']) in relevant_addons]
+
         parsed_people = []
         total = 0
         for p in people_rows:
@@ -94,12 +99,10 @@ def register_booking_requirements_v3(app) -> None:
         caps = _addon_caps(database, cid)
         parsed_addons = []
         for a in addon_rows:
-            aid = int(a['id'])
-            cap = int(caps.get(aid, 0))
+            aid = int(a['id']); cap = int(caps.get(aid, 0))
             raw_values = data.getlist(f'addon_{aid}') if hasattr(data, 'getlist') else [data.get(f'addon_{aid}', '0')]
             try:
-                values = [max(0, int(v or 0)) for v in raw_values]
-                qty = max(values) if values else 0
+                values = [max(0, int(v or 0)) for v in raw_values]; qty = max(values) if values else 0
             except (ValueError, TypeError):
                 return HTMLResponse(_requirements_page(database, context, cid, token, f'Enter a valid quantity for {a["name"]}.', edit_hold=edit_hold, selected_element_type=element_type), 400)
             if qty > cap:
@@ -115,69 +118,26 @@ def register_booking_requirements_v3(app) -> None:
                 c.execute('INSERT INTO booking_requirement_addons(session_token,company_id,addon_id,quantity) VALUES (?,?,?,?)', (token, cid, aid, qty))
             c.execute('''INSERT INTO booking_requirement_sessions(session_token,company_id,ready,arrival_date,departure_date,lead_name,updated_at)
                          VALUES (?,?,1,?,?,?,CURRENT_TIMESTAMP)
-                         ON CONFLICT(session_token,company_id) DO UPDATE SET
-                           ready=1,arrival_date=excluded.arrival_date,departure_date=excluded.departure_date,
-                           lead_name=excluded.lead_name,updated_at=CURRENT_TIMESTAMP''',
+                         ON CONFLICT(session_token,company_id) DO UPDATE SET ready=1,arrival_date=excluded.arrival_date,
+                         departure_date=excluded.departure_date,lead_name=excluded.lead_name,updated_at=CURRENT_TIMESTAMP''',
                       (token, cid, arrival, departure, lead_name))
 
-            # People, ages, vehicle and other requirements describe the named booking
-            # party, not one individual Element. During an edit, immediately propagate
-            # those shared requirements to every held Element for the same party while
-            # leaving each Element choice and its dates untouched.
-            if edit_hold:
-                if held_lead:
-                    group_ids = [int(r['id']) for r in c.execute(
-                        '''SELECT id FROM element_holds
-                           WHERE company_id=? AND session_token=? AND lead_name=?
-                           ORDER BY created_at,id''',
-                        (cid, token, held_lead),
-                    ).fetchall()]
-                else:
-                    group_ids = [edit_hold]
-                if edit_hold not in group_ids:
-                    group_ids.append(edit_hold)
-                for hold_id in group_ids:
-                    c.execute('DELETE FROM hold_requirement_people WHERE hold_id=?', (hold_id,))
-                    c.execute('DELETE FROM hold_requirement_addons WHERE hold_id=?', (hold_id,))
-                    c.execute(
-                        '''INSERT INTO hold_requirement_people(hold_id,company_id,person_type_id,quantity,ages_json)
-                           SELECT ?,company_id,person_type_id,quantity,ages_json
-                           FROM booking_requirement_people WHERE company_id=? AND session_token=?''',
-                        (hold_id, cid, token),
-                    )
-                    c.execute(
-                        '''INSERT INTO hold_requirement_addons(hold_id,company_id,addon_id,quantity)
-                           SELECT ?,company_id,addon_id,quantity
-                           FROM booking_requirement_addons WHERE company_id=? AND session_token=?''',
-                        (hold_id, cid, token),
-                    )
-                marks = ','.join('?' for _ in group_ids)
-                c.execute(
-                    f'''UPDATE element_holds SET lead_name=?
-                        WHERE company_id=? AND session_token=? AND id IN ({marks})''',
-                    (lead_name, cid, token, *group_ids),
-                )
+            # Editing the same Element Type commits only this held item's relevant
+            # requirements. Other Elements in the same named booking can intentionally
+            # have different occupancy and requirements.
+            if edit_hold and element_type == held_type:
+                c.execute('DELETE FROM hold_requirement_people WHERE hold_id=?', (edit_hold,))
+                c.execute('DELETE FROM hold_requirement_addons WHERE hold_id=?', (edit_hold,))
+                c.execute('''INSERT INTO hold_requirement_people(hold_id,company_id,person_type_id,quantity,ages_json)
+                             SELECT ?,company_id,person_type_id,quantity,ages_json FROM booking_requirement_people
+                             WHERE company_id=? AND session_token=?''', (edit_hold, cid, token))
+                c.execute('''INSERT INTO hold_requirement_addons(hold_id,company_id,addon_id,quantity)
+                             SELECT ?,company_id,addon_id,quantity FROM booking_requirement_addons
+                             WHERE company_id=? AND session_token=?''', (edit_hold, cid, token))
+                c.execute('UPDATE element_holds SET lead_name=? WHERE id=? AND company_id=? AND session_token=?', (lead_name, edit_hold, cid, token))
 
         parts = []
-        if element_type:
-            parts.append('element_type=' + quote_plus(element_type))
+        if element_type: parts.append('element_type=' + quote_plus(element_type))
         parts.extend([f'arrival={arrival}', f'departure={departure}'])
-        if edit_hold:
-            parts.append(f'edit_hold={edit_hold}')
+        if edit_hold: parts.append(f'edit_hold={edit_hold}')
         return RedirectResponse('/availability/calendar-v2?' + '&'.join(parts), 303)
-
-
-def install_booking_requirements_v3_form(app) -> None:
-    @app.middleware('http')
-    async def booking_requirements_v3_form(request, call_next):
-        response = await call_next(request)
-        if request.url.path != '/availability/start' or response.status_code >= 400 or 'text/html' not in response.headers.get('content-type', ''):
-            return response
-        body = b''
-        async for chunk in response.body_iterator:
-            body += chunk if isinstance(chunk, bytes) else str(chunk).encode('utf-8')
-        text = body.decode('utf-8')
-        headers = {k: v for k, v in response.headers.items() if k.lower() not in {'content-length', 'content-type'}}
-        text = text.replace('action="/availability/requirements-v2"', 'action="/availability/requirements-v3"', 1)
-        from fastapi.responses import Response
-        return Response(content=text, status_code=response.status_code, headers=headers, media_type='text/html')

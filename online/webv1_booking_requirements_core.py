@@ -91,18 +91,31 @@ def element_reasons(database, cid: int, year: int, element, people: dict, requir
         elif total > int(occupancy['max_total']):
             reasons.append(f'maximum occupancy {int(occupancy["max_total"])}')
 
+        limits = rows(database, '''SELECT l.person_type_id,l.min_count,l.max_count,p.name
+            FROM setup_person_limits l
+            LEFT JOIN setup_person_types p ON p.id=l.person_type_id AND p.company_id=l.company_id
+            WHERE l.company_id=? AND l.year=? AND l.element_id=?''',
+            (cid, year, int(element['id'])))
+        configured_person_ids: set[int] = set()
+        for limit in limits:
+            pid = int(limit['person_type_id'])
+            configured_person_ids.add(pid)
+            qty = int(people.get(pid, {}).get('quantity', 0))
+            minimum = int(limit['min_count'] or 0)
+            maximum = int(limit['max_count'])
+            name = str(limit['name'] or 'Person type')
+            if qty < minimum:
+                reasons.append(f'{name} minimum {minimum}')
+            elif qty > maximum:
+                reasons.append(f'{name} not allowed' if maximum == 0 else f'{name} max {maximum}')
+
         for pid, data in people.items():
             qty = int(data.get('quantity', 0))
-            if qty <= 0:
+            if qty <= 0 or int(pid) in configured_person_ids:
                 continue
             person = one(database, 'SELECT name FROM setup_person_types WHERE company_id=? AND id=?', (cid, pid))
             name = str(person['name']) if person else 'Person type'
-            limit = one(database, 'SELECT max_count FROM setup_person_limits WHERE company_id=? AND year=? AND element_id=? AND person_type_id=?',
-                        (cid, year, int(element['id']), pid))
-            if limit is None:
-                reasons.append(f'{name} not configured')
-            elif qty > int(limit['max_count']):
-                reasons.append(f'{name} not allowed' if int(limit['max_count']) == 0 else f'{name} max {int(limit["max_count"])}')
+            reasons.append(f'{name} not configured')
 
     relevant = _relevant_requirement_ids(database, cid, year, element_type)
     for aid, raw_qty in requirements.items():
