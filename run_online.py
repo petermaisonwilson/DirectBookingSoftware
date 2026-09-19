@@ -28,14 +28,14 @@ def main() -> int:
 
     if not port_is_available(host, port):
         print()
-        print(f"Direct Booking is already running on http://{host}:{port}.")
-        print("Close the existing Direct Booking command window before starting this build.")
+        print(f"DBS is already running on http://{host}:{port}.")
+        print("Close the existing DBS command window before starting this build.")
         print("This build has NOT opened the older running copy in your browser.")
         return 2
 
     if os.environ.get("DIRECTBOOKING_NO_BROWSER") != "1":
         threading.Timer(1.2, lambda: webbrowser.open(f"http://{host}:{port}")).start()
-    print(f"Direct Booking Web V1 starting at http://{host}:{port}")
+    print(f"DBS Web V1 starting at http://{host}:{port}")
     print("Press Ctrl+C in this window when you want to stop it.")
     uvicorn.run(app, host=host, port=port, log_level="info")
     return 0
