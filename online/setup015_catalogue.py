@@ -169,6 +169,7 @@ def register_catalogue_routes(app) -> None:
             ('feature_extra_rules', '<h2>Feature / Extra Rules</h2><p>Set Element Type defaults and Individual Element overrides.</p><a class="button" href="/setup/addon-rules">Open</a>'),
             ('years', '<h2>Annual setup</h2><p>Years, seasons and annual pricing structure.</p><a class="button" href="/setup/years">Open</a>'),
             ('pricing', '<h2>Seasonal pricing</h2><p>Set Element prices for each configured season.</p><a class="button" href="/setup/pricing">Open</a>'),
+            ('payment_methods', '<h2>Payment Methods</h2><p>Cash, cheque, card and other operator-defined ways to take payment.</p><a class="button" href="/setup/payment-methods">Open</a>'),
             ('price_test', '<h2>Price / Rules test</h2><p>Test real dates, people, Features / Extras, occupancy and calculated price.</p><a class="button" href="/setup/price-test">Open</a>'),
         ]
         body = f'<h1>{esc(company["name"])} — Setup</h1>' + sortable_menu_html(database, context, 'setup', cards)
