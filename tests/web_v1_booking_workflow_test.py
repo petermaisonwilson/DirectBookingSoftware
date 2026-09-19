@@ -76,6 +76,9 @@ def main() -> None:
             foreign_hold_id = int(c.execute('''INSERT INTO element_holds(company_id,element_id,session_token,holder_user_id,arrival_date,departure_date,renewal_required_at,expires_at,created_at,updated_at,lead_name)
                 VALUES (?,?,?,?,?,?,?,?,?,?,?)''', (cid, element_id, 'different-session-token', int(ctx['user_id']), '2035-06-10', '2035-06-13', future.isoformat(timespec='seconds'), future.isoformat(timespec='seconds'), now, now, 'Other customer')).lastrowid)
 
+        setup_page = client.get('/setup')
+        assert setup_page.status_code == 200 and 'Payment Methods' in setup_page.text and '/setup/payment-methods' in setup_page.text
+
         detail = client.get(f'/operations/enquiries/{enquiry_id}')
         assert detail.status_code == 200
         assert 'Keep as Quote' in detail.text and 'KEEP AS QUOTE' in detail.text
