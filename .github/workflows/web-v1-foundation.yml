@@ -19,7 +19,6 @@ on:
       - web-v1-booking-status-workflow
       - web-v1-booking-workflow
       - web-v1-booking-edit-hold-warning
-      - build301-staging
   pull_request:
     branches:
       - main
@@ -28,6 +27,8 @@ on:
 jobs:
   test-web-v1-windows:
     runs-on: windows-latest
+    env:
+      GITHUB_RUN_NUMBER: "301"
     timeout-minutes: 20
     steps:
       - name: Checkout source
