@@ -192,6 +192,14 @@ def register_booking_progress_routes(app):
         if calc_error:
             return HTMLResponse(_customer_stage(database,context,company_id,token,hold_id,values,'The held booking cannot yet be saved as an Enquiry: '+calc_error),409)
         enquiry_id=_save(database,context,company_id,int(customer_id),enquiry_values,calculation)
+        # The saved Enquiry now owns the availability state. The Basket hold was only
+        # for the unsaved journey, so remove it and its snapshots once SAVE ENQUIRY
+        # has succeeded. This also stops the temporary-hold renewal warning.
+        with database.connect() as c:
+            c.execute('DELETE FROM hold_requirement_people WHERE hold_id=?', (hold_id,))
+            c.execute('DELETE FROM hold_requirement_addons WHERE hold_id=?', (hold_id,))
+            c.execute('DELETE FROM element_holds WHERE id=? AND company_id=? AND session_token=?', (hold_id,company_id,token))
+        audit(database,context,company_id,'ELEMENT_HOLD_CONVERTED_TO_ENQUIRY','enquiry',enquiry_id,after={'hold_id':hold_id})
         return RedirectResponse(f'/operations/enquiries/{enquiry_id}?saved=1',303)
 
     @app.get('/availability/basket/review',response_class=HTMLResponse)
