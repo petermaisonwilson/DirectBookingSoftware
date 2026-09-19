@@ -101,9 +101,14 @@ def main() -> None:
             assert float(request_row['provisional_total']) == 40.0
             person = c.execute('SELECT quantity FROM enquiry_people WHERE enquiry_id=? AND company_id=? AND person_type_id=?', (enquiry_id, cid, chosen_person)).fetchone()
             assert person is not None and int(person['quantity']) == 2
-            assert c.execute('SELECT id FROM element_holds WHERE id=? AND company_id=? AND session_token=?', (hold_id, cid, token)).fetchone() is not None
+            assert c.execute('SELECT id FROM element_holds WHERE id=? AND company_id=? AND session_token=?', (hold_id, cid, token)).fetchone() is None
+            assert c.execute('SELECT 1 FROM hold_requirement_people WHERE hold_id=?', (hold_id,)).fetchone() is None
+            assert c.execute('SELECT 1 FROM hold_requirement_addons WHERE hold_id=?', (hold_id,)).fetchone() is None
             assert int(c.execute('SELECT COUNT(*) AS n FROM customer_records WHERE company_id=?', (cid,)).fetchone()['n']) == customer_count_before
 
+        basket = client.get('/availability/basket')
+        assert basket.status_code == 200
+        assert basket.json()['count'] == 0
         enquiry_page = client.get(f'/operations/enquiries/{enquiry_id}')
         assert enquiry_page.status_code == 200
         assert 'Alice Walker' in enquiry_page.text
