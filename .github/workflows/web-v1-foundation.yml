@@ -227,7 +227,7 @@ jobs:
               Start-Sleep -Seconds 1
               try {
                 $response = Invoke-RestMethod -Uri "http://127.0.0.1:8000/health" -TimeoutSec 2
-                if ($response.status -eq "ok" -and $response.build -match "^\\d+$") { $ok = $true; break }
+                if ($response.status -eq "ok" -and "$($response.build)" -match "^[0-9]+$") { $ok = $true; break }
               } catch {}
             }
             if (-not $ok) { throw "Web V1 local server did not pass health check" }
