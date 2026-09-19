@@ -28,8 +28,6 @@ on:
 jobs:
   test-web-v1-windows:
     runs-on: windows-latest
-    env:
-      GITHUB_RUN_NUMBER: "301"
     timeout-minutes: 20
     steps:
       - name: Checkout source
@@ -107,6 +105,7 @@ jobs:
       - name: Verify launcher identity and occupied-port protection
         shell: pwsh
         run: |
+          Remove-Item Env:GITHUB_RUN_NUMBER -ErrorAction SilentlyContinue
           python tests/web_v1_launcher_identity_test.py
           if ($LASTEXITCODE -ne 0) { throw "Launcher identity / occupied-port protection failed" }
 
@@ -230,7 +229,7 @@ jobs:
               Start-Sleep -Seconds 1
               try {
                 $response = Invoke-RestMethod -Uri "http://127.0.0.1:8000/health" -TimeoutSec 2
-                if ($response.status -eq "ok" -and $response.build -eq "$env:GITHUB_RUN_NUMBER") { $ok = $true; break }
+                if ($response.status -eq "ok" -and $response.build -eq "301") { $ok = $true; break }
               } catch {}
             }
             if (-not $ok) { throw "Web V1 local server did not pass health check" }
