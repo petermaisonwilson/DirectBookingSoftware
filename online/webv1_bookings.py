@@ -192,13 +192,49 @@ def register_booking_routes(app) -> None:
 
     @app.post('/operations/enquiries/{enquiry_id}/convert')
     async def convert(enquiry_id: int, request: Request):
-        context = context_for(database, request); cid = int(working_company(context)); data = await form_data(request); require_csrf(context, data)
+        context=context_for(database,request); data=await form_data(request); require_csrf(context,data)
+        try: status_id=int(data.get('workflow_status_id',''))
+        except (TypeError,ValueError): return RedirectResponse(f'/operations/enquiries/{enquiry_id}?convert_error=Choose+a+valid+Booking+Status',303)
+        return RedirectResponse(f'/operations/enquiries/{enquiry_id}/confirm?workflow_status_id={status_id}',303)
+
+    @app.get('/operations/enquiries/{enquiry_id}/confirm', response_class=HTMLResponse)
+    def confirm_booking(enquiry_id: int, request: Request, workflow_status_id: int):
+        context=context_for(database,request); cid=int(working_company(context))
+        enquiry=one(database, 'SELECT e.*,er.provisional_total,c.first_name,c.last_name FROM enquiries e JOIN enquiry_requests er ON er.enquiry_id=e.id AND er.company_id=e.company_id LEFT JOIN customer_records c ON c.id=e.customer_id AND c.company_id=e.company_id WHERE e.id=? AND e.company_id=?',(enquiry_id,cid))
+        status=status_by_id(database,cid,workflow_status_id)
+        if enquiry is None or status is None or str(status['internal_state']) not in {'RESERVED','CONFIRMED','ON_SITE'}: return RedirectResponse(f'/operations/enquiries/{enquiry_id}?convert_error=Choose+a+valid+Booking+Status',303)
+        methods=rows(database,'SELECT * FROM payment_method_definitions WHERE company_id=? AND active=1 ORDER BY display_order,name',(cid,))
+        options=''.join(f'<option value="{int(m["id"])}">{esc(m["name"])}</option>' for m in methods)
+        total=float(enquiry['provisional_total'] or 0); customer=(str(enquiry['first_name'] or '')+' '+str(enquiry['last_name'] or '')).strip() or 'Customer'
+        method_block=f'<div><label>Payment Method</label><select name="payment_method_id" required>{options}</select></div>' if methods else '<div class="error">No active Payment Methods. Add one in Setup before taking payment.</div>'
+        body=f'''<h1>Confirm Booking</h1><p><a href="/operations/enquiries/{enquiry_id}">Back to Enquiry</a></p><div class="card"><h2>{esc(customer)}</h2><p><strong>Booking total:</strong> {_money(total)}<br><strong>Initial status:</strong> {esc(status['name'])}</p></div><div class="card"><h2>Take Payment</h2><p>Record the payment before DBS creates the Booking.</p><form method="post" action="/operations/enquiries/{enquiry_id}/confirm-payment"><input type="hidden" name="csrf" value="{esc(context['csrf_token'])}"><input type="hidden" name="workflow_status_id" value="{workflow_status_id}"><div class="grid"><div><label>Amount</label><input name="amount" value="{total:.2f}" required></div><div><label>Payment Date</label><input type="date" name="payment_date" value="{datetime.now().strftime('%Y-%m-%d')}" required></div>{method_block}<div><label>Reference</label><input name="reference"></div></div><label>Notes</label><input name="notes"><p><button {'disabled' if not methods else ''}>RECORD PAYMENT &amp; CONFIRM BOOKING</button></p></form></div><div class="card"><h2>Confirm without payment</h2><p>A reason is compulsory and is written to the audit trail.</p><form method="post" action="/operations/enquiries/{enquiry_id}/confirm-without-payment"><input type="hidden" name="csrf" value="{esc(context['csrf_token'])}"><input type="hidden" name="workflow_status_id" value="{workflow_status_id}"><label>Reason</label><input name="reason" required><p><button class="warning">CONFIRM WITHOUT PAYMENT</button></p></form></div>'''
+        return layout('Confirm Booking',body,context)
+
+    @app.post('/operations/enquiries/{enquiry_id}/confirm-payment')
+    async def confirm_payment(enquiry_id:int,request:Request):
+        context=context_for(database,request); cid=int(working_company(context)); data=await form_data(request); require_csrf(context,data)
         try:
-            status_id = int(data.get('workflow_status_id', ''))
-            booking_id = convert_enquiry(database, context, cid, enquiry_id, status_id)
-        except (TypeError, ValueError) as exc:
-            return RedirectResponse(f'/operations/enquiries/{enquiry_id}?convert_error={esc(str(exc))}', 303)
-        return RedirectResponse(f'/operations/bookings/{booking_id}?created=1', 303)
+            status_id=int(data.get('workflow_status_id','')); method_id=int(data.get('payment_method_id','')); amount=round(float(str(data.get('amount','')).replace(',','.')),2)
+            if amount<=0: raise ValueError
+            datetime.strptime(str(data.get('payment_date','')),'%Y-%m-%d')
+        except (TypeError,ValueError): return RedirectResponse(f'/operations/enquiries/{enquiry_id}?convert_error=Enter+valid+payment+details',303)
+        method=one(database,'SELECT * FROM payment_method_definitions WHERE company_id=? AND id=? AND active=1',(cid,method_id))
+        if method is None: return RedirectResponse(f'/operations/enquiries/{enquiry_id}?convert_error=Choose+an+active+Payment+Method',303)
+        if str(method['method_type'])=='card': return RedirectResponse(f'/operations/enquiries/{enquiry_id}?convert_error=Card+provider+connection+is+not+configured+yet',303)
+        try: booking_id=convert_enquiry(database,context,cid,enquiry_id,status_id)
+        except ValueError as exc: return RedirectResponse(f'/operations/enquiries/{enquiry_id}?convert_error={esc(str(exc))}',303)
+        with database.connect() as c: payment_id=int(c.execute('INSERT INTO booking_payments(company_id,booking_id,amount,payment_date,method,reference,notes,created_by_user_id,created_at) VALUES (?,?,?,?,?,?,?,?,?)',(cid,booking_id,amount,str(data.get('payment_date','')),str(method['name']),str(data.get('reference','')).strip(),str(data.get('notes','')).strip(),context['user_id'],iso_now())).lastrowid)
+        audit(database,context,cid,'BOOKING_PAYMENT_RECORDED','booking',booking_id,after={'payment_id':payment_id,'amount':amount,'payment_date':str(data.get('payment_date','')),'method':str(method['name'])})
+        return RedirectResponse(f'/operations/bookings/{booking_id}?created=1',303)
+
+    @app.post('/operations/enquiries/{enquiry_id}/confirm-without-payment')
+    async def confirm_without_payment(enquiry_id:int,request:Request):
+        context=context_for(database,request); cid=int(working_company(context)); data=await form_data(request); require_csrf(context,data); reason=str(data.get('reason','')).strip()
+        if not reason: return RedirectResponse(f'/operations/enquiries/{enquiry_id}?convert_error=A+reason+is+required+to+confirm+without+payment',303)
+        try: booking_id=convert_enquiry(database,context,cid,enquiry_id,int(data.get('workflow_status_id','')))
+        except (TypeError,ValueError) as exc: return RedirectResponse(f'/operations/enquiries/{enquiry_id}?convert_error={esc(str(exc))}',303)
+        audit(database,context,cid,'BOOKING_CONFIRMED_WITHOUT_PAYMENT','booking',booking_id,after={'reason':reason,'enquiry_id':enquiry_id})
+        return RedirectResponse(f'/operations/bookings/{booking_id}?created=1&message=Confirmed+without+payment',303)
 
     @app.post('/operations/enquiries/{enquiry_id}/quote-status')
     async def keep_as_quote(enquiry_id: int, request: Request):
@@ -313,5 +349,5 @@ def enquiry_conversion_panel(database, context, enquiry_id: int) -> str:
         return quote_html + '<div class="card"><h2>Convert to Booking</h2><div class="error">Create an active Reserved/Confirmed Booking Status first.</div></div>'
     default = next((st for st in statuses if str(st['internal_state']) == 'CONFIRMED'), statuses[0])
     opts = ''.join(f'<option value="{int(st["id"])}" {"selected" if int(st["id"])==int(default["id"]) else ""}>{esc(st["name"])}</option>' for st in statuses)
-    booking_html = f'''<div class="card"><h2>Convert to Booking</h2><p>Only use this when the customer is actually proceeding. This freezes the Enquiry's current Element, people, Add-ons and price into a permanent Booking.</p><form method="post" action="/operations/enquiries/{enquiry_id}/convert"><input type="hidden" name="csrf" value="{esc(context['csrf_token'])}"><div class="grid"><div><label>Initial Booking Status</label><select name="workflow_status_id">{opts}</select></div><div style="align-self:end"><button>Confirm / Convert to Booking</button></div></div></form></div>'''
+    booking_html = f'''<div class="card"><h2>Confirm Booking</h2><p>Continue to Take Payment. The Booking is not created until payment is recorded or deliberately confirmed without payment.</p><form method="post" action="/operations/enquiries/{enquiry_id}/convert"><input type="hidden" name="csrf" value="{esc(context['csrf_token'])}"><div class="grid"><div><label>Initial Booking Status</label><select name="workflow_status_id">{opts}</select></div><div style="align-self:end"><button>CONFIRM BOOKING</button></div></div></form></div>'''
     return quote_html + booking_html

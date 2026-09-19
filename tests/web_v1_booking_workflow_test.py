@@ -79,7 +79,7 @@ def main() -> None:
         detail = client.get(f'/operations/enquiries/{enquiry_id}')
         assert detail.status_code == 200
         assert 'Keep as Quote' in detail.text and 'KEEP AS QUOTE' in detail.text
-        assert 'Convert to Booking' in detail.text and 'Confirm / Convert to Booking' in detail.text
+        assert 'Confirm Booking' in detail.text and 'CONFIRM BOOKING' in detail.text
 
         quote = client.post(f'/operations/enquiries/{enquiry_id}/quote-status', data={'csrf': csrf, 'workflow_status_id': str(held_id)}, follow_redirects=False)
         assert quote.status_code == 303
@@ -91,14 +91,22 @@ def main() -> None:
         before = availability_state(db, cid, element_id, '2035-06-10', '2035-06-13')
         assert before['available'] is False and before['state'] == 'ENQUIRY'
 
-        blocked = client.post(f'/operations/enquiries/{enquiry_id}/convert', data={'csrf': csrf, 'workflow_status_id': str(confirmed_id)}, follow_redirects=False)
-        assert blocked.status_code == 303 and 'convert_error=' in blocked.headers['location']
+        first = client.post(f'/operations/enquiries/{enquiry_id}/convert', data={'csrf': csrf, 'workflow_status_id': str(confirmed_id)}, follow_redirects=False)
+        assert first.status_code == 303 and f'/operations/enquiries/{enquiry_id}/confirm' in first.headers['location']
         with db.connect() as c:
             assert c.execute('SELECT id FROM bookings WHERE company_id=? AND enquiry_id=?', (cid, enquiry_id)).fetchone() is None
             c.execute('DELETE FROM element_holds WHERE id=? AND company_id=?', (foreign_hold_id, cid))
             assert c.execute('SELECT id FROM element_holds WHERE id=? AND company_id=?', (own_hold_id, cid)).fetchone() is not None
+            cash = c.execute("SELECT id FROM payment_method_definitions WHERE company_id=? AND name='Cash' AND active=1", (cid,)).fetchone()
+            assert cash is not None
+            cash_id = int(cash['id'])
 
-        converted = client.post(f'/operations/enquiries/{enquiry_id}/convert', data={'csrf': csrf, 'workflow_status_id': str(confirmed_id)}, follow_redirects=False)
+        confirm_page = client.get(first.headers['location'])
+        assert confirm_page.status_code == 200 and 'Take Payment' in confirm_page.text and 'CONFIRM WITHOUT PAYMENT' in confirm_page.text
+        with db.connect() as c:
+            assert c.execute('SELECT id FROM bookings WHERE company_id=? AND enquiry_id=?', (cid, enquiry_id)).fetchone() is None
+
+        converted = client.post(f'/operations/enquiries/{enquiry_id}/confirm-payment', data={'csrf': csrf, 'workflow_status_id': str(confirmed_id), 'payment_method_id': str(cash_id), 'amount': '100.00', 'payment_date': '2035-05-01', 'reference': 'DEP-1', 'notes': 'Deposit'}, follow_redirects=False)
         assert converted.status_code == 303 and '/operations/bookings/' in converted.headers['location']
         booking_id = int(converted.headers['location'].split('/operations/bookings/')[1].split('?')[0])
 
@@ -131,8 +139,6 @@ def main() -> None:
         booking_page = client.get(f'/operations/bookings/{booking_id}')
         assert booking_page.status_code == 200 and '€380.00' in booking_page.text and 'Frozen Booking' in booking_page.text
 
-        pay = client.post(f'/operations/bookings/{booking_id}/payments', data={'csrf': csrf, 'amount': '100.00', 'payment_date': '2035-05-01', 'method': 'Card', 'reference': 'PAY-1', 'notes': 'Deposit'}, follow_redirects=False)
-        assert pay.status_code == 303
         page = client.get(f'/operations/bookings/{booking_id}')
         assert '€100.00' in page.text and '€280.00' in page.text and 'BOOKING_PAYMENT_RECORDED' in page.text
 
