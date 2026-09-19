@@ -2,7 +2,7 @@
 setlocal
 cd /d "%~dp0"
 
-echo Direct Booking Web V1
+echo DBS Web V1
 
 echo.
 set "PYTHON_CMD="
@@ -37,13 +37,13 @@ echo Installing/updating required web packages...
 if errorlevel 1 goto :failed
 
 echo.
-echo Starting Direct Booking Web V1...
+echo Starting DBS Web V1...
 .venv\Scripts\python.exe run_online.py
 if errorlevel 1 goto :failed
 exit /b 0
 
 :failed
 echo.
-echo Direct Booking Web V1 could not start. The error is shown above.
+echo DBS Web V1 could not start. The error is shown above.
 pause
 exit /b 1
