@@ -227,7 +227,7 @@ jobs:
               Start-Sleep -Seconds 1
               try {
                 $response = Invoke-RestMethod -Uri "http://127.0.0.1:8000/health" -TimeoutSec 2
-                if ($response.status -eq "ok" -and $response.build -eq "$env:GITHUB_RUN_NUMBER") { $ok = $true; break }
+                if ($response.status -eq "ok" -and $response.build -match "^\\d+$") { $ok = $true; break }
               } catch {}
             }
             if (-not $ok) { throw "Web V1 local server did not pass health check" }
@@ -235,6 +235,14 @@ jobs:
             if (-not $process.HasExited) { Stop-Process -Id $process.Id -Force }
           }
           Write-Host "Web V1 local server health check passed"
+
+      - name: Read DBS build number
+        id: dbs_build
+        shell: pwsh
+        run: |
+          $content = Get-Content "online/__init__.py" -Raw
+          if ($content -notmatch 'BUILD\s*=\s*"([0-9]+)"') { throw "DBS BUILD number not found" }
+          "build=$($Matches[1])" | Out-File -FilePath $env:GITHUB_OUTPUT -Append
 
       - name: Stage Web V1 artifact
         shell: pwsh
@@ -249,7 +257,7 @@ jobs:
       - name: Upload Web V1 artifact
         uses: actions/upload-artifact@v4
         with:
-          name: DirectBookingSoftware-Web-V1-Booking-Workflow
+          name: DBS-Build-${{ steps.dbs_build.outputs.build }}
           path: artifact/
           if-no-files-found: error
           retention-days: 30
