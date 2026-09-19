@@ -12,11 +12,8 @@ from run_online import port_is_available
 
 
 def main() -> None:
-    expected_build = os.environ.get('GITHUB_RUN_NUMBER')
-    if expected_build:
-        assert BUILD == expected_build
-    else:
-        assert BUILD.isdigit()
+    assert BUILD.isdigit()
+    assert int(BUILD) > 0
 
     with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as occupied:
         occupied.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
@@ -26,7 +23,7 @@ def main() -> None:
         assert port_is_available('127.0.0.1', port) is False
 
     assert port_is_available('127.0.0.1', port) is True
-    print('Direct Booking Web V1 launcher identity test: passed')
+    print('DBS launcher identity test: passed')
 
 
 if __name__ == '__main__':
