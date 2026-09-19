@@ -154,7 +154,9 @@ def register_booking_progress_routes(app):
     @app.get('/availability/basket/customer',response_class=HTMLResponse)
     def basket_customer(request:Request,hold_id:int):
         context,company_id=_session_company(database,request);token=request.cookies.get(COOKIE_NAME,'')
-        return HTMLResponse(_customer_stage(database,context,company_id,token,hold_id,{}))
+        item,_=_hold_enquiry_values(database,company_id,token,hold_id)
+        initial_values={'last_name':str(item['lead_name'] or '').strip()} if item is not None else {}
+        return HTMLResponse(_customer_stage(database,context,company_id,token,hold_id,initial_values))
 
     @app.post('/availability/basket/customer',response_class=HTMLResponse)
     async def basket_customer_save(request:Request):

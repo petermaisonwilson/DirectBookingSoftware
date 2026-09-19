@@ -19,7 +19,7 @@ INTERNAL_STATES = (
 )
 
 DEFAULT_STATUSES = (
-    ('Enquiry / Held', 'Held', '#FFE39A', 10, 'HELD', 1, 10),
+    ('Keep as Quote', 'Quote', '#FFE39A', 10, 'HELD', 1, 10),
     ('Deposit Paid', 'Deposit', '#F3C5C9', 20, 'CONFIRMED', 1, None),
     ('Balance Paid', 'Paid', '#CDECCF', 30, 'CONFIRMED', 1, None),
     ('On Site', 'On site', '#CFE2FF', 40, 'ON_SITE', 1, None),
@@ -79,6 +79,10 @@ def initialise_booking_statuses(database) -> None:
         if 'workflow_status_id' not in _columns(c, 'bookings'):
             c.execute('ALTER TABLE bookings ADD COLUMN workflow_status_id INTEGER')
         _seed_defaults(c)
+        # Rename only the untouched factory default. Client-created or edited status names remain unchanged.
+        c.execute("""UPDATE booking_status_definitions
+                     SET name='Keep as Quote',short_name='Quote',updated_at=?
+                     WHERE name='Enquiry / Held' AND short_name='Held' AND internal_state='HELD'""", (iso_now(),))
         # Existing historical records are deliberately not turned into fresh blocking Enquiries.
         c.executescript('''
         DROP TRIGGER IF EXISTS webv1_default_enquiry_workflow;

@@ -87,11 +87,13 @@ def availability_state(database, company_id: int, element_id: int, arrival: str,
         if enquiry:
             return {'available': False, 'state': 'ENQUIRY', 'reason': str(enquiry['workflow_name'] or 'Enquiry / Held'), 'enquiry_id': int(enquiry['id']), 'expires_at': enquiry['availability_expires_at']}
         legacy._purge_expired_holds(c)
-        held = c.execute('''SELECT * FROM element_holds WHERE company_id=? AND element_id=?
+        held_rows = c.execute('''SELECT * FROM element_holds WHERE company_id=? AND element_id=?
                             AND date(arrival_date)<date(?) AND date(departure_date)>date(?)
-                            ORDER BY expires_at DESC LIMIT 1''', (company_id, element_id, departure, arrival)).fetchone()
-        if held:
-            own = bool(session_token and str(held['session_token']) == session_token)
+                            ORDER BY expires_at DESC,id DESC''', (company_id, element_id, departure, arrival)).fetchall()
+        if held_rows:
+            foreign = next((h for h in held_rows if not session_token or str(h['session_token']) != session_token), None)
+            held = foreign or held_rows[0]
+            own = foreign is None and bool(session_token and str(held['session_token']) == session_token)
             return {'available': own, 'state': 'HELD_BY_YOU' if own else 'HELD', 'reason': 'Held in your basket' if own else 'Temporarily held', 'hold_id': int(held['id']), 'expires_at': str(held['expires_at']), 'renewal_required_at': str(held['renewal_required_at'])}
     return {'available': True, 'state': 'AVAILABLE', 'reason': ''}
 

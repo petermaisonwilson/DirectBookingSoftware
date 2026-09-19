@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 import json
-from datetime import datetime
+from datetime import datetime, timedelta
 
 from fastapi import Request
 from fastapi.responses import HTMLResponse, RedirectResponse
@@ -110,7 +110,8 @@ def convert_enquiry(database, context, cid: int, enquiry_id: int, workflow_statu
     status = status_by_id(database, cid, workflow_status_id)
     if status is None or not int(status['active']) or str(status['internal_state']) not in {'RESERVED','CONFIRMED','ON_SITE'}:
         raise ValueError('Choose a valid Booking Status.')
-    state = availability_state(database, cid, int(enquiry['element_id']), str(enquiry['arrival_date']), str(enquiry['departure_date']), exclude_enquiry_id=enquiry_id)
+    token = str(context['token']) if 'token' in context.keys() else ''
+    state = availability_state(database, cid, int(enquiry['element_id']), str(enquiry['arrival_date']), str(enquiry['departure_date']), session_token=token, exclude_enquiry_id=enquiry_id)
     if not state['available']:
         raise ValueError('The Element is no longer available: ' + str(state['reason']))
     try:
@@ -161,7 +162,6 @@ def convert_enquiry(database, context, cid: int, enquiry_id: int, workflow_statu
             c.execute('''INSERT INTO booking_addons(company_id,booking_element_id,addon_id,quantity,pricing_method_snapshot,unit_price_snapshot,total_amount,rule_snapshot_json)
                 VALUES (?,?,?,?,?,?,?,?)''', (cid, booking_element_id, aid, qty, addon['pricing_method'], float(rule.get('rate') or 0), amount, json.dumps(detail, separators=(',',':'))))
         c.execute("UPDATE enquiries SET status='converted',availability_expires_at=NULL,updated_at=? WHERE id=? AND company_id=?", (now, enquiry_id, cid))
-        token = str(context['token']) if 'token' in context.keys() else ''
         if token:
             c.execute('DELETE FROM element_holds WHERE company_id=? AND element_id=? AND session_token=?', (cid, enquiry['element_id'], token))
     audit(database, context, cid, 'ENQUIRY_CONVERTED_TO_BOOKING', 'enquiry', enquiry_id, after={'booking_id': booking_id, 'reference': reference})
@@ -199,6 +199,29 @@ def register_booking_routes(app) -> None:
         except (TypeError, ValueError) as exc:
             return RedirectResponse(f'/operations/enquiries/{enquiry_id}?convert_error={esc(str(exc))}', 303)
         return RedirectResponse(f'/operations/bookings/{booking_id}?created=1', 303)
+
+    @app.post('/operations/enquiries/{enquiry_id}/quote-status')
+    async def keep_as_quote(enquiry_id: int, request: Request):
+        context = context_for(database, request); cid = int(working_company(context)); data = await form_data(request); require_csrf(context, data)
+        try:
+            status_id = int(data.get('workflow_status_id', ''))
+        except (TypeError, ValueError):
+            return RedirectResponse(f'/operations/enquiries/{enquiry_id}?convert_error=Choose+a+valid+Quote+Status', 303)
+        status = status_by_id(database, cid, status_id)
+        if status is None or not int(status['active']) or str(status['internal_state']) != 'HELD':
+            return RedirectResponse(f'/operations/enquiries/{enquiry_id}?convert_error=Choose+a+valid+Quote+Status', 303)
+        enquiry = one(database, 'SELECT * FROM enquiries WHERE id=? AND company_id=?', (enquiry_id, cid))
+        if enquiry is None or str(enquiry['status']) == 'converted':
+            return RedirectResponse(f'/operations/enquiries/{enquiry_id}?convert_error=Enquiry+cannot+be+kept+as+a+Quote', 303)
+        expiry = None
+        if int(status['blocks_availability']) and status['expiry_minutes'] is not None:
+            expiry = (datetime.fromisoformat(iso_now()) + timedelta(minutes=int(status['expiry_minutes']))).isoformat(timespec='seconds')
+        with database.connect() as c:
+            c.execute('UPDATE enquiries SET workflow_status_id=?,availability_expires_at=?,updated_at=? WHERE id=? AND company_id=?',
+                      (status_id, expiry, iso_now(), enquiry_id, cid))
+        audit(database, context, cid, 'ENQUIRY_QUOTE_STATUS_CHANGED', 'enquiry', enquiry_id, dict(enquiry),
+              {'workflow_status_id': status_id, 'status_name': status['name'], 'availability_expires_at': expiry})
+        return RedirectResponse(f'/operations/enquiries/{enquiry_id}?saved=1', 303)
 
     @app.get('/operations/bookings/{booking_id}', response_class=HTMLResponse)
     def detail(booking_id: int, request: Request, created: int = 0, message: str = ''):
@@ -277,9 +300,18 @@ def enquiry_conversion_panel(database, context, enquiry_id: int) -> str:
     existing = one(database, 'SELECT id,reference FROM bookings WHERE company_id=? AND enquiry_id=? ORDER BY id DESC LIMIT 1', (cid, enquiry_id))
     if existing:
         return f'<div class="card"><h2>Booking</h2><p>This Enquiry has been converted to <a href="/operations/bookings/{int(existing["id"])}"><strong>{esc(existing["reference"])}</strong></a>.</p></div>'
+    enquiry = one(database, 'SELECT workflow_status_id FROM enquiries WHERE company_id=? AND id=?', (cid, enquiry_id))
+    quote_statuses = rows(database, "SELECT * FROM booking_status_definitions WHERE company_id=? AND active=1 AND internal_state='HELD' ORDER BY display_order,id", (cid,))
+    quote_html = ''
+    if quote_statuses:
+        current_id = int(enquiry['workflow_status_id'] or 0) if enquiry else 0
+        quote_default = next((q for q in quote_statuses if int(q['id']) == current_id), quote_statuses[0])
+        quote_opts = ''.join(f'<option value="{int(q["id"])}" {"selected" if int(q["id"])==int(quote_default["id"]) else ""}>{esc(q["name"])}</option>' for q in quote_statuses)
+        quote_html = f'''<div class="card"><h2>Keep as Quote</h2><p>Store this priced Enquiry while it is awaiting sending or a decision from the customer. This does not create a Booking.</p><form method="post" action="/operations/enquiries/{enquiry_id}/quote-status"><input type="hidden" name="csrf" value="{esc(context['csrf_token'])}"><div class="grid"><div><label>Quote / Enquiry Status</label><select name="workflow_status_id">{quote_opts}</select></div><div style="align-self:end"><button>KEEP AS QUOTE</button></div></div></form></div>'''
     statuses = _conversion_statuses(database, cid)
     if not statuses:
-        return '<div class="card"><h2>Convert to Booking</h2><div class="error">Create an active Reserved/Confirmed Booking Status first.</div></div>'
-    default = next((s for s in statuses if str(s['internal_state']) == 'CONFIRMED'), statuses[0])
-    opts = ''.join(f'<option value="{int(s["id"])}" {"selected" if int(s["id"])==int(default["id"]) else ""}>{esc(s["name"])}</option>' for s in statuses)
-    return f'''<div class="card"><h2>Convert to Booking</h2><p>This freezes the Enquiry's current Element, people, Add-ons and price into a permanent Booking.</p><form method="post" action="/operations/enquiries/{enquiry_id}/convert"><input type="hidden" name="csrf" value="{esc(context['csrf_token'])}"><div class="grid"><div><label>Initial Booking Status</label><select name="workflow_status_id">{opts}</select></div><div style="align-self:end"><button>Confirm / Convert to Booking</button></div></div></form></div>'''
+        return quote_html + '<div class="card"><h2>Convert to Booking</h2><div class="error">Create an active Reserved/Confirmed Booking Status first.</div></div>'
+    default = next((st for st in statuses if str(st['internal_state']) == 'CONFIRMED'), statuses[0])
+    opts = ''.join(f'<option value="{int(st["id"])}" {"selected" if int(st["id"])==int(default["id"]) else ""}>{esc(st["name"])}</option>' for st in statuses)
+    booking_html = f'''<div class="card"><h2>Convert to Booking</h2><p>Only use this when the customer is actually proceeding. This freezes the Enquiry's current Element, people, Add-ons and price into a permanent Booking.</p><form method="post" action="/operations/enquiries/{enquiry_id}/convert"><input type="hidden" name="csrf" value="{esc(context['csrf_token'])}"><div class="grid"><div><label>Initial Booking Status</label><select name="workflow_status_id">{opts}</select></div><div style="align-self:end"><button>Confirm / Convert to Booking</button></div></div></form></div>'''
+    return quote_html + booking_html

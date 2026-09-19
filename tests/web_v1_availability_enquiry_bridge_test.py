@@ -54,6 +54,7 @@ def main() -> None:
         assert details.status_code == 200
         for text in ('Customer Details', 'Lead Customer', 'Email address *', 'Mobile telephone', 'Fixed telephone', 'SAVE ENQUIRY'):
             assert text in details.text
+        assert 'name="last_name" required value="Walker"' in details.text
         with db.connect() as c:
             assert int(c.execute('SELECT COUNT(*) AS n FROM enquiries WHERE company_id=?', (cid,)).fetchone()['n']) == enquiry_count_before
 

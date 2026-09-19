@@ -3,6 +3,7 @@ from __future__ import annotations
 import json
 import sys
 import tempfile
+from datetime import datetime, timedelta, timezone
 from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
@@ -65,14 +66,37 @@ def main() -> None:
             c.execute("INSERT INTO enquiry_addons(enquiry_id,company_id,addon_id,quantity) VALUES (?,?,?,?)", (enquiry_id, cid, addon_id, 1))
             confirmed = c.execute("SELECT id,colour FROM booking_status_definitions WHERE company_id=? AND active=1 AND internal_state='CONFIRMED' ORDER BY display_order,id LIMIT 1", (cid,)).fetchone()
             released = c.execute("SELECT id FROM booking_status_definitions WHERE company_id=? AND active=1 AND internal_state='RELEASED' ORDER BY display_order,id LIMIT 1", (cid,)).fetchone()
-            confirmed_id = int(confirmed['id']); confirmed_colour = str(confirmed['colour']); released_id = int(released['id'])
+            held = c.execute("SELECT id,name FROM booking_status_definitions WHERE company_id=? AND active=1 AND internal_state='HELD' ORDER BY display_order,id LIMIT 1", (cid,)).fetchone()
+            confirmed_id = int(confirmed['id']); confirmed_colour = str(confirmed['colour']); released_id = int(released['id']); held_id = int(held['id'])
+            assert str(held['name']) == 'Keep as Quote'
+
+            future = datetime.now(timezone.utc) + timedelta(minutes=30)
+            own_hold_id = int(c.execute('''INSERT INTO element_holds(company_id,element_id,session_token,holder_user_id,arrival_date,departure_date,renewal_required_at,expires_at,created_at,updated_at,lead_name)
+                VALUES (?,?,?,?,?,?,?,?,?,?,?)''', (cid, element_id, str(client.cookies.get(COOKIE_NAME)), int(ctx['user_id']), '2035-06-10', '2035-06-13', future.isoformat(timespec='seconds'), future.isoformat(timespec='seconds'), now, now, 'Tester')).lastrowid)
+            foreign_hold_id = int(c.execute('''INSERT INTO element_holds(company_id,element_id,session_token,holder_user_id,arrival_date,departure_date,renewal_required_at,expires_at,created_at,updated_at,lead_name)
+                VALUES (?,?,?,?,?,?,?,?,?,?,?)''', (cid, element_id, 'different-session-token', int(ctx['user_id']), '2035-06-10', '2035-06-13', future.isoformat(timespec='seconds'), future.isoformat(timespec='seconds'), now, now, 'Other customer')).lastrowid)
 
         detail = client.get(f'/operations/enquiries/{enquiry_id}')
         assert detail.status_code == 200
+        assert 'Keep as Quote' in detail.text and 'KEEP AS QUOTE' in detail.text
         assert 'Convert to Booking' in detail.text and 'Confirm / Convert to Booking' in detail.text
+
+        quote = client.post(f'/operations/enquiries/{enquiry_id}/quote-status', data={'csrf': csrf, 'workflow_status_id': str(held_id)}, follow_redirects=False)
+        assert quote.status_code == 303
+        with db.connect() as c:
+            kept = c.execute('SELECT status,workflow_status_id FROM enquiries WHERE id=? AND company_id=?', (enquiry_id, cid)).fetchone()
+            assert kept['status'] == 'new' and int(kept['workflow_status_id']) == held_id
+            assert c.execute('SELECT id FROM bookings WHERE company_id=? AND enquiry_id=?', (cid, enquiry_id)).fetchone() is None
 
         before = availability_state(db, cid, element_id, '2035-06-10', '2035-06-13')
         assert before['available'] is False and before['state'] == 'ENQUIRY'
+
+        blocked = client.post(f'/operations/enquiries/{enquiry_id}/convert', data={'csrf': csrf, 'workflow_status_id': str(confirmed_id)}, follow_redirects=False)
+        assert blocked.status_code == 303 and 'convert_error=' in blocked.headers['location']
+        with db.connect() as c:
+            assert c.execute('SELECT id FROM bookings WHERE company_id=? AND enquiry_id=?', (cid, enquiry_id)).fetchone() is None
+            c.execute('DELETE FROM element_holds WHERE id=? AND company_id=?', (foreign_hold_id, cid))
+            assert c.execute('SELECT id FROM element_holds WHERE id=? AND company_id=?', (own_hold_id, cid)).fetchone() is not None
 
         converted = client.post(f'/operations/enquiries/{enquiry_id}/convert', data={'csrf': csrf, 'workflow_status_id': str(confirmed_id)}, follow_redirects=False)
         assert converted.status_code == 303 and '/operations/bookings/' in converted.headers['location']
