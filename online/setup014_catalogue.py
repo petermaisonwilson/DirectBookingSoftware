@@ -10,7 +10,7 @@ from .setup014_core import ADDON_PRICING_METHODS, ELEMENT_PRICING_METHODS, audit
 
 
 def setup_nav() -> str:
-    links = [("Setup home", "/setup"), ("Elements", "/setup/elements"), ("Person Types", "/setup/person-types"), ("Add-ons", "/setup/addons"), ("Years", "/setup/years"), ("Seasonal pricing", "/setup/pricing"), ("Occupancy", "/setup/occupancy"), ("Add-on rules", "/setup/addon-rules")]
+    links = [("Setup home", "/setup"), ("Elements", "/setup/elements"), ("Person Types", "/setup/person-types"), ("Add-ons", "/setup/addons"), ("Years", "/setup/years"), ("Seasonal pricing", "/setup/pricing"), ("Occupancy", "/setup/occupancy"), ("Add-on rules", "/setup/addon-rules"), ("Payment Methods", "/setup/payment-methods")]
     return '<div class="card" style="display:flex;gap:8px;flex-wrap:wrap">' + ''.join(f'<a class="button secondary" href="{href}">{label}</a>' for label, href in links) + '</div>'
 
 
@@ -21,7 +21,7 @@ def register_catalogue_routes(app) -> None:
     def setup_home(request: Request):
         context = context_for(database, request); cid = working_company(context); company = database.company(cid)
         body = f'<h1>{esc(company["name"])} — Setup</h1>{setup_nav()}<div class="grid">'
-        for title, text, href in (("Elements", "Bookable things that have their own dates and Element Type.", "/setup/elements"), ("Person Types", "Adult, Child and any other occupant types you choose.", "/setup/person-types"), ("Add-ons", "Extras that inherit the dates of their parent Element.", "/setup/addons"), ("Annual setup", "Years, seasons, prices, occupancy and Add-on rules.", "/setup/years")):
+        for title, text, href in (("Elements", "Bookable things that have their own dates and Element Type.", "/setup/elements"), ("Person Types", "Adult, Child and any other occupant types you choose.", "/setup/person-types"), ("Add-ons", "Extras that inherit the dates of their parent Element.", "/setup/addons"), ("Annual setup", "Years, seasons, prices, occupancy and Add-on rules.", "/setup/years"), ("Payment Methods", "Cash, cheque, card and other operator-defined ways to take payment.", "/setup/payment-methods")):
             body += f'<div class="card"><h2>{title}</h2><p>{text}</p><a class="button" href="{href}">Open</a></div>'
         return layout("Setup", body + '</div>', context)
 
