@@ -92,8 +92,8 @@ def layout(title: str, body: str, context=None) -> str:
     hold_warning = hold_warning_markup(context)
     return f"""<!doctype html>
 <html><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
-<title>{esc(title)} — Direct Booking</title><style>{css()}</style></head>
-<body><header><div><strong>Direct Booking Software</strong> <span class="muted" style="color:#c9d5df">Online Build {BUILD}</span></div>{nav}</header>
+<title>{esc(title)} — DBS</title><style>{css()}</style></head>
+<body><header><div><strong>DBS</strong> <span class="muted" style="color:#c9d5df">Online Build {BUILD}</span></div>{nav}</header>
 {support}<main>{body}</main>{hold_warning}</body></html>"""
 
 
@@ -101,7 +101,7 @@ def create_app(db_path: str | Path | None = None, *, seed_demo: bool = True) -> 
     path = Path(db_path or os.environ.get("DIRECTBOOKING_DB", "online_data/direct_booking_online_dev.db"))
     database = OnlineDatabase(path)
     database.initialise(seed_demo=seed_demo)
-    app = FastAPI(title=f"Direct Booking Software Online Build {BUILD}")
+    app = FastAPI(title=f"DBS Online Build {BUILD}")
     app.state.database = database
 
     def context_from(request: Request):
@@ -139,7 +139,7 @@ def create_app(db_path: str | Path | None = None, *, seed_demo: bool = True) -> 
         error_html = f'<div class="error">{esc(error)}</div>' if error else ""
         body = f"""
         <div class="login card"><h1>Online Build {BUILD}</h1>
-        <p>This is the first browser-based Direct Booking foundation running locally on your PC.</p>{error_html}
+        <p>This is the first browser-based DBS foundation running locally on your PC.</p>{error_html}
         <form method="post" action="/login">
           <label>Email</label><input name="email" type="email" required autofocus>
           <label>Password</label><input name="password" type="password" required>
