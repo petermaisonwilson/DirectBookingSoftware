@@ -42,6 +42,7 @@ from .webv1_hold_settings import (
     register_hold_settings_routes,
 )
 from .webv1_ordering import initialise_ordering, register_ordering_routes
+from .webv1_payment_methods import initialise_payment_methods, register_payment_method_routes
 from .webv1_pricing_usability import (
     initialise_pricing_usability,
     install_pricing_calculation_transparency,
@@ -70,6 +71,7 @@ def register_web_v1(app) -> None:
     initialise_availability(app.state.database)
     initialise_booking_statuses(app.state.database)
     initialise_booking_workflow(app.state.database)
+    initialise_payment_methods(app.state.database)
     initialise_hold_settings(app.state.database)
     initialise_pricing_usability(app.state.database)
     initialise_addon_popup(app.state.database)
@@ -88,6 +90,7 @@ def register_web_v1(app) -> None:
     register_booking_routes(app)
     register_addon_when_routes(app)
     register_booking_status_routes(app)
+    register_payment_method_routes(app)
     register_hold_settings_routes(app)
     register_availability_routes(app)
     register_basket_routes(app)
