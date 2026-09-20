@@ -13,6 +13,7 @@ from online.app import COOKIE_NAME, create_app
 from online.database import iso_now
 from online.webv1 import register_web_v1
 from online.webv1_status_availability import availability_state
+from online.webv1_bookings import convert_enquiry_with_payment, payment_due
 
 
 def login(client: TestClient, email: str, password: str) -> None:
@@ -78,6 +79,16 @@ def main() -> None:
 
         setup_page = client.get('/setup')
         assert setup_page.status_code == 200 and 'Payment Methods' in setup_page.text and '/setup/payment-methods' in setup_page.text
+        rules_page=client.get('/setup/payment-methods')
+        assert rules_page.status_code==200 and 'Payment / Deposit Rules' in rules_page.text and 'Always Require Full Payment' in rules_page.text
+        saved_rules=client.post('/setup/payment-rules',data={'csrf':csrf,'deposit_type':'percent','deposit_value':'25','full_payment_threshold':'150','balance_due_days':'30'},follow_redirects=False)
+        assert saved_rules.status_code==303
+        due,reason=payment_due(db,cid,380.0,'2035-06-10',today=datetime(2035,1,1).date())
+        assert due==95.0 and '25%' in reason
+        with db.connect() as c:
+            c.execute("UPDATE payment_rules SET deposit_type='fixed',deposit_value=100,full_payment_threshold=150,balance_due_days=30,always_require_full_payment=0 WHERE company_id=?",(cid,))
+        assert payment_due(db,cid,120.0,'2035-06-10',today=datetime(2035,1,1).date())[0]==120.0
+        assert payment_due(db,cid,380.0,'2035-01-20',today=datetime(2035,1,1).date())[0]==380.0
 
         detail = client.get(f'/operations/enquiries/{enquiry_id}')
         assert detail.status_code == 200
@@ -106,6 +117,22 @@ def main() -> None:
 
         confirm_page = client.get(first.headers['location'])
         assert confirm_page.status_code == 200 and 'Take Payment' in confirm_page.text and 'CONFIRM WITHOUT PAYMENT' in confirm_page.text
+        assert 'Payment Required Now:' in confirm_page.text and '€100.00' in confirm_page.text and 'Deposit Pending' in confirm_page.text and 'Party:' in confirm_page.text
+        too_small=client.post(f'/operations/enquiries/{enquiry_id}/confirm-payment',data={'csrf':csrf,'workflow_status_id':str(confirmed_id),'payment_method_id':str(cash_id),'amount':'99.00','payment_date':'2035-05-01'},follow_redirects=False)
+        assert too_small.status_code==303
+        with db.connect() as c:
+            assert c.execute('SELECT id FROM bookings WHERE company_id=? AND enquiry_id=?',(cid,enquiry_id)).fetchone() is None
+            assert c.execute('SELECT id FROM booking_payments WHERE company_id=?',(cid,)).fetchone() is None
+            cash_row=c.execute("SELECT * FROM payment_method_definitions WHERE id=?",(cash_id,)).fetchone()
+        try:
+            convert_enquiry_with_payment(db,ctx,cid,enquiry_id,confirmed_id,amount=100.0,payment_date='2035-05-01',method=cash_row,fail_after_booking=True)
+            raise AssertionError('forced payment failure did not raise')
+        except RuntimeError:
+            pass
+        with db.connect() as c:
+            assert c.execute('SELECT id FROM bookings WHERE company_id=? AND enquiry_id=?',(cid,enquiry_id)).fetchone() is None
+            assert c.execute('SELECT id FROM booking_payments WHERE company_id=?',(cid,)).fetchone() is None
+            assert c.execute('SELECT status FROM enquiries WHERE id=?',(enquiry_id,)).fetchone()['status']=='new'
         with db.connect() as c:
             assert c.execute('SELECT id FROM bookings WHERE company_id=? AND enquiry_id=?', (cid, enquiry_id)).fetchone() is None
 
