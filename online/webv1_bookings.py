@@ -11,6 +11,7 @@ from .database import iso_now
 from .setup015_calculator import _addon_rule
 from .setup015_core import audit, context_for, one, require_csrf, rows, working_company
 from .webv1_booking_status import default_status, status_by_id
+from .webv1_payment_methods import payment_rule
 from .webv1_status_availability import availability_state
 
 PAYMENT_SCHEMA = '''
@@ -80,6 +81,23 @@ def _conversion_statuses(database, cid: int):
         ORDER BY CASE internal_state WHEN 'RESERVED' THEN 1 WHEN 'CONFIRMED' THEN 2 ELSE 3 END, display_order,id''', (cid,))
 
 
+def payment_due(database, cid: int, total: float, arrival_date: str, *, today=None) -> tuple[float, str]:
+    rule=payment_rule(database,cid); total=round(max(0.0,float(total or 0)),2)
+    if rule is None:return total,'No Payment Rules are configured, so full payment is required.'
+    if int(rule['always_require_full_payment']):return total,'Always Require Full Payment is enabled.'
+    threshold=rule['full_payment_threshold']
+    if threshold is not None and total<=float(threshold):return total,f'Booking total is within the full-payment threshold of {_money(threshold)}.'
+    current=today or datetime.now().date()
+    try:arrival=datetime.strptime(str(arrival_date),'%Y-%m-%d').date()
+    except ValueError:arrival=current
+    balance_days=int(rule['balance_due_days'] or 0)
+    if arrival<=current+timedelta(days=balance_days):return total,f'Arrival is within the {balance_days}-day balance-due period.'
+    value=float(rule['deposit_value'] or 0)
+    if str(rule['deposit_type'])=='percent':due=round(total*value/100.0,2);reason=f'{value:g}% deposit is required.'
+    else:due=round(value,2);reason=f'Fixed deposit of {_money(value)} is required.'
+    return min(total,max(0.0,due)),reason
+
+
 def _snapshot_line_amount(snapshot: dict, name: str) -> float:
     for line in snapshot.get('lines') or []:
         if str(line.get('item', '')) == name:
@@ -90,82 +108,59 @@ def _snapshot_line_amount(snapshot: dict, name: str) -> float:
     return 0.0
 
 
-def convert_enquiry(database, context, cid: int, enquiry_id: int, workflow_status_id: int) -> int:
-    enquiry = one(database, '''SELECT e.*,er.element_type,er.element_id,er.provisional_total,er.pricing_snapshot_json,
-        se.name AS element_name,se.pricing_method
-        FROM enquiries e JOIN enquiry_requests er ON er.enquiry_id=e.id AND er.company_id=e.company_id
-        LEFT JOIN setup_elements se ON se.id=er.element_id AND se.company_id=er.company_id
-        WHERE e.id=? AND e.company_id=?''', (enquiry_id, cid))
-    if enquiry is None:
-        raise ValueError('Enquiry not found.')
-    if str(enquiry['status']) == 'converted':
-        existing = one(database, 'SELECT id FROM bookings WHERE company_id=? AND enquiry_id=? ORDER BY id DESC LIMIT 1', (cid, enquiry_id))
-        if existing:
-            return int(existing['id'])
-        raise ValueError('This Enquiry is already marked converted.')
-    if not enquiry['element_id'] or not enquiry['arrival_date'] or not enquiry['departure_date']:
-        raise ValueError('Choose a specific Element and stay dates before converting this Enquiry.')
-    if enquiry['provisional_total'] is None:
-        raise ValueError('Calculate and save the Enquiry price before converting it to a Booking.')
-    status = status_by_id(database, cid, workflow_status_id)
-    if status is None or not int(status['active']) or str(status['internal_state']) not in {'RESERVED','CONFIRMED','ON_SITE'}:
-        raise ValueError('Choose a valid Booking Status.')
-    token = str(context['token']) if 'token' in context.keys() else ''
-    state = availability_state(database, cid, int(enquiry['element_id']), str(enquiry['arrival_date']), str(enquiry['departure_date']), session_token=token, exclude_enquiry_id=enquiry_id)
-    if not state['available']:
-        raise ValueError('The Element is no longer available: ' + str(state['reason']))
-    try:
-        snapshot = json.loads(enquiry['pricing_snapshot_json'] or '{}')
-    except (TypeError, json.JSONDecodeError):
-        snapshot = {}
-    if not snapshot:
-        raise ValueError('The Enquiry does not contain a frozen price snapshot. Recalculate it first.')
-    now = iso_now()
-    total = float(enquiry['provisional_total'])
+def _write_booking(c,database,context,cid,enquiry,snapshot,workflow_status_id):
+    now=iso_now();total=float(enquiry['provisional_total']);reference=_next_reference(c,cid)
+    booking_id=int(c.execute('''INSERT INTO bookings (company_id,reference,customer_id,enquiry_id,status,arrival_date,departure_date,currency,total_amount,pricing_snapshot_json,notes,created_at,updated_at,workflow_status_id) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?)''',(cid,reference,enquiry['customer_id'],enquiry['id'],'confirmed',enquiry['arrival_date'],enquiry['departure_date'],'EUR',total,enquiry['pricing_snapshot_json'],enquiry['notes'] or '',now,now,workflow_status_id)).lastrowid)
+    element_amount=_snapshot_line_amount(snapshot,str(enquiry['element_name'] or ''))
+    beid=int(c.execute('''INSERT INTO booking_elements(company_id,booking_id,element_id,arrival_date,departure_date,pricing_method_snapshot,unit_price_snapshot,total_amount,pricing_snapshot_json) VALUES (?,?,?,?,?,?,?,?,?)''',(cid,booking_id,enquiry['element_id'],enquiry['arrival_date'],enquiry['departure_date'],enquiry['pricing_method'] or '',0,element_amount,enquiry['pricing_snapshot_json'])).lastrowid)
+    year=int(snapshot.get('year') or str(enquiry['arrival_date'])[:4])
+    for p in c.execute('''SELECT ep.person_type_id,ep.quantity,pt.name FROM enquiry_people ep JOIN setup_person_types pt ON pt.id=ep.person_type_id AND pt.company_id=ep.company_id WHERE ep.enquiry_id=? AND ep.company_id=?''',(enquiry['id'],cid)).fetchall():
+        pr=c.execute('SELECT rate FROM setup_person_prices WHERE company_id=? AND year=? AND element_id=? AND person_type_id=?',(cid,year,enquiry['element_id'],p['person_type_id'])).fetchone();unit=float(pr['rate']) if pr else 0.0
+        c.execute('INSERT INTO booking_people(company_id,booking_element_id,person_type_id,quantity,unit_price_snapshot,total_amount) VALUES (?,?,?,?,?,?)',(cid,beid,p['person_type_id'],p['quantity'],unit,_snapshot_line_amount(snapshot,str(p['name']))))
+    element=c.execute('SELECT * FROM setup_elements WHERE company_id=? AND id=?',(cid,enquiry['element_id'])).fetchone()
+    for aid in [int(x) for x in (snapshot.get('selected_addons') or [])]:
+        addon=c.execute('SELECT * FROM setup_addons WHERE company_id=? AND id=?',(cid,aid)).fetchone()
+        if addon is None:continue
+        qr=c.execute('SELECT quantity FROM enquiry_addons WHERE enquiry_id=? AND company_id=? AND addon_id=?',(enquiry['id'],cid,aid)).fetchone();qty=int(qr['quantity']) if qr else 0;rule=_addon_rule(database,cid,year,element,aid);amount=_snapshot_line_amount(snapshot,str(addon['name']))
+        detail={'rule':dict(rule),'when':(snapshot.get('addon_when') or {}).get(str(aid),(snapshot.get('addon_when') or {}).get(aid)),'days':(snapshot.get('addon_days') or {}).get(str(aid),(snapshot.get('addon_days') or {}).get(aid,{})),'people':(snapshot.get('addon_people') or {}).get(str(aid),(snapshot.get('addon_people') or {}).get(aid,{})),'person_days':(snapshot.get('addon_person_days') or {}).get(str(aid),(snapshot.get('addon_person_days') or {}).get(aid,{})),'frozen_amount':amount}
+        c.execute('INSERT INTO booking_addons(company_id,booking_element_id,addon_id,quantity,pricing_method_snapshot,unit_price_snapshot,total_amount,rule_snapshot_json) VALUES (?,?,?,?,?,?,?,?)',(cid,beid,aid,qty,addon['pricing_method'],float(rule.get('rate') or 0),amount,json.dumps(detail,separators=(',',':'))))
+    c.execute("UPDATE enquiries SET status='converted',availability_expires_at=NULL,updated_at=? WHERE id=? AND company_id=?",(now,enquiry['id'],cid))
+    token=str(context['token']) if 'token' in context.keys() else ''
+    if token:c.execute('DELETE FROM element_holds WHERE company_id=? AND element_id=? AND session_token=?',(cid,enquiry['element_id'],token))
+    return booking_id,reference,total
+
+
+def _conversion_enquiry(database,context,cid,enquiry_id,workflow_status_id):
+    enquiry=one(database,'''SELECT e.*,er.element_type,er.element_id,er.provisional_total,er.pricing_snapshot_json,se.name AS element_name,se.pricing_method FROM enquiries e JOIN enquiry_requests er ON er.enquiry_id=e.id AND er.company_id=e.company_id LEFT JOIN setup_elements se ON se.id=er.element_id AND se.company_id=er.company_id WHERE e.id=? AND e.company_id=?''',(enquiry_id,cid))
+    if enquiry is None:raise ValueError('Enquiry not found.')
+    if str(enquiry['status'])=='converted':raise ValueError('This Enquiry is already converted.')
+    if not enquiry['element_id'] or not enquiry['arrival_date'] or not enquiry['departure_date']:raise ValueError('Choose a specific Element and stay dates before converting this Enquiry.')
+    if enquiry['provisional_total'] is None:raise ValueError('Calculate and save the Enquiry price before converting it to a Booking.')
+    status=status_by_id(database,cid,workflow_status_id)
+    if status is None or not int(status['active']) or str(status['internal_state']) not in {'RESERVED','CONFIRMED','ON_SITE'}:raise ValueError('Choose a valid Booking Status.')
+    token=str(context['token']) if 'token' in context.keys() else '';state=availability_state(database,cid,int(enquiry['element_id']),str(enquiry['arrival_date']),str(enquiry['departure_date']),session_token=token,exclude_enquiry_id=enquiry_id)
+    if not state['available']:raise ValueError('The Element is no longer available: '+str(state['reason']))
+    try:snapshot=json.loads(enquiry['pricing_snapshot_json'] or '{}')
+    except (TypeError,json.JSONDecodeError):snapshot={}
+    if not snapshot:raise ValueError('The Enquiry does not contain a frozen price snapshot. Recalculate it first.')
+    return enquiry,snapshot
+
+
+def convert_enquiry(database,context,cid,enquiry_id,workflow_status_id):
+    enquiry,snapshot=_conversion_enquiry(database,context,cid,enquiry_id,workflow_status_id)
+    with database.connect() as c:booking_id,reference,total=_write_booking(c,database,context,cid,enquiry,snapshot,workflow_status_id)
+    audit(database,context,cid,'ENQUIRY_CONVERTED_TO_BOOKING','enquiry',enquiry_id,after={'booking_id':booking_id,'reference':reference});audit(database,context,cid,'BOOKING_CREATED','booking',booking_id,after={'reference':reference,'enquiry_id':enquiry_id,'workflow_status_id':workflow_status_id,'total_amount':total})
+    return booking_id
+
+
+def convert_enquiry_with_payment(database,context,cid,enquiry_id,workflow_status_id,*,amount,payment_date,method,reference='',notes='',fail_after_booking=False):
+    enquiry,snapshot=_conversion_enquiry(database,context,cid,enquiry_id,workflow_status_id);required,_=payment_due(database,cid,float(enquiry['provisional_total']),str(enquiry['arrival_date']))
+    if round(float(amount),2)!=round(required,2):raise ValueError(f'Payment must equal the required amount of {_money(required)}.')
     with database.connect() as c:
-        reference = _next_reference(c, cid)
-        booking_id = int(c.execute('''INSERT INTO bookings
-            (company_id,reference,customer_id,enquiry_id,status,arrival_date,departure_date,currency,total_amount,pricing_snapshot_json,notes,created_at,updated_at,workflow_status_id)
-            VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?)''',
-            (cid, reference, enquiry['customer_id'], enquiry_id, 'confirmed', enquiry['arrival_date'], enquiry['departure_date'], 'EUR', total, enquiry['pricing_snapshot_json'], enquiry['notes'] or '', now, now, workflow_status_id)).lastrowid)
-        element_amount = _snapshot_line_amount(snapshot, str(enquiry['element_name'] or ''))
-        booking_element_id = int(c.execute('''INSERT INTO booking_elements
-            (company_id,booking_id,element_id,arrival_date,departure_date,pricing_method_snapshot,unit_price_snapshot,total_amount,pricing_snapshot_json)
-            VALUES (?,?,?,?,?,?,?,?,?)''',
-            (cid, booking_id, enquiry['element_id'], enquiry['arrival_date'], enquiry['departure_date'], enquiry['pricing_method'] or '', 0, element_amount, enquiry['pricing_snapshot_json'])).lastrowid)
-        year = int(snapshot.get('year') or str(enquiry['arrival_date'])[:4])
-        for person in c.execute('''SELECT ep.person_type_id,ep.quantity,pt.name FROM enquiry_people ep
-            JOIN setup_person_types pt ON pt.id=ep.person_type_id AND pt.company_id=ep.company_id
-            WHERE ep.enquiry_id=? AND ep.company_id=?''', (enquiry_id, cid)).fetchall():
-            price = c.execute('SELECT rate FROM setup_person_prices WHERE company_id=? AND year=? AND element_id=? AND person_type_id=?', (cid, year, enquiry['element_id'], person['person_type_id'])).fetchone()
-            unit = float(price['rate']) if price else 0.0
-            amount = _snapshot_line_amount(snapshot, str(person['name']))
-            c.execute('''INSERT INTO booking_people(company_id,booking_element_id,person_type_id,quantity,unit_price_snapshot,total_amount)
-                VALUES (?,?,?,?,?,?)''', (cid, booking_element_id, person['person_type_id'], person['quantity'], unit, amount))
-        selected_addons = [int(x) for x in (snapshot.get('selected_addons') or [])]
-        for aid in selected_addons:
-            addon = c.execute('SELECT * FROM setup_addons WHERE company_id=? AND id=?', (cid, aid)).fetchone()
-            if addon is None:
-                continue
-            qrow = c.execute('SELECT quantity FROM enquiry_addons WHERE enquiry_id=? AND company_id=? AND addon_id=?', (enquiry_id, cid, aid)).fetchone()
-            qty = int(qrow['quantity']) if qrow else 0
-            rule = _addon_rule(database, cid, year, one(database, 'SELECT * FROM setup_elements WHERE company_id=? AND id=?', (cid, enquiry['element_id'])), aid)
-            amount = _snapshot_line_amount(snapshot, str(addon['name']))
-            detail = {
-                'rule': dict(rule),
-                'when': (snapshot.get('addon_when') or {}).get(str(aid), (snapshot.get('addon_when') or {}).get(aid)),
-                'days': (snapshot.get('addon_days') or {}).get(str(aid), (snapshot.get('addon_days') or {}).get(aid, {})),
-                'people': (snapshot.get('addon_people') or {}).get(str(aid), (snapshot.get('addon_people') or {}).get(aid, {})),
-                'person_days': (snapshot.get('addon_person_days') or {}).get(str(aid), (snapshot.get('addon_person_days') or {}).get(aid, {})),
-                'frozen_amount': amount,
-            }
-            c.execute('''INSERT INTO booking_addons(company_id,booking_element_id,addon_id,quantity,pricing_method_snapshot,unit_price_snapshot,total_amount,rule_snapshot_json)
-                VALUES (?,?,?,?,?,?,?,?)''', (cid, booking_element_id, aid, qty, addon['pricing_method'], float(rule.get('rate') or 0), amount, json.dumps(detail, separators=(',',':'))))
-        c.execute("UPDATE enquiries SET status='converted',availability_expires_at=NULL,updated_at=? WHERE id=? AND company_id=?", (now, enquiry_id, cid))
-        if token:
-            c.execute('DELETE FROM element_holds WHERE company_id=? AND element_id=? AND session_token=?', (cid, enquiry['element_id'], token))
-    audit(database, context, cid, 'ENQUIRY_CONVERTED_TO_BOOKING', 'enquiry', enquiry_id, after={'booking_id': booking_id, 'reference': reference})
-    audit(database, context, cid, 'BOOKING_CREATED', 'booking', booking_id, after={'reference': reference, 'enquiry_id': enquiry_id, 'workflow_status_id': workflow_status_id, 'total_amount': total})
+        booking_id,bref,total=_write_booking(c,database,context,cid,enquiry,snapshot,workflow_status_id)
+        if fail_after_booking:raise RuntimeError('Atomicity test failure')
+        payment_id=int(c.execute('INSERT INTO booking_payments(company_id,booking_id,amount,payment_date,method,reference,notes,created_by_user_id,created_at) VALUES (?,?,?,?,?,?,?,?,?)',(cid,booking_id,amount,payment_date,str(method['name']),reference,notes,context['user_id'],iso_now())).lastrowid)
+    audit(database,context,cid,'ENQUIRY_CONVERTED_TO_BOOKING','enquiry',enquiry_id,after={'booking_id':booking_id,'reference':bref});audit(database,context,cid,'BOOKING_CREATED','booking',booking_id,after={'reference':bref,'enquiry_id':enquiry_id,'workflow_status_id':workflow_status_id,'total_amount':total});audit(database,context,cid,'BOOKING_PAYMENT_RECORDED','booking',booking_id,after={'payment_id':payment_id,'amount':amount,'payment_date':payment_date,'method':str(method['name'])})
     return booking_id
 
 
@@ -200,14 +195,14 @@ def register_booking_routes(app) -> None:
     @app.get('/operations/enquiries/{enquiry_id}/confirm', response_class=HTMLResponse)
     def confirm_booking(enquiry_id: int, request: Request, workflow_status_id: int):
         context=context_for(database,request); cid=int(working_company(context))
-        enquiry=one(database, 'SELECT e.*,er.provisional_total,c.first_name,c.last_name FROM enquiries e JOIN enquiry_requests er ON er.enquiry_id=e.id AND er.company_id=e.company_id LEFT JOIN customer_records c ON c.id=e.customer_id AND c.company_id=e.company_id WHERE e.id=? AND e.company_id=?',(enquiry_id,cid))
+        enquiry=one(database, 'SELECT e.*,er.provisional_total,er.pricing_snapshot_json,c.first_name,c.last_name FROM enquiries e JOIN enquiry_requests er ON er.enquiry_id=e.id AND er.company_id=e.company_id LEFT JOIN customer_records c ON c.id=e.customer_id AND c.company_id=e.company_id WHERE e.id=? AND e.company_id=?',(enquiry_id,cid))
         status=status_by_id(database,cid,workflow_status_id)
         if enquiry is None or status is None or str(status['internal_state']) not in {'RESERVED','CONFIRMED','ON_SITE'}: return RedirectResponse(f'/operations/enquiries/{enquiry_id}?convert_error=Choose+a+valid+Booking+Status',303)
         methods=rows(database,'SELECT * FROM payment_method_definitions WHERE company_id=? AND active=1 ORDER BY display_order,name',(cid,))
         options=''.join(f'<option value="{int(m["id"])}">{esc(m["name"])}</option>' for m in methods)
-        total=float(enquiry['provisional_total'] or 0); customer=(str(enquiry['first_name'] or '')+' '+str(enquiry['last_name'] or '')).strip() or 'Customer'
+        total=float(enquiry['provisional_total'] or 0); required,reason=payment_due(database,cid,total,str(enquiry['arrival_date'])); customer=(str(enquiry['first_name'] or '')+' '+str(enquiry['last_name'] or '')).strip() or 'Customer'; party=int(enquiry['party_size'] or 0)
         method_block=f'<div><label>Payment Method</label><select name="payment_method_id" required>{options}</select></div>' if methods else '<div class="error">No active Payment Methods. Add one in Setup before taking payment.</div>'
-        body=f'''<h1>Confirm Booking</h1><p><a href="/operations/enquiries/{enquiry_id}">Back to Enquiry</a></p><div class="card"><h2>{esc(customer)}</h2><p><strong>Booking total:</strong> {_money(total)}<br><strong>Initial status:</strong> {esc(status['name'])}</p></div><div class="card"><h2>Take Payment</h2><p>Record the payment before DBS creates the Booking.</p><form method="post" action="/operations/enquiries/{enquiry_id}/confirm-payment"><input type="hidden" name="csrf" value="{esc(context['csrf_token'])}"><input type="hidden" name="workflow_status_id" value="{workflow_status_id}"><div class="grid"><div><label>Amount</label><input name="amount" value="{total:.2f}" required></div><div><label>Payment Date</label><input type="date" name="payment_date" value="{datetime.now().strftime('%Y-%m-%d')}" required></div>{method_block}<div><label>Reference</label><input name="reference"></div></div><label>Notes</label><input name="notes"><p><button {'disabled' if not methods else ''}>RECORD PAYMENT &amp; CONFIRM BOOKING</button></p></form></div><div class="card"><h2>Confirm without payment</h2><p>A reason is compulsory and is written to the audit trail.</p><form method="post" action="/operations/enquiries/{enquiry_id}/confirm-without-payment"><input type="hidden" name="csrf" value="{esc(context['csrf_token'])}"><input type="hidden" name="workflow_status_id" value="{workflow_status_id}"><label>Reason</label><input name="reason" required><p><button class="warning">CONFIRM WITHOUT PAYMENT</button></p></form></div>'''
+        body=f'''<h1>Confirm Booking</h1><p><a href="/operations/enquiries/{enquiry_id}">Back to Enquiry</a></p><div class="card"><h2>{esc(customer)}</h2><p><strong>Stay:</strong> {_fmt_day(enquiry['arrival_date'])} to {_fmt_day(enquiry['departure_date'])}<br><strong>Party:</strong> {party}<br><strong>Booking total:</strong> {_money(total)}<br><strong>Payment Required Now:</strong> {_money(required)}<br><strong>Reason:</strong> {esc(reason)}<br><strong>Initial status:</strong> {esc(status['name'])}<br><strong>Payment status:</strong> Deposit Pending</p></div><div class="card"><h2>Take Payment</h2><p>Record the required payment before DBS creates the Booking.</p><form method="post" action="/operations/enquiries/{enquiry_id}/confirm-payment"><input type="hidden" name="csrf" value="{esc(context['csrf_token'])}"><input type="hidden" name="workflow_status_id" value="{workflow_status_id}"><div class="grid"><div><label>Amount</label><input name="amount" value="{required:.2f}" readonly required></div><div><label>Payment Date</label><input type="date" name="payment_date" value="{datetime.now().strftime('%Y-%m-%d')}" required></div>{method_block}<div><label>Reference</label><input name="reference"></div></div><label>Notes</label><input name="notes"><p><button {'disabled' if not methods else ''}>RECORD PAYMENT &amp; CONFIRM BOOKING</button></p></form></div><div class="card"><h2>Confirm without payment</h2><p>A reason is compulsory and is written to the audit trail.</p><form method="post" action="/operations/enquiries/{enquiry_id}/confirm-without-payment"><input type="hidden" name="csrf" value="{esc(context['csrf_token'])}"><input type="hidden" name="workflow_status_id" value="{workflow_status_id}"><label>Reason</label><input name="reason" required><p><button class="warning">CONFIRM WITHOUT PAYMENT</button></p></form></div>'''
         return layout('Confirm Booking',body,context)
 
     @app.post('/operations/enquiries/{enquiry_id}/confirm-payment')
@@ -221,10 +216,8 @@ def register_booking_routes(app) -> None:
         method=one(database,'SELECT * FROM payment_method_definitions WHERE company_id=? AND id=? AND active=1',(cid,method_id))
         if method is None: return RedirectResponse(f'/operations/enquiries/{enquiry_id}?convert_error=Choose+an+active+Payment+Method',303)
         if str(method['method_type'])=='card': return RedirectResponse(f'/operations/enquiries/{enquiry_id}?convert_error=Card+provider+connection+is+not+configured+yet',303)
-        try: booking_id=convert_enquiry(database,context,cid,enquiry_id,status_id)
+        try: booking_id=convert_enquiry_with_payment(database,context,cid,enquiry_id,status_id,amount=amount,payment_date=str(data.get('payment_date','')),method=method,reference=str(data.get('reference','')).strip(),notes=str(data.get('notes','')).strip())
         except ValueError as exc: return RedirectResponse(f'/operations/enquiries/{enquiry_id}?convert_error={esc(str(exc))}',303)
-        with database.connect() as c: payment_id=int(c.execute('INSERT INTO booking_payments(company_id,booking_id,amount,payment_date,method,reference,notes,created_by_user_id,created_at) VALUES (?,?,?,?,?,?,?,?,?)',(cid,booking_id,amount,str(data.get('payment_date','')),str(method['name']),str(data.get('reference','')).strip(),str(data.get('notes','')).strip(),context['user_id'],iso_now())).lastrowid)
-        audit(database,context,cid,'BOOKING_PAYMENT_RECORDED','booking',booking_id,after={'payment_id':payment_id,'amount':amount,'payment_date':str(data.get('payment_date','')),'method':str(method['name'])})
         return RedirectResponse(f'/operations/bookings/{booking_id}?created=1',303)
 
     @app.post('/operations/enquiries/{enquiry_id}/confirm-without-payment')
