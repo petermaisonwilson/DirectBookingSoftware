@@ -19,6 +19,7 @@ on:
       - web-v1-booking-status-workflow
       - web-v1-booking-workflow
       - web-v1-booking-edit-hold-warning
+      - build-302-payment-rules-fix
   pull_request:
     branches:
       - main
