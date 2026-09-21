@@ -49,11 +49,7 @@ def _currency_code(database, company_id:int) -> str:
 
 def _currency_symbol(database, company_id:int) -> str:
     code=_currency_code(database,company_id)
-    symbols={'EUR':'€','GBP':'£','USD':'USD $','AUD':'AUD $','CAD':'CAD $','NZD':'NZD $','CHF':'CHF'}
-    return symbols.get(code,code)
-
-
-def payment_rule(database, company_id:int):
+    symbols={'EUR':'€','GBP':'£','USD':'USD 
     result=rows(database,"SELECT * FROM payment_rules WHERE company_id=?",(company_id,))
     return result[0] if result else None
 
@@ -134,7 +130,7 @@ def register_payment_method_routes(app):
             c.execute("UPDATE payment_method_definitions SET active=?,updated_at=? WHERE company_id=? AND id=?",(active,iso_now(),cid,mid))
         audit(database,context,cid,"PAYMENT_METHOD_TOGGLED","payment_method",mid,dict(before),{"active":active})
         return RedirectResponse("/setup/payment-methods",303)
-,'AUD':'A
+,'AUD':'AUD 
     result=rows(database,"SELECT * FROM payment_rules WHERE company_id=?",(company_id,))
     return result[0] if result else None
 
@@ -215,7 +211,7 @@ def register_payment_method_routes(app):
             c.execute("UPDATE payment_method_definitions SET active=?,updated_at=? WHERE company_id=? AND id=?",(active,iso_now(),cid,mid))
         audit(database,context,cid,"PAYMENT_METHOD_TOGGLED","payment_method",mid,dict(before),{"active":active})
         return RedirectResponse("/setup/payment-methods",303)
-,'CAD':'C
+,'CAD':'CAD 
     result=rows(database,"SELECT * FROM payment_rules WHERE company_id=?",(company_id,))
     return result[0] if result else None
 
@@ -296,7 +292,7 @@ def register_payment_method_routes(app):
             c.execute("UPDATE payment_method_definitions SET active=?,updated_at=? WHERE company_id=? AND id=?",(active,iso_now(),cid,mid))
         audit(database,context,cid,"PAYMENT_METHOD_TOGGLED","payment_method",mid,dict(before),{"active":active})
         return RedirectResponse("/setup/payment-methods",303)
-,'NZD':'NZ
+,'NZD':'NZD 
     result=rows(database,"SELECT * FROM payment_rules WHERE company_id=?",(company_id,))
     return result[0] if result else None
 
@@ -378,13 +374,6 @@ def register_payment_method_routes(app):
         audit(database,context,cid,"PAYMENT_METHOD_TOGGLED","payment_method",mid,dict(before),{"active":active})
         return RedirectResponse("/setup/payment-methods",303)
 ,'CHF':'CHF'}
-    with database.connect() as c:
-        columns={str(r['name']) for r in c.execute('PRAGMA table_info(companies)').fetchall()}
-        if 'currency' in columns:
-            row=c.execute('SELECT currency FROM companies WHERE id=?',(company_id,)).fetchone(); code=str(row['currency'] or 'EUR').upper() if row else 'EUR'
-        elif 'currency_code' in columns:
-            row=c.execute('SELECT currency_code FROM companies WHERE id=?',(company_id,)).fetchone(); code=str(row['currency_code'] or 'EUR').upper() if row else 'EUR'
-        else: code='EUR'
     return symbols.get(code,code)
 
 def payment_rule(database, company_id:int):
