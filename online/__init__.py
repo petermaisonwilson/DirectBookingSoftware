@@ -7,6 +7,7 @@ import shutil
 from pathlib import Path
 
 BUILD = "302"
+BUILD_VERSION = "v3"
 DATABASE_FILENAME = "direct_booking_online_dev.db"
 
 
