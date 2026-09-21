@@ -182,7 +182,7 @@ def register_customer_routes(app) -> None:
         ) or '<tr><td colspan="5" class="muted">No Bookings yet.</td></tr>'
         notice = '<div class="ok">Customer created.</div>' if created else ('<div class="ok">Enquiry created.</div>' if enquiry_created else '')
         address = '<br>'.join(esc(x) for x in (customer['address1'], customer['address2'], customer['town'], customer['postcode'], customer['country']) if str(x or '').strip()) or '—'
-        body = f'''<h1>{esc(_customer_name(customer))}</h1><p><a href="/operations/customers">← Client Register</a></p>{notice}
+        body = f'''<h1>{esc(_customer_name(customer))}</h1><p><a href="/operations/customers">← Client Register</a> &nbsp; <a class="button secondary" href="/operations/customers/{customer_id}/edit">EDIT CUSTOMER</a></p>{notice}
         <div class="grid">
           <div class="card"><h2>Customer master details</h2><p><strong>Email:</strong> {esc(customer['email'] or '—')}<br><strong>Mobile:</strong> {esc(customer['mobile_phone'] or customer['phone'] or '—')}<br><strong>Fixed telephone:</strong> {esc(customer['fixed_phone'] or '—')}</p><p><strong>Address</strong><br>{address}</p><p>{esc(customer['notes'] or '')}</p></div>
           <div class="card"><h2>Next action</h2><p><a class="button" href="/operations/customers/{customer_id}/enquiries/new">New Enquiry</a></p><p class="muted">New Enquiries and Bookings should be linked to this master record only when the Client chooses to do so.</p></div>
@@ -190,6 +190,32 @@ def register_customer_routes(app) -> None:
         <div class="card"><h2>Booking history</h2><table><thead><tr><th>Reference</th><th>Status</th><th>Arrival</th><th>Departure</th><th>Total</th></tr></thead><tbody>{booking_rows}</tbody></table></div>
         <div class="card"><h2>Enquiry history</h2><table><thead><tr><th>No.</th><th>Status</th><th>Arrival</th><th>Departure</th><th>Party</th><th>Source</th></tr></thead><tbody>{enquiry_rows}</tbody></table></div>'''
         return layout(_customer_name(customer), body, context)
+
+    @app.get('/operations/customers/{customer_id}/edit', response_class=HTMLResponse)
+    def customer_edit(customer_id: int, request: Request):
+        context = context_for(database, request); company_id = int(working_company(context))
+        customer = one(database, 'SELECT * FROM customer_records WHERE id=? AND company_id=? AND active=1', (customer_id, company_id))
+        if customer is None:
+            return HTMLResponse(layout('Customer not found', '<div class="error">Customer not found.</div>', context), 404)
+        values = {key: str(customer[key] or '') for key in ('first_name','last_name','email','mobile_phone','fixed_phone','address1','address2','town','postcode','country','notes')}
+        fields = f'''<h1>Edit Customer</h1><p><a href="/operations/customers/{customer_id}">← Customer</a></p><div class="card"><form method="post" action="/operations/customers/{customer_id}/edit"><input type="hidden" name="csrf" value="{esc(context['csrf_token'])}"><div class="grid"><div><label>Family name *</label><input name="last_name" required value="{esc(values['last_name'])}"></div><div><label>First name *</label><input name="first_name" required value="{esc(values['first_name'])}"></div><div><label>Email address *</label><input type="email" name="email" required value="{esc(values['email'])}"></div><div><label>Mobile telephone</label><input name="mobile_phone" value="{esc(values['mobile_phone'])}"></div><div><label>Fixed telephone</label><input name="fixed_phone" value="{esc(values['fixed_phone'])}"></div><div><label>Address line 1</label><input name="address1" value="{esc(values['address1'])}"></div><div><label>Address line 2</label><input name="address2" value="{esc(values['address2'])}"></div><div><label>Town / City</label><input name="town" value="{esc(values['town'])}"></div><div><label>Postcode</label><input name="postcode" value="{esc(values['postcode'])}"></div><div><label>Country</label><input name="country" value="{esc(values['country'])}"></div></div><label>Notes</label><textarea name="notes" rows="5" style="width:100%">{esc(values['notes'])}</textarea><p><button>SAVE CUSTOMER</button></p></form></div>'''
+        return layout('Edit Customer', fields, context)
+
+    @app.post('/operations/customers/{customer_id}/edit')
+    async def customer_edit_save(customer_id: int, request: Request):
+        context = context_for(database, request); company_id = int(working_company(context)); data = await form_data(request); require_csrf(context, data)
+        customer = one(database, 'SELECT * FROM customer_records WHERE id=? AND company_id=? AND active=1', (customer_id, company_id))
+        if customer is None:
+            return RedirectResponse('/operations/customers', 303)
+        keys = ('first_name','last_name','email','mobile_phone','fixed_phone','address1','address2','town','postcode','country','notes')
+        values = {key: str(data.get(key,'') or '').strip() for key in keys}
+        if not values['first_name'] or not values['last_name'] or not values['email'] or (not values['mobile_phone'] and not values['fixed_phone']):
+            return RedirectResponse(f'/operations/customers/{customer_id}/edit', 303)
+        before = {key: customer[key] for key in keys}
+        with database.connect() as connection:
+            connection.execute('''UPDATE customer_records SET first_name=?,last_name=?,email=?,phone=?,mobile_phone=?,fixed_phone=?,address1=?,address2=?,town=?,postcode=?,country=?,notes=?,updated_at=? WHERE id=? AND company_id=?''', (values['first_name'],values['last_name'],values['email'],values['mobile_phone'] or values['fixed_phone'],values['mobile_phone'],values['fixed_phone'],values['address1'],values['address2'],values['town'],values['postcode'],values['country'],values['notes'],iso_now(),customer_id,company_id))
+        audit(database, context, company_id, 'CUSTOMER_UPDATED', 'customer', customer_id, before=before, after=values)
+        return RedirectResponse(f'/operations/customers/{customer_id}', 303)
 
     @app.get('/operations/bookings/{booking_id}/customer-matches', response_class=HTMLResponse)
     def booking_customer_matches(booking_id: int, request: Request):
