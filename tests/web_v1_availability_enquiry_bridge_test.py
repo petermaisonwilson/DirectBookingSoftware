@@ -48,7 +48,7 @@ def main() -> None:
         review = client.get('/availability/basket/review')
         assert review.status_code == 200
         assert 'Bridge Pitch A' in review.text
-        assert 'CUSTOMER DETAILS / SAVE ENQUIRY' in review.text
+        assert 'CONTINUE TO CUSTOMER DETAILS' in review.text and 'ADD ANOTHER ELEMENT' in review.text
 
         details = client.get('/availability/basket/customer', params={'hold_id': hold_id})
         assert details.status_code == 200
