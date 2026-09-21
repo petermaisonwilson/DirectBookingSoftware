@@ -216,14 +216,14 @@ def create_app(db_path: str | Path | None = None, *, seed_demo: bool = True) -> 
         company=database.company(company_id)
         if company is None: raise HTTPException(status_code=404,detail="Client not found")
         saved_html='<div class="ok">Saved. The change has been written to the permanent audit trail.</div>' if saved else ""
-        body=f"""<h1>{esc(company['name'])}</h1>{saved_html}<div class="card"><h2>Client settings</h2><p>This deliberately simple form gives Build 013 something safe to change and audit.</p><form method="post" action="/company/settings"><input type="hidden" name="csrf" value="{esc(context['csrf_token'])}"><label>Contact email</label><input name="contact_email" type="email" value="{esc(company['contact_email'])}"><label>Telephone</label><input name="phone" value="{esc(company['phone'])}"><p><button type="submit">Save client settings</button></p></form></div><div class="card"><h3>Permission reminder</h3><p>Booking Log will later be visible here to Supervisor and Client/Operator users only. Customers will never see it.</p></div>"""
+        body=f"""<h1>{esc(company['name'])}</h1>{saved_html}<div class="card"><h2>Client settings</h2><p>This deliberately simple form gives Build 013 something safe to change and audit.</p><form method="post" action="/company/settings"><input type="hidden" name="csrf" value="{esc(context['csrf_token'])}"><label>Contact email</label><input name="contact_email" type="email" value="{esc(company['contact_email'])}"><label>Telephone</label><input name="phone" value="{esc(company['phone'])}"><label>Booking currency</label><select name="currency">{''.join(f'<option value="{code}" {"selected" if code == str(company["currency"]) else ""}>{code}</option>' for code in ("EUR","GBP","USD","AUD","CAD","NZD","CHF"))}</select><p><button type="submit">Save client settings</button></p></form></div><div class="card"><h3>Permission reminder</h3><p>Booking Log will later be visible here to Supervisor and Client/Operator users only. Customers will never see it.</p></div>"""
         return layout("Client settings",body,context)
 
     @app.post("/company/settings")
     async def company_settings_save(request: Request):
         context=require_login(request); data=await form_data(request); require_csrf(context,data); company_id=working_company_id(context)
         if context["role"] not in {"supervisor","operator"} or not company_id: raise HTTPException(status_code=403,detail="Not permitted")
-        before,after=database.update_company_contact(company_id,contact_email=data.get("contact_email",""),phone=data.get("phone",""))
+        before,after=database.update_company_contact(company_id,contact_email=data.get("contact_email",""),phone=data.get("phone",""),currency=data.get("currency","EUR"))
         database.write_audit(action="COMPANY_CONTACT_UPDATED",entity_type="company",entity_id=company_id,actor_user_id=context["user_id"],actor_role=context["role"],company_id=company_id,acting_company_id=context["acting_company_id"],before=before,after=after)
         return RedirectResponse("/company/settings?saved=1",status_code=303)
 
