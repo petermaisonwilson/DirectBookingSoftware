@@ -22,6 +22,7 @@ CREATE TABLE IF NOT EXISTS companies (
     name TEXT NOT NULL UNIQUE COLLATE NOCASE,
     contact_email TEXT NOT NULL DEFAULT '',
     phone TEXT NOT NULL DEFAULT '',
+    currency TEXT NOT NULL DEFAULT 'EUR',
     active INTEGER NOT NULL DEFAULT 1,
     created_at TEXT NOT NULL
 );
@@ -176,6 +177,9 @@ class OnlineDatabase:
         if self.is_sqlite:
             with self.connect() as connection:
                 connection.executescript(SCHEMA)
+                company_columns={str(r['name']) for r in connection.execute('PRAGMA table_info(companies)').fetchall()}
+                if 'currency' not in company_columns:
+                    connection.execute("ALTER TABLE companies ADD COLUMN currency TEXT NOT NULL DEFAULT 'EUR'")
         else:
             assert self.engine is not None
             required = {"companies", "users", "sessions", "audit_log"}
@@ -364,26 +368,30 @@ class OnlineDatabase:
                 text("SELECT * FROM companies WHERE id=:company_id AND active=1"), {"company_id": int(company_id)}
             ).fetchone())
 
-    def update_company_contact(self, company_id: int, *, contact_email: str, phone: str) -> tuple[dict[str, str], dict[str, str]]:
+    def update_company_contact(self, company_id: int, *, contact_email: str, phone: str, currency: str = 'EUR') -> tuple[dict[str, str], dict[str, str]]:
         if self.is_sqlite:
             with self.connect() as connection:
-                row = connection.execute("SELECT contact_email,phone FROM companies WHERE id=?", (int(company_id),)).fetchone()
+                row = connection.execute("SELECT contact_email,phone,currency FROM companies WHERE id=?", (int(company_id),)).fetchone()
                 if row is None:
                     raise ValueError("Client not found")
-                before = {"contact_email": row["contact_email"], "phone": row["phone"]}
-                after = {"contact_email": contact_email.strip(), "phone": phone.strip()}
-                connection.execute("UPDATE companies SET contact_email=?, phone=? WHERE id=?", (after["contact_email"], after["phone"], int(company_id)))
+                before = {"contact_email": row["contact_email"], "phone": row["phone"], "currency": row["currency"]}
+                code=currency.strip().upper()
+                if code not in {'EUR','GBP','USD','AUD','CAD','NZD','CHF'}: raise ValueError("Unsupported currency")
+                after = {"contact_email": contact_email.strip(), "phone": phone.strip(), "currency": code}
+                connection.execute("UPDATE companies SET contact_email=?, phone=?, currency=? WHERE id=?", (after["contact_email"], after["phone"], after["currency"], int(company_id)))
                 return before, after
         with self.sql_connection() as connection:
             row = connection.execute(
-                text("SELECT contact_email,phone FROM companies WHERE id=:company_id"), {"company_id": int(company_id)}
+                text("SELECT contact_email,phone,currency FROM companies WHERE id=:company_id"), {"company_id": int(company_id)}
             ).fetchone()
             if row is None:
                 raise ValueError("Client not found")
             before = dict(row._mapping)
-            after = {"contact_email": contact_email.strip(), "phone": phone.strip()}
+            code=currency.strip().upper()
+            if code not in {'EUR','GBP','USD','AUD','CAD','NZD','CHF'}: raise ValueError("Unsupported currency")
+            after = {"contact_email": contact_email.strip(), "phone": phone.strip(), "currency": code}
             connection.execute(text("""
-                UPDATE companies SET contact_email=:contact_email, phone=:phone WHERE id=:company_id
+                UPDATE companies SET contact_email=:contact_email, phone=:phone, currency=:currency WHERE id=:company_id
             """), {**after, "company_id": int(company_id)})
             return before, after
 
