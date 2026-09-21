@@ -129,7 +129,7 @@ def main() -> None:
         fresh_group = client.post('/availability/new-booking', data={'csrf': csrf}, follow_redirects=False)
         assert fresh_group.status_code == 303 and fresh_group.headers['location'] == '/availability/start'
         fresh_page = client.get('/availability/start')
-        assert 'name="lead_name" placeholder="NAME" required value=""' in fresh_page.text
+        assert 'name="lead_name" placeholder="SURNAME" required value=""' in fresh_page.text
         with db.connect() as c:
             assert c.execute('SELECT lead_name FROM element_holds WHERE id=?', (smith_hold,)).fetchone()['lead_name'] == 'Smith'
 
