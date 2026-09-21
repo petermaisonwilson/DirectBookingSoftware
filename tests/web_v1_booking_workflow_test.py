@@ -13,6 +13,7 @@ from online.app import COOKIE_NAME, create_app
 from online.database import iso_now
 from online.webv1 import register_web_v1
 from online.webv1_status_availability import availability_state
+import online.webv1_bookings as booking_module
 from online.webv1_bookings import convert_enquiry_with_payment, payment_due
 
 
@@ -124,11 +125,19 @@ def main() -> None:
             assert c.execute('SELECT id FROM bookings WHERE company_id=? AND enquiry_id=?',(cid,enquiry_id)).fetchone() is None
             assert c.execute('SELECT id FROM booking_payments WHERE company_id=?',(cid,)).fetchone() is None
             cash_row=c.execute("SELECT * FROM payment_method_definitions WHERE id=?",(cash_id,)).fetchone()
+        original_write=booking_module._write_booking
+        def fail_after_write(*args,**kwargs):
+            original_write(*args,**kwargs)
+            raise RuntimeError('Atomicity test failure')
+        booking_module._write_booking=fail_after_write
         try:
-            convert_enquiry_with_payment(db,ctx,cid,enquiry_id,confirmed_id,amount=100.0,payment_date='2035-05-01',method=cash_row,fail_after_booking=True)
-            raise AssertionError('forced payment failure did not raise')
-        except RuntimeError:
-            pass
+            try:
+                convert_enquiry_with_payment(db,ctx,cid,enquiry_id,confirmed_id,amount=100.0,payment_date='2035-05-01',method=cash_row)
+                raise AssertionError('forced payment failure did not raise')
+            except RuntimeError:
+                pass
+        finally:
+            booking_module._write_booking=original_write
         with db.connect() as c:
             assert c.execute('SELECT id FROM bookings WHERE company_id=? AND enquiry_id=?',(cid,enquiry_id)).fetchone() is None
             assert c.execute('SELECT id FROM booking_payments WHERE company_id=?',(cid,)).fetchone() is None
