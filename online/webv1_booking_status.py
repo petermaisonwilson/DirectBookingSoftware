@@ -20,6 +20,7 @@ INTERNAL_STATES = (
 
 DEFAULT_STATUSES = (
     ('Keep as Quote', 'Quote', '#FFE39A', 10, 'HELD', 1, 10),
+    ('Payment Pending', 'Pending', '#FFF3CD', 15, 'RESERVED', 1, None),
     ('Deposit Paid', 'Deposit', '#F3C5C9', 20, 'CONFIRMED', 1, None),
     ('Balance Paid', 'Paid', '#CDECCF', 30, 'CONFIRMED', 1, None),
     ('On Site', 'On site', '#CFE2FF', 40, 'ON_SITE', 1, None),
@@ -79,6 +80,13 @@ def initialise_booking_statuses(database) -> None:
         if 'workflow_status_id' not in _columns(c, 'bookings'):
             c.execute('ALTER TABLE bookings ADD COLUMN workflow_status_id INTEGER')
         _seed_defaults(c)
+        now = iso_now()
+        for company in c.execute('SELECT id FROM companies').fetchall():
+            cid = int(company['id'])
+            c.execute('''INSERT OR IGNORE INTO booking_status_definitions
+                (company_id,name,short_name,colour,display_order,internal_state,blocks_availability,expiry_minutes,automation_config_json,active,created_at,updated_at)
+                VALUES (?,?,?,?,?,'RESERVED',1,NULL,'{}',1,?,?)''',
+                (cid,'Payment Pending','Pending','#FFF3CD',15,now,now))
         # Rename only the untouched factory default. Client-created or edited status names remain unchanged.
         c.execute("""UPDATE booking_status_definitions
                      SET name='Keep as Quote',short_name='Quote',updated_at=?
