@@ -41,8 +41,19 @@ def initialise_payment_methods(database):
 
 
 
+def _currency_code(database, company_id:int) -> str:
+    with database.connect() as c:
+        row=c.execute('SELECT currency FROM companies WHERE id=?',(company_id,)).fetchone()
+        return str(row['currency'] or 'EUR').upper() if row else 'EUR'
+
+
 def _currency_symbol(database, company_id:int) -> str:
-    symbols={'EUR':'€','GBP':'£','USD':'
+    code=_currency_code(database,company_id)
+    symbols={'EUR':'€','GBP':'£','USD':'USD $','AUD':'AUD $','CAD':'CAD $','NZD':'NZD $','CHF':'CHF'}
+    return symbols.get(code,code)
+
+
+def payment_rule(database, company_id:int):
     result=rows(database,"SELECT * FROM payment_rules WHERE company_id=?",(company_id,))
     return result[0] if result else None
 
