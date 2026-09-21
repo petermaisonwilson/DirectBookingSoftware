@@ -20,7 +20,7 @@ CREATE TABLE IF NOT EXISTS payment_rules (
  deposit_value REAL NOT NULL DEFAULT 0,
  full_payment_threshold REAL,
  balance_due_days INTEGER NOT NULL DEFAULT 0,
- always_require_full_payment INTEGER NOT NULL DEFAULT 0,
+ always_require_full_payment INTEGER NOT NULL DEFAULT 1,
  updated_by_user_id INTEGER,
  updated_at TEXT NOT NULL);
 """
@@ -37,7 +37,7 @@ def initialise_payment_methods(database):
                     c.execute("INSERT INTO payment_method_definitions(company_id,name,method_type,display_order,active,created_at,updated_at) VALUES (?,?,?,?,1,?,?)",(cid,name,kind,order_no,now,now))
             c.execute("""INSERT OR IGNORE INTO payment_rules
                 (company_id,deposit_type,deposit_value,full_payment_threshold,balance_due_days,always_require_full_payment,updated_at)
-                VALUES (?,'fixed',0,NULL,0,0,?)""",(cid,now))
+                VALUES (?,'fixed',0,NULL,0,1,?)""",(cid,now))
 
 
 
