@@ -8,7 +8,7 @@ from urllib.parse import parse_qs
 from fastapi import FastAPI, HTTPException, Request
 from fastapi.responses import HTMLResponse, RedirectResponse
 
-from . import BUILD
+from . import BUILD, BUILD_VERSION
 from .database import OnlineDatabase
 from .security import verify_password
 from .webv1_hold_warning_ui import hold_warning_markup
@@ -93,7 +93,7 @@ def layout(title: str, body: str, context=None) -> str:
     return f"""<!doctype html>
 <html><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
 <title>{esc(title)} — DBS</title><style>{css()}</style></head>
-<body><header><div><strong>DBS</strong> <span class="muted" style="color:#c9d5df">Online Build {BUILD}</span></div>{nav}</header>
+<body><header><div><strong>DBS</strong> <span class="muted" style="color:#c9d5df">Online Build {BUILD} {BUILD_VERSION}</span></div>{nav}</header>
 {support}<main>{body}</main>{hold_warning}</body></html>"""
 
 
@@ -101,7 +101,7 @@ def create_app(db_path: str | Path | None = None, *, seed_demo: bool = True) -> 
     path = Path(db_path or os.environ.get("DIRECTBOOKING_DB", "online_data/direct_booking_online_dev.db"))
     database = OnlineDatabase(path)
     database.initialise(seed_demo=seed_demo)
-    app = FastAPI(title=f"DBS Online Build {BUILD}")
+    app = FastAPI(title=f"DBS Online Build {BUILD} {BUILD_VERSION}")
     app.state.database = database
 
     def context_from(request: Request):
@@ -126,7 +126,7 @@ def create_app(db_path: str | Path | None = None, *, seed_demo: bool = True) -> 
 
     @app.get("/health")
     def health():
-        return {"status": "ok", "build": BUILD, "mode": "online-foundation"}
+        return {"status": "ok", "build": BUILD, "version": BUILD_VERSION, "mode": "online-foundation"}
 
     @app.get("/", response_class=HTMLResponse)
     def home(request: Request):
@@ -138,7 +138,7 @@ def create_app(db_path: str | Path | None = None, *, seed_demo: bool = True) -> 
     def login_page(request: Request, error: str = ""):
         error_html = f'<div class="error">{esc(error)}</div>' if error else ""
         body = f"""
-        <div class="login card"><h1>Online Build {BUILD}</h1>
+        <div class="login card"><h1>Online Build {BUILD} {BUILD_VERSION}</h1>
         <p>This is the first browser-based DBS foundation running locally on your PC.</p>{error_html}
         <form method="post" action="/login">
           <label>Email</label><input name="email" type="email" required autofocus>
