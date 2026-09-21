@@ -32,6 +32,14 @@ def _fmt_day(value) -> str:
     return f'{parts[2]}/{parts[1]}/{parts[0]}' if len(parts) == 3 else str(value)
 
 
+
+def _enquiry_action(row, context) -> str:
+    enquiry_id=int(row['id']); csrf=esc(context['csrf_token']); status=str(row['status'])
+    if status == 'converted': return '—'
+    if status == 'closed':
+        return f'<form method="post" action="/operations/enquiries/{enquiry_id}/reopen" style="display:inline"><input type="hidden" name="csrf" value="{csrf}"><button class="secondary">REOPEN ENQUIRY</button></form>'
+    return f'''<form method="post" action="/operations/enquiries/{enquiry_id}/release" style="display:inline" onsubmit="return confirm('Release this enquiry? The enquiry and its history will be retained, but its reserved availability will be released.')"><input type="hidden" name="csrf" value="{csrf}"><button class="secondary">RELEASE ENQUIRY</button></form>'''
+
 def register_enquiry_routes(app) -> None:
     database = app.state.database
 
@@ -55,7 +63,7 @@ def register_enquiry_routes(app) -> None:
             LEFT JOIN setup_elements se ON se.id=er.element_id AND se.company_id=e.company_id
             WHERE {' AND '.join(where)} ORDER BY e.id DESC''', tuple(params))
         status_options = '<option value="">All statuses</option>' + ''.join(f'<option value="{v}" {"selected" if v == status_filter else ""}>{esc(v.title())}</option>' for v in STATUSES)
-        result_rows = ''.join(f'''<tr><td><a href="/operations/enquiries/{int(r['id'])}">#{int(r['id'])}</a></td><td>{esc(_customer_name(r))}</td><td>{esc(_status_label(r['status']))}</td><td>{_fmt_day(r['arrival_date'])}</td><td>{_fmt_day(r['departure_date'])}</td><td>{esc(r['element_type'] or '—')}</td><td>{esc(r['element_name'] or '—')}</td><td>{'€%.2f' % float(r['provisional_total']) if r['provisional_total'] is not None else '—'}</td><td>{esc(r['source'] or '—')}</td><td>{(f'<form method="post" action="/operations/enquiries/{int(r["id"])}/reopen" style="display:inline"><input type="hidden" name="csrf" value="{esc(context["csrf_token"])}"><button class="secondary">REOPEN ENQUIRY</button></form>' if str(r['status']) == 'closed' else (f'<form method="post" action="/operations/enquiries/{int(r["id"])}/release" style="display:inline" onsubmit="return confirm(\'Release this enquiry? The enquiry and its history will be retained, but its reserved availability will be released.\')"><input type="hidden" name="csrf" value="{esc(context["csrf_token"])}"><button class="secondary">RELEASE ENQUIRY</button></form>' if str(r['status']) != 'converted' else '—'))}</td></tr>''' for r in enquiries) or '<tr><td colspan="10" class="muted">No matching enquiries.</td></tr>'
+        result_rows = ''.join(f'''<tr><td><a href="/operations/enquiries/{int(r['id'])}">#{int(r['id'])}</a></td><td>{esc(_customer_name(r))}</td><td>{esc(_status_label(r['status']))}</td><td>{_fmt_day(r['arrival_date'])}</td><td>{_fmt_day(r['departure_date'])}</td><td>{esc(r['element_type'] or '—')}</td><td>{esc(r['element_name'] or '—')}</td><td>{'€%.2f' % float(r['provisional_total']) if r['provisional_total'] is not None else '—'}</td><td>{esc(r['source'] or '—')}</td><td>{_enquiry_action(r, context)}</td></tr>''' for r in enquiries) or '<tr><td colspan="10" class="muted">No matching enquiries.</td></tr>'
         body = f'''<h1>Enquiries</h1><p><a href="/operations">← Operations</a></p><div class="card"><form method="get" action="/operations/enquiries"><div class="grid"><div><label>Customer search</label><input name="q" value="{esc(search)}" placeholder="Name, email or telephone"></div><div><label>Status</label><select name="status">{status_options}</select></div><div><label>Source</label><input name="source" value="{esc(source_filter)}"></div><div><label>Arrival from</label><input type="date" name="arrival_from" value="{esc(arrival_from)}"></div><div><label>Arrival to</label><input type="date" name="arrival_to" value="{esc(arrival_to)}"></div><div><label>Departure from</label><input type="date" name="departure_from" value="{esc(departure_from)}"></div><div><label>Departure to</label><input type="date" name="departure_to" value="{esc(departure_to)}"></div></div><p><button>Search Enquiries</button> <a class="button secondary" href="/operations/enquiries">Clear</a></p></form></div><div class="card"><p><strong>{len(enquiries)}</strong> matching enquiry/enquiries</p><table><thead><tr><th>No.</th><th>Customer</th><th>Status</th><th>Arrival</th><th>Departure</th><th>Element Type</th><th>Element</th><th>Provisional</th><th>Source</th><th>Action</th></tr></thead><tbody>{result_rows}</tbody></table></div>'''
         return layout('Enquiries', body, context)
 
