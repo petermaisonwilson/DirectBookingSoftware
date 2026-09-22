@@ -33,10 +33,10 @@ def _enquiry_conflict(connection, company_id: int, element_id: int, start: str, 
                s.id AS workflow_status_id,s.name AS workflow_name,s.colour,s.blocks_availability,s.internal_state
         FROM enquiries e
         JOIN enquiry_requests er ON er.enquiry_id=e.id AND er.company_id=e.company_id
-        JOIN booking_status_definitions s ON s.id=e.workflow_status_id AND s.company_id=e.company_id
+        LEFT JOIN booking_status_definitions s ON s.id=e.workflow_status_id AND s.company_id=e.company_id
         WHERE e.company_id=? AND er.element_id=?
           AND e.status NOT IN ('closed','converted')
-          AND s.blocks_availability=1
+          AND COALESCE(s.blocks_availability,1)=1
           AND (e.availability_expires_at IS NULL OR datetime(e.availability_expires_at)>datetime('now'))
           AND date(e.arrival_date)<date(?) AND date(e.departure_date)>date(?)
     '''
