@@ -245,7 +245,7 @@ def register_booking_routes(app) -> None:
         method=one(database,'SELECT * FROM payment_method_definitions WHERE company_id=? AND id=? AND active=1',(cid,method_id))
         if method is None: return RedirectResponse(f'/operations/enquiries/{enquiry_id}?convert_error=Choose+an+active+Payment+Method',303)
         if str(method['method_type'])=='card': return RedirectResponse(f'/operations/enquiries/{enquiry_id}?convert_error=Card+provider+connection+is+not+configured+yet',303)
-        total_row=one(database,'SELECT COALESCE(SUM(provisional_total),0) AS provisional_total FROM enquiry_elements WHERE company_id=? AND enquiry_id=?',(cid,enquiry_id)); total=float(total_row['provisional_total'] or 0) if total_row else 0; status=_status_named(database,cid,'Balance Paid' if round(amount,2)>=round(total,2) else 'Deposit Paid') or default_status(database,cid,'CONFIRMED')
+        total=sum(float(e['provisional_total'] or 0) for e in _enquiry_elements(database,cid,enquiry_id)); status=_status_named(database,cid,'Balance Paid' if round(amount,2)>=round(total,2) else 'Deposit Paid') or default_status(database,cid,'CONFIRMED')
         try: booking_id=convert_enquiry_with_payment(database,context,cid,enquiry_id,int(status['id']),amount=amount,payment_date=str(data.get('payment_date','')),method=method,reference=str(data.get('reference','')).strip(),notes=str(data.get('notes','')).strip())
         except ValueError as exc: return RedirectResponse(f'/operations/enquiries/{enquiry_id}?convert_error={esc(str(exc))}',303)
         return RedirectResponse(f'/operations/bookings/{booking_id}?created=1',303)
