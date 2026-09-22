@@ -74,7 +74,7 @@ def register_payment_method_routes(app):
         full_checked='checked' if rule and int(rule["always_require_full_payment"]) else ''
         error=f'<div class="error">{esc(message)}</div>' if message else ''
         body=f'''<h1>Payment Methods</h1><p><a class="button secondary" href="/setup">Setup home</a></p>{error}{"<div class='ok'>Saved.</div>" if saved else ""}
-        <div class="card"><h2>Payment / Deposit Rules</h2><p>These rules determine the minimum payment required when a Booking is confirmed.</p>
+        <div class="card" id="payment-rules"><h2>Payment / Deposit Rules</h2><p>These rules determine the minimum payment required when a Booking is confirmed.</p>
         <form method="post" action="/setup/payment-rules"><input type="hidden" name="csrf" value="{esc(context["csrf_token"])}"><div class="grid">
         <div><label>Deposit type</label><select name="deposit_type"><option value="fixed" {"selected" if deposit_type=="fixed" else ""}>Fixed {esc(currency_symbol)} amount</option><option value="percent" {"selected" if deposit_type=="percent" else ""}>Percentage of Booking total</option></select></div>
         <div><label>Deposit value</label><input type="number" min="0" step="0.01" name="deposit_value" value="{deposit_value:.2f}"></div>
@@ -83,7 +83,7 @@ def register_payment_method_routes(app):
         <p><label style="display:inline-flex;align-items:center;gap:7px;width:auto"><input style="width:auto;margin:0" type="checkbox" name="always_require_full_payment" value="1" {full_checked}><span>Always Require Full Payment</span></label></p>
         <p class="muted">Precedence: Always Require Full Payment; then full-payment threshold; then balance-due period; otherwise the configured fixed or percentage deposit.</p>
         <p><button>Save Payment Rules</button></p></form></div>
-        <div class="card"><h2>Add Payment Method</h2><p>These choices are used when an operator confirms a Booking. Card methods are for a payment provider; DBS does not store card numbers or security codes.</p><form method="post" action="/setup/payment-methods"><input type="hidden" name="csrf" value="{esc(context["csrf_token"])}"><div class="grid"><div><label>Name</label><input name="name" required></div><div><label>Type</label><select name="method_type"><option value="manual">Manual payment</option><option value="card">Card provider</option></select></div><div><label>Display order</label><input type="number" name="display_order" value="50"></div></div><p><button>Save Payment Method</button></p></form></div>
+        <div class="card" id="payment-methods"><h2>Add Payment Method</h2><p>These choices are used when an operator confirms a Booking. Card methods are for a payment provider; DBS does not store card numbers or security codes.</p><form method="post" action="/setup/payment-methods"><input type="hidden" name="csrf" value="{esc(context["csrf_token"])}"><div class="grid"><div><label>Name</label><input name="name" required></div><div><label>Type</label><select name="method_type"><option value="manual">Manual payment</option><option value="card">Card provider</option></select></div><div><label>Display order</label><input type="number" name="display_order" value="50"></div></div><p><button>Save Payment Method</button></p></form></div>
         <div class="card"><table><thead><tr><th>Order</th><th>Name</th><th>Type</th><th>Status</th><th></th></tr></thead><tbody>{trs}</tbody></table></div>'''
         return layout("Payment Methods",body,context)
 
