@@ -329,6 +329,8 @@ def register_booking_routes(app) -> None:
         legacy = 'cancelled' if internal == 'RELEASED' else ('completed' if internal == 'ON_SITE' and str(status['name']).lower().startswith('complete') else 'confirmed')
         with database.connect() as c:
             c.execute('UPDATE bookings SET workflow_status_id=?,status=?,updated_at=? WHERE id=? AND company_id=?', (sid, legacy, iso_now(), booking_id, cid))
+            if internal=='RELEASED' and b['enquiry_id']:
+                c.execute("UPDATE enquiries SET status='closed',availability_expires_at=NULL,updated_at=? WHERE id=? AND company_id=? AND status='converted'",(iso_now(),int(b['enquiry_id']),cid))
         audit(database, context, cid, 'BOOKING_STATUS_CHANGED', 'booking', booking_id, before, {'workflow_status_id': sid, 'workflow_name': str(status['name']), 'internal_state': internal, 'blocks_availability': int(status['blocks_availability'])})
         return RedirectResponse(f'/operations/bookings/{booking_id}?message=Booking+status+updated', 303)
 
