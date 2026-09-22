@@ -113,8 +113,8 @@ def main() -> None:
             assert [str(r['lead_name']) for r in element_rows]==['Walker','Jones']
             assert [float(r['provisional_total']) for r in element_rows]==[40.0,90.0]
             assert [int(r['party_size']) for r in element_rows]==[2,3]
-            person = c.execute('SELECT quantity FROM enquiry_people WHERE enquiry_id=? AND company_id=? AND person_type_id=?', (enquiry_id, cid, chosen_person)).fetchone()
-            assert person is not None and int(person['quantity']) == 2
+            people=c.execute('''SELECT ep.quantity FROM enquiry_element_people ep JOIN enquiry_elements ee ON ee.id=ep.enquiry_element_id WHERE ee.enquiry_id=? AND ep.company_id=? AND ep.person_type_id=? ORDER BY ee.sort_order''',(enquiry_id,cid,chosen_person)).fetchall()
+            assert [int(p['quantity']) for p in people]==[2,3]
             assert c.execute('SELECT id FROM element_holds WHERE id=? AND company_id=? AND session_token=?', (hold_id, cid, token)).fetchone() is None
             assert c.execute('SELECT id FROM element_holds WHERE id=? AND company_id=? AND session_token=?', (hold2_id, cid, token)).fetchone() is None
             assert c.execute('SELECT 1 FROM hold_requirement_people WHERE hold_id=?', (hold_id,)).fetchone() is None
