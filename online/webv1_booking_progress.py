@@ -121,20 +121,20 @@ def _save_basket_enquiry(database,context,company_id,customer_id,token,notes):
             subtotal=float(calc['total']); total+=subtotal
             eeid=int(c.execute('''INSERT INTO enquiry_elements(enquiry_id,company_id,element_type,element_id,arrival_date,departure_date,lead_name,party_size,provisional_total,pricing_snapshot_json,sort_order,created_at,updated_at) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?)''',(enquiry_id,company_id,str(item['element_type']),int(item['element_id']),str(item['arrival_date']),str(item['departure_date']),str(item['lead_name'] or ''),int(calc['people_total']),subtotal,snap,order,now,now)).lastrowid)
             for pid,qty in calc['people_counts'].items():
-                if qty:c.execute('INSERT INTO enquiry_people(enquiry_id,company_id,person_type_id,quantity,enquiry_element_id) VALUES (?,?,?,?,?)',(enquiry_id,company_id,pid,qty,eeid))
-            for pos,aid in enumerate(calc['selected_addons'],1):c.execute('INSERT INTO enquiry_selected_addons(enquiry_id,company_id,addon_id,sort_order,enquiry_element_id) VALUES (?,?,?,?,?)',(enquiry_id,company_id,aid,pos,eeid))
+                if qty:c.execute('INSERT INTO enquiry_element_people(enquiry_element_id,company_id,person_type_id,quantity) VALUES (?,?,?,?)',(eeid,company_id,pid,qty))
+            for pos,aid in enumerate(calc['selected_addons'],1):c.execute('INSERT INTO enquiry_element_selected_addons(enquiry_element_id,company_id,addon_id,sort_order) VALUES (?,?,?,?)',(eeid,company_id,aid,pos))
             for aid,qty in calc['addon_counts'].items():
-                if qty:c.execute('INSERT INTO enquiry_addons(enquiry_id,company_id,addon_id,quantity,enquiry_element_id) VALUES (?,?,?,?,?)',(enquiry_id,company_id,aid,qty,eeid))
+                if qty:c.execute('INSERT INTO enquiry_element_addons(enquiry_element_id,company_id,addon_id,quantity) VALUES (?,?,?,?)',(eeid,company_id,aid,qty))
             for aid,daily in calc['addon_days'].items():
                 for d,qty in daily.items():
-                    if qty:c.execute('INSERT INTO enquiry_addon_days(enquiry_id,company_id,addon_id,service_date,quantity,enquiry_element_id) VALUES (?,?,?,?,?,?)',(enquiry_id,company_id,aid,d,qty,eeid))
+                    if qty:c.execute('INSERT INTO enquiry_element_addon_days(enquiry_element_id,company_id,addon_id,service_date,quantity) VALUES (?,?,?,?,?)',(eeid,company_id,aid,d,qty))
             for aid,pp in calc['addon_people'].items():
                 for pid,qty in pp.items():
-                    if qty:c.execute('INSERT INTO enquiry_addon_people(enquiry_id,company_id,addon_id,person_type_id,quantity,enquiry_element_id) VALUES (?,?,?,?,?,?)',(enquiry_id,company_id,aid,pid,qty,eeid))
+                    if qty:c.execute('INSERT INTO enquiry_element_addon_people(enquiry_element_id,company_id,addon_id,person_type_id,quantity) VALUES (?,?,?,?,?)',(eeid,company_id,aid,pid,qty))
             for aid,bydate in calc['addon_person_days'].items():
                 for d,pp in bydate.items():
                     for pid,qty in pp.items():
-                        if qty:c.execute('INSERT INTO enquiry_addon_person_days(enquiry_id,company_id,addon_id,person_type_id,service_date,quantity,enquiry_element_id) VALUES (?,?,?,?,?,?,?)',(enquiry_id,company_id,aid,pid,d,qty,eeid))
+                        if qty:c.execute('INSERT INTO enquiry_element_addon_person_days(enquiry_element_id,company_id,addon_id,person_type_id,service_date,quantity) VALUES (?,?,?,?,?,?)',(eeid,company_id,aid,pid,d,qty))
         # Legacy summary row remains for compatibility while all new logic moves to enquiry_elements.
         first=prepared[0]
         c.execute('''INSERT INTO enquiry_requests(enquiry_id,company_id,element_type,element_id,provisional_total,pricing_snapshot_json,updated_at) VALUES (?,?,?,?,?,?,?)''',(enquiry_id,company_id,str(first[1]['element_type']),int(first[1]['element_id']),total,first[3] and json.dumps({'multi_element':True,'element_count':len(prepared),'total':total},separators=(',',':')),now))
