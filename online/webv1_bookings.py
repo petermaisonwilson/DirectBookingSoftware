@@ -132,7 +132,9 @@ def _snapshot_line_amount(snapshot: dict, name: str) -> float:
 
 def _enquiry_elements(database,cid,enquiry_id):
     data=rows(database,'''SELECT ee.*,se.name AS element_name,se.pricing_method FROM enquiry_elements ee JOIN setup_elements se ON se.id=ee.element_id AND se.company_id=ee.company_id WHERE ee.company_id=? AND ee.enquiry_id=? ORDER BY ee.sort_order,ee.id''',(cid,enquiry_id))
-    return data
+    if data:return data
+    legacy=one(database,'''SELECT e.id AS enquiry_id,e.company_id,er.element_type,er.element_id,e.arrival_date,e.departure_date,'' AS lead_name,e.party_size,er.provisional_total,er.pricing_snapshot_json,se.name AS element_name,se.pricing_method FROM enquiries e JOIN enquiry_requests er ON er.enquiry_id=e.id AND er.company_id=e.company_id JOIN setup_elements se ON se.id=er.element_id AND se.company_id=er.company_id WHERE e.id=? AND e.company_id=?''',(enquiry_id,cid))
+    return [legacy] if legacy is not None else []
 
 def _write_booking(c,database,context,cid,enquiry,elements,workflow_status_id):
     now=iso_now();total=sum(float(e['provisional_total'] or 0) for e in elements);reference=_next_reference(c,cid)
@@ -144,14 +146,14 @@ def _write_booking(c,database,context,cid,enquiry,elements,workflow_status_id):
         element_amount=_snapshot_line_amount(snapshot,str(ee['element_name'] or ''))
         beid=int(c.execute('''INSERT INTO booking_elements(company_id,booking_id,element_id,arrival_date,departure_date,pricing_method_snapshot,unit_price_snapshot,total_amount,pricing_snapshot_json,lead_name) VALUES (?,?,?,?,?,?,?,?,?,?)''',(cid,booking_id,ee['element_id'],ee['arrival_date'],ee['departure_date'],ee['pricing_method'] or '',0,element_amount,ee['pricing_snapshot_json'],ee['lead_name'] or '')).lastrowid)
         year=int(snapshot.get('year') or str(ee['arrival_date'])[:4])
-        for p in c.execute('''SELECT ep.person_type_id,ep.quantity,pt.name FROM enquiry_people ep JOIN setup_person_types pt ON pt.id=ep.person_type_id AND pt.company_id=ep.company_id WHERE ep.enquiry_id=? AND ep.company_id=? AND ep.enquiry_element_id=?''',(enquiry['id'],cid,ee['id'])).fetchall():
+        for p in c.execute('''SELECT ep.person_type_id,ep.quantity,pt.name FROM enquiry_people ep JOIN setup_person_types pt ON pt.id=ep.person_type_id AND pt.company_id=ep.company_id WHERE ep.enquiry_id=? AND ep.company_id=? AND (ep.enquiry_element_id=? OR ? IS NULL)''',(enquiry['id'],cid,ee['id'] if 'id' in ee.keys() else None,ee['id'] if 'id' in ee.keys() else None)).fetchall():
             pr=c.execute('SELECT rate FROM setup_person_prices WHERE company_id=? AND year=? AND element_id=? AND person_type_id=?',(cid,year,ee['element_id'],p['person_type_id'])).fetchone();unit=float(pr['rate']) if pr else 0.0
             c.execute('INSERT INTO booking_people(company_id,booking_element_id,person_type_id,quantity,unit_price_snapshot,total_amount) VALUES (?,?,?,?,?,?)',(cid,beid,p['person_type_id'],p['quantity'],unit,_snapshot_line_amount(snapshot,str(p['name']))))
         element=c.execute('SELECT * FROM setup_elements WHERE company_id=? AND id=?',(cid,ee['element_id'])).fetchone()
         for aid in [int(x) for x in (snapshot.get('selected_addons') or [])]:
             addon=c.execute('SELECT * FROM setup_addons WHERE company_id=? AND id=?',(cid,aid)).fetchone()
             if addon is None:continue
-            qr=c.execute('SELECT quantity FROM enquiry_addons WHERE enquiry_id=? AND company_id=? AND addon_id=? AND enquiry_element_id=?',(enquiry['id'],cid,aid,ee['id'])).fetchone();qty=int(qr['quantity']) if qr else 0;rule=_addon_rule(database,cid,year,element,aid);amount=_snapshot_line_amount(snapshot,str(addon['name']))
+            qr=c.execute('SELECT quantity FROM enquiry_addons WHERE enquiry_id=? AND company_id=? AND addon_id=? AND (enquiry_element_id=? OR ? IS NULL)',(enquiry['id'],cid,aid,ee['id'] if 'id' in ee.keys() else None,ee['id'] if 'id' in ee.keys() else None)).fetchone();qty=int(qr['quantity']) if qr else 0;rule=_addon_rule(database,cid,year,element,aid);amount=_snapshot_line_amount(snapshot,str(addon['name']))
             detail={'rule':dict(rule),'when':(snapshot.get('addon_when') or {}).get(str(aid),(snapshot.get('addon_when') or {}).get(aid)),'days':(snapshot.get('addon_days') or {}).get(str(aid),(snapshot.get('addon_days') or {}).get(aid,{})),'people':(snapshot.get('addon_people') or {}).get(str(aid),(snapshot.get('addon_people') or {}).get(aid,{})),'person_days':(snapshot.get('addon_person_days') or {}).get(str(aid),(snapshot.get('addon_person_days') or {}).get(aid,{})),'frozen_amount':amount}
             c.execute('INSERT INTO booking_addons(company_id,booking_element_id,addon_id,quantity,pricing_method_snapshot,unit_price_snapshot,total_amount,rule_snapshot_json) VALUES (?,?,?,?,?,?,?,?)',(cid,beid,aid,qty,addon['pricing_method'],float(rule.get('rate') or 0),amount,json.dumps(detail,separators=(',',':'))))
     c.execute("UPDATE enquiries SET status='converted',availability_expires_at=NULL,updated_at=? WHERE id=? AND company_id=?",(now,enquiry['id'],cid))
