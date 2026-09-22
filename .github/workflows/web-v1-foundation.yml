@@ -262,6 +262,31 @@ jobs:
           )
           $notes | Set-Content "artifact\TEST-PACKAGE-NOTES.txt"
 
+      - name: Stage Firefox boundary diagnostics
+        shell: pwsh
+        run: |
+          New-Item -ItemType Directory -Force "diag334" | Out-Null
+          New-Item -ItemType Directory -Force "diag335" | Out-Null
+          git show "180f4dbdbd25b4cb63c0ff13f4038b2d8a5dec4a:online/webv1_booking_requirements.py" | Set-Content "diag334/webv1_booking_requirements.py"
+          git show "a8e3c535345ffb1bc298594dcc3a6c9e2acacbb5:online/webv1_booking_requirements.py" | Set-Content "diag335/webv1_booking_requirements.py"
+          git show "a8e3c535345ffb1bc298594dcc3a6c9e2acacbb5:online/webv1_booking_progress.py" | Set-Content "diag335/webv1_booking_progress.py"
+
+      - name: Upload Firefox diagnostic 334
+        uses: actions/upload-artifact@v4
+        with:
+          name: DBS-DIAG-334
+          path: diag334/
+          if-no-files-found: error
+          retention-days: 7
+
+      - name: Upload Firefox diagnostic 335
+        uses: actions/upload-artifact@v4
+        with:
+          name: DBS-DIAG-335
+          path: diag335/
+          if-no-files-found: error
+          retention-days: 7
+
       - name: Upload Web V1 artifact
         uses: actions/upload-artifact@v4
         with:
