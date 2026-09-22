@@ -99,6 +99,53 @@ def _hold_enquiry_values(database,company_id,token,hold_id):
     return item,values
 
 
+
+def _save_basket_enquiry(database,context,company_id,customer_id,token,notes):
+    """Persist every held basket item as one Enquiry with per-element detail."""
+    held=_held_items(database,company_id,token)
+    if not held: raise ValueError('The basket is empty.')
+    prepared=[]
+    for order,item in enumerate(held,1):
+        _,values=_hold_enquiry_values(database,company_id,token,int(item['id']))
+        calculation,_,error=_calculate(database,company_id,values)
+        if error or calculation is None: raise ValueError(error or 'Unable to calculate held Element.')
+        prepared.append((order,item,values,calculation))
+    now=iso_now()
+    arrival=min(str(x[1]['arrival_date']) for x in prepared); departure=max(str(x[1]['departure_date']) for x in prepared)
+    party=sum(int(x[3]['people_total']) for x in prepared)
+    with database.connect() as c:
+        enquiry_id=int(c.execute('''INSERT INTO enquiries(company_id,customer_id,status,source,arrival_date,departure_date,party_size,notes,created_at,updated_at) VALUES (?,?,?,?,?,?,?,?,?,?)''',(company_id,customer_id,'new','Availability',arrival,departure,party,notes,now,now)).lastrowid)
+        total=0.0
+        for order,item,values,calc in prepared:
+            snap=json.dumps({'element_type':calc['element_type'],'element_id':calc['element_id'],'element_name':calc['element_name'],'year':calc['year'],'nights':calc['nights'],'people_total':calc['people_total'],'addon_when':calc['addon_when'],'addon_days':calc['addon_days'],'addon_people':calc['addon_people'],'addon_person_days':calc['addon_person_days'],'selected_addons':calc['selected_addons'],'lines':calc['lines'],'total':calc['total']},separators=(',',':'))
+            subtotal=float(calc['total']); total+=subtotal
+            eeid=int(c.execute('''INSERT INTO enquiry_elements(enquiry_id,company_id,element_type,element_id,arrival_date,departure_date,lead_name,party_size,provisional_total,pricing_snapshot_json,sort_order,created_at,updated_at) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?)''',(enquiry_id,company_id,str(item['element_type']),int(item['element_id']),str(item['arrival_date']),str(item['departure_date']),str(item['lead_name'] or ''),int(calc['people_total']),subtotal,snap,order,now,now)).lastrowid)
+            for pid,qty in calc['people_counts'].items():
+                if qty:c.execute('INSERT INTO enquiry_people(enquiry_id,company_id,person_type_id,quantity,enquiry_element_id) VALUES (?,?,?,?,?)',(enquiry_id,company_id,pid,qty,eeid))
+            for pos,aid in enumerate(calc['selected_addons'],1):c.execute('INSERT INTO enquiry_selected_addons(enquiry_id,company_id,addon_id,sort_order,enquiry_element_id) VALUES (?,?,?,?,?)',(enquiry_id,company_id,aid,pos,eeid))
+            for aid,qty in calc['addon_counts'].items():
+                if qty:c.execute('INSERT INTO enquiry_addons(enquiry_id,company_id,addon_id,quantity,enquiry_element_id) VALUES (?,?,?,?,?)',(enquiry_id,company_id,aid,qty,eeid))
+            for aid,daily in calc['addon_days'].items():
+                for d,qty in daily.items():
+                    if qty:c.execute('INSERT INTO enquiry_addon_days(enquiry_id,company_id,addon_id,service_date,quantity,enquiry_element_id) VALUES (?,?,?,?,?,?)',(enquiry_id,company_id,aid,d,qty,eeid))
+            for aid,pp in calc['addon_people'].items():
+                for pid,qty in pp.items():
+                    if qty:c.execute('INSERT INTO enquiry_addon_people(enquiry_id,company_id,addon_id,person_type_id,quantity,enquiry_element_id) VALUES (?,?,?,?,?,?)',(enquiry_id,company_id,aid,pid,qty,eeid))
+            for aid,bydate in calc['addon_person_days'].items():
+                for d,pp in bydate.items():
+                    for pid,qty in pp.items():
+                        if qty:c.execute('INSERT INTO enquiry_addon_person_days(enquiry_id,company_id,addon_id,person_type_id,service_date,quantity,enquiry_element_id) VALUES (?,?,?,?,?,?,?)',(enquiry_id,company_id,aid,pid,d,qty,eeid))
+        # Legacy summary row remains for compatibility while all new logic moves to enquiry_elements.
+        first=prepared[0]
+        c.execute('''INSERT INTO enquiry_requests(enquiry_id,company_id,element_type,element_id,provisional_total,pricing_snapshot_json,updated_at) VALUES (?,?,?,?,?,?,?)''',(enquiry_id,company_id,str(first[1]['element_type']),int(first[1]['element_id']),total,first[3] and json.dumps({'multi_element':True,'element_count':len(prepared),'total':total},separators=(',',':')),now))
+        hold_ids=[int(x[1]['id']) for x in prepared]
+        for hid in hold_ids:
+            c.execute('DELETE FROM hold_requirement_people WHERE hold_id=?',(hid,));c.execute('DELETE FROM hold_requirement_addons WHERE hold_id=?',(hid,));c.execute('DELETE FROM element_holds WHERE id=? AND company_id=? AND session_token=?',(hid,company_id,token))
+    audit(database,context,company_id,'ENQUIRY_CREATED','enquiry',enquiry_id,after={'customer_id':customer_id,'element_count':len(prepared),'provisional_total':total})
+    audit(database,context,company_id,'ELEMENT_HOLDS_CONVERTED_TO_ENQUIRY','enquiry',enquiry_id,after={'hold_ids':[int(x[1]['id']) for x in prepared]})
+    return enquiry_id
+
+
 def _customer_values(data):
     keys=('first_name','last_name','email','mobile_phone','fixed_phone','address1','address2','town','postcode','country','notes')
     return {key:str(data.get(key,'') or '').strip() for key in keys}
@@ -197,18 +244,10 @@ def register_booking_progress_routes(app):
             with database.connect() as c:
                 customer_id=int(c.execute('''INSERT INTO customer_records(company_id,first_name,last_name,email,phone,mobile_phone,fixed_phone,address1,address2,town,postcode,country,notes,created_at,updated_at) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)''',(company_id,values['first_name'],values['last_name'],values['email'],values['mobile_phone'] or values['fixed_phone'],values['mobile_phone'],values['fixed_phone'],values['address1'],values['address2'],values['town'],values['postcode'],values['country'],'',now,now)).lastrowid)
             audit(database,context,company_id,'CUSTOMER_CREATED','customer',customer_id,after={k:values[k] for k in values if k!='notes'})
-        enquiry_values['notes']=values['notes'];calculation,_,calc_error=_calculate(database,company_id,enquiry_values)
-        if calc_error:
-            return HTMLResponse(_customer_stage(database,context,company_id,token,hold_id,values,'The held booking cannot yet be saved as an Enquiry: '+calc_error),409)
-        enquiry_id=_save(database,context,company_id,int(customer_id),enquiry_values,calculation)
-        # The saved Enquiry now owns the availability state. The Basket hold was only
-        # for the unsaved journey, so remove it and its snapshots once SAVE ENQUIRY
-        # has succeeded. This also stops the temporary-hold renewal warning.
-        with database.connect() as c:
-            c.execute('DELETE FROM hold_requirement_people WHERE hold_id=?', (hold_id,))
-            c.execute('DELETE FROM hold_requirement_addons WHERE hold_id=?', (hold_id,))
-            c.execute('DELETE FROM element_holds WHERE id=? AND company_id=? AND session_token=?', (hold_id,company_id,token))
-        audit(database,context,company_id,'ELEMENT_HOLD_CONVERTED_TO_ENQUIRY','enquiry',enquiry_id,after={'hold_id':hold_id})
+        try:
+            enquiry_id=_save_basket_enquiry(database,context,company_id,int(customer_id),token,values['notes'])
+        except ValueError as exc:
+            return HTMLResponse(_customer_stage(database,context,company_id,token,hold_id,values,'The held booking cannot yet be saved as an Enquiry: '+str(exc)),409)
         return RedirectResponse(f'/operations/enquiries/{enquiry_id}?saved=1',303)
 
     @app.get('/availability/basket/review',response_class=HTMLResponse)
