@@ -43,6 +43,28 @@ CREATE TABLE IF NOT EXISTS enquiries (
 );
 CREATE INDEX IF NOT EXISTS idx_enquiries_company ON enquiries(company_id, status, created_at);
 
+
+CREATE TABLE IF NOT EXISTS enquiry_elements (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    enquiry_id INTEGER NOT NULL,
+    company_id INTEGER NOT NULL,
+    element_type TEXT NOT NULL DEFAULT '',
+    element_id INTEGER NOT NULL,
+    arrival_date TEXT NOT NULL,
+    departure_date TEXT NOT NULL,
+    lead_name TEXT NOT NULL DEFAULT '',
+    party_size INTEGER,
+    provisional_total REAL,
+    pricing_snapshot_json TEXT NOT NULL DEFAULT '{}',
+    sort_order INTEGER NOT NULL DEFAULT 0,
+    created_at TEXT NOT NULL,
+    updated_at TEXT NOT NULL,
+    FOREIGN KEY(enquiry_id) REFERENCES enquiries(id) ON DELETE CASCADE,
+    FOREIGN KEY(company_id) REFERENCES companies(id),
+    FOREIGN KEY(element_id) REFERENCES setup_elements(id)
+);
+CREATE INDEX IF NOT EXISTS idx_enquiry_elements_enquiry ON enquiry_elements(company_id,enquiry_id,sort_order);
+
 CREATE TABLE IF NOT EXISTS enquiry_requests (
     enquiry_id INTEGER PRIMARY KEY,
     company_id INTEGER NOT NULL,
@@ -210,6 +232,22 @@ def initialise_web_v1(database) -> None:
     """Create the permanent Web V1 lifecycle schema without changing existing Setup data."""
     with database.connect() as connection:
         connection.executescript(WEB_V1_SCHEMA)
+        # Local SQLite databases pre-date Alembic and are upgraded in place here.
+        for table in ('enquiry_people','enquiry_addons','enquiry_addon_days','enquiry_addon_people','enquiry_addon_person_days','enquiry_selected_addons'):
+            columns={str(row['name']) for row in connection.execute(f'PRAGMA table_info({table})').fetchall()}
+            if 'enquiry_element_id' not in columns:
+                connection.execute(f'ALTER TABLE {table} ADD COLUMN enquiry_element_id INTEGER')
+            connection.execute(f'CREATE INDEX IF NOT EXISTS idx_{table}_element ON {table}(enquiry_element_id)')
+        booking_columns={str(row['name']) for row in connection.execute('PRAGMA table_info(booking_elements)').fetchall()}
+        if 'lead_name' not in booking_columns:
+            connection.execute("ALTER TABLE booking_elements ADD COLUMN lead_name TEXT NOT NULL DEFAULT ''")
+        connection.execute("""INSERT INTO enquiry_elements(enquiry_id,company_id,element_type,element_id,arrival_date,departure_date,lead_name,party_size,provisional_total,pricing_snapshot_json,sort_order,created_at,updated_at)
+            SELECT e.id,e.company_id,er.element_type,er.element_id,e.arrival_date,e.departure_date,'',e.party_size,er.provisional_total,er.pricing_snapshot_json,1,e.created_at,e.updated_at
+            FROM enquiries e JOIN enquiry_requests er ON er.enquiry_id=e.id AND er.company_id=e.company_id
+            WHERE er.element_id IS NOT NULL AND e.arrival_date IS NOT NULL AND e.departure_date IS NOT NULL
+              AND NOT EXISTS (SELECT 1 FROM enquiry_elements ee WHERE ee.enquiry_id=e.id AND ee.company_id=e.company_id)""")
+        for table in ('enquiry_people','enquiry_addons','enquiry_addon_days','enquiry_addon_people','enquiry_addon_person_days','enquiry_selected_addons'):
+            connection.execute(f"""UPDATE {table} SET enquiry_element_id=(SELECT ee.id FROM enquiry_elements ee WHERE ee.enquiry_id={table}.enquiry_id AND ee.company_id={table}.company_id ORDER BY ee.sort_order,ee.id LIMIT 1) WHERE enquiry_element_id IS NULL""")
         connection.execute(
             "INSERT OR REPLACE INTO web_schema_meta(key,value) VALUES ('schema_version','web-v1-foundation')"
         )
