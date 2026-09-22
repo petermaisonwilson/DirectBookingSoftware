@@ -163,6 +163,11 @@ def _requirements_page(database, context, cid, token, message='', edit_hold: int
         selected_element_type = ''
     saved_people, saved_addons, _, saved_arrival, saved_departure = _saved_requirements(database, cid, token)
     saved_lead_name = _saved_lead_name(database, cid, token)
+    with database.connect() as c:
+        basket_count = int(c.execute('SELECT COUNT(*) AS n FROM element_holds WHERE company_id=? AND session_token=?', (cid, token)).fetchone()['n'])
+    additional_element = basket_count > 0 and not edit_hold
+    surname_label = 'Next Guest Surname' if additional_element else 'Lead Guest Surname'
+    surname_help = '<small><strong>if different</strong></small>' if additional_element else ''
     error = f'<div class="error">{esc(message)}</div>' if message else ''
     progress = booking_progress_strip(database, context, cid, token)
     edit_hidden = f'<input type="hidden" name="edit_hold" value="{int(edit_hold)}">' if edit_hold else ''
@@ -175,7 +180,7 @@ def _requirements_page(database, context, cid, token, message='', edit_hold: int
     body = f'''<h1>Booking requirements</h1>{progress}{edit_note}{error}
     <div class="card"><p>Choose the <strong>Element Type</strong> and DBS will show only the Person Types, Features and Extras that can affect that type. Items that do not define suitability are left out.</p><p class="muted">For privacy, age is requested only where the Client has enabled <strong>Ask for age</strong>.</p></div>
     <form method="post" action="/availability/requirements">{edit_hidden}<input type="hidden" name="csrf" value="{esc(context['csrf_token'])}">
-    <div class="card"><h2>Who's coming and when?</h2><div class="grid"><div><label>Lead Guest Surname</label><small>For another element, change this only if the next guest is different.</small><input name="lead_name" placeholder="SURNAME" required value="{esc(saved_lead_name)}"></div><div><label>Choose Element Type</label><select id="requirements-element-type" name="element_type" required>{type_options}</select></div><div><label>Arrival</label><input id="requirements-arrival" type="date" name="arrival" required value="{esc(saved_arrival)}"></div><div><label>Departure</label><input id="requirements-departure" type="date" name="departure" required value="{esc(saved_departure)}"></div>'''
+    <div class="card"><h2>Who's coming and when?</h2><div class="grid"><div><label>{surname_label}</label>{surname_help}<input name="lead_name" placeholder="SURNAME" required value="{esc(saved_lead_name)}"></div><div><label>Choose Element Type</label><select id="requirements-element-type" name="element_type" required>{type_options}</select></div><div><label>Arrival</label><input id="requirements-arrival" type="date" name="arrival" required value="{esc(saved_arrival)}"></div><div><label>Departure</label><input id="requirements-departure" type="date" name="departure" required value="{esc(saved_departure)}"></div>'''
     person_map = _person_type_map(database, cid)
     for p in people_rows:
         pid = int(p['id']); saved = saved_people.get(pid, {'quantity': 0, 'ages': []}); qty = int(saved['quantity'])
