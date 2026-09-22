@@ -115,14 +115,20 @@ def register_enquiry_routes(app) -> None:
     async def reopen_enquiry(enquiry_id: int, request: Request):
         context = context_for(database, request); company_id = int(working_company(context))
         data = await form_data(request); require_csrf(context, data)
-        enquiry = one(database, '''SELECT e.*,er.element_id FROM enquiries e LEFT JOIN enquiry_requests er ON er.enquiry_id=e.id AND er.company_id=e.company_id WHERE e.id=? AND e.company_id=?''', (enquiry_id, company_id))
+        enquiry = one(database, 'SELECT * FROM enquiries WHERE id=? AND company_id=?', (enquiry_id, company_id))
         if enquiry is None or str(enquiry['status']) != 'closed':
             return RedirectResponse('/operations/enquiries', 303)
-        if enquiry['element_id'] is None or not enquiry['arrival_date'] or not enquiry['departure_date']:
+        elements=rows(database,'SELECT * FROM enquiry_elements WHERE enquiry_id=? AND company_id=? ORDER BY sort_order,id',(enquiry_id,company_id))
+        if not elements:
+            legacy=one(database,'SELECT element_id FROM enquiry_requests WHERE enquiry_id=? AND company_id=?',(enquiry_id,company_id))
+            if legacy is not None and legacy['element_id'] is not None and enquiry['arrival_date'] and enquiry['departure_date']:
+                elements=[{'element_id':legacy['element_id'],'arrival_date':enquiry['arrival_date'],'departure_date':enquiry['departure_date']}]
+        if not elements:
             return RedirectResponse(f'/operations/enquiries/{enquiry_id}?convert_error=Availability+must+be+rechecked+before+this+Enquiry+can+be+reopened', 303)
-        state = availability_state(database, company_id, int(enquiry['element_id']), str(enquiry['arrival_date']), str(enquiry['departure_date']), exclude_enquiry_id=enquiry_id)
-        if not state.get('available'):
-            return RedirectResponse(f'/operations/enquiries/{enquiry_id}?convert_error=Cannot+reopen:+the+original+availability+is+no+longer+available', 303)
+        for element in elements:
+            state=availability_state(database,company_id,int(element['element_id']),str(element['arrival_date']),str(element['departure_date']),exclude_enquiry_id=enquiry_id)
+            if not state.get('available'):
+                return RedirectResponse(f'/operations/enquiries/{enquiry_id}?convert_error=Cannot+reopen:+one+or+more+original+Elements+are+no+longer+available',303)
         with database.connect() as c:
             c.execute("UPDATE enquiries SET status='new',updated_at=? WHERE id=? AND company_id=?", (iso_now(), enquiry_id, company_id))
         audit(database, context, company_id, 'ENQUIRY_REOPENED', 'enquiry', enquiry_id, before={'status': 'closed'}, after={'status': 'new', 'availability_rechecked': True})
