@@ -30,22 +30,37 @@ def _booking_conflict(connection, company_id: int, element_id: int, start: str, 
 
 def _enquiry_conflict(connection, company_id: int, element_id: int, start: str, end: str, exclude_enquiry_id: int | None = None):
     sql = '''
-        SELECT e.id,e.customer_id,e.status,e.arrival_date,e.departure_date,e.availability_expires_at,
+        SELECT e.id,e.customer_id,e.status,ee.arrival_date,ee.departure_date,e.availability_expires_at,
                s.id AS workflow_status_id,s.name AS workflow_name,s.colour,s.blocks_availability,s.internal_state
         FROM enquiries e
-        JOIN enquiry_requests er ON er.enquiry_id=e.id AND er.company_id=e.company_id
+        JOIN enquiry_elements ee ON ee.enquiry_id=e.id AND ee.company_id=e.company_id
         LEFT JOIN booking_status_definitions s ON s.id=e.workflow_status_id AND s.company_id=e.company_id
-        WHERE e.company_id=? AND er.element_id=?
+        WHERE e.company_id=? AND ee.element_id=?
           AND e.status NOT IN ('closed','converted')
           AND NOT EXISTS (SELECT 1 FROM bookings bx WHERE bx.company_id=e.company_id AND bx.enquiry_id=e.id)
           AND COALESCE(s.blocks_availability,1)=1
           AND (e.availability_expires_at IS NULL OR datetime(e.availability_expires_at)>datetime('now'))
-          AND date(e.arrival_date)<date(?) AND date(e.departure_date)>date(?)
+          AND date(ee.arrival_date)<date(?) AND date(ee.departure_date)>date(?)
     '''
     params: list[Any] = [company_id, element_id, end, start]
     if exclude_enquiry_id is not None:
         sql += ' AND e.id<>?'; params.append(exclude_enquiry_id)
-    sql += ' ORDER BY e.arrival_date LIMIT 1'
+    sql += ''' UNION ALL
+        SELECT e.id,e.customer_id,e.status,e.arrival_date,e.departure_date,e.availability_expires_at,
+               s.id,s.name,s.colour,s.blocks_availability,s.internal_state
+        FROM enquiries e JOIN enquiry_requests er ON er.enquiry_id=e.id AND er.company_id=e.company_id
+        LEFT JOIN booking_status_definitions s ON s.id=e.workflow_status_id AND s.company_id=e.company_id
+        WHERE e.company_id=? AND er.element_id=?
+          AND NOT EXISTS (SELECT 1 FROM enquiry_elements x WHERE x.company_id=e.company_id AND x.enquiry_id=e.id)
+          AND e.status NOT IN ('closed','converted')
+          AND NOT EXISTS (SELECT 1 FROM bookings bx WHERE bx.company_id=e.company_id AND bx.enquiry_id=e.id)
+          AND COALESCE(s.blocks_availability,1)=1
+          AND (e.availability_expires_at IS NULL OR datetime(e.availability_expires_at)>datetime('now'))
+          AND date(e.arrival_date)<date(?) AND date(e.departure_date)>date(?)'''
+    params += [company_id, element_id, end, start]
+    if exclude_enquiry_id is not None:
+        sql += ' AND e.id<>?'; params.append(exclude_enquiry_id)
+    sql += ' LIMIT 1'
     return connection.execute(sql, params).fetchone()
 
 
