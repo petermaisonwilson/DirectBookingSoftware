@@ -101,6 +101,42 @@ CREATE TABLE IF NOT EXISTS enquiry_addons (
     FOREIGN KEY(addon_id) REFERENCES setup_addons(id)
 );
 
+CREATE TABLE IF NOT EXISTS enquiry_element_people (
+    enquiry_element_id INTEGER NOT NULL, company_id INTEGER NOT NULL, person_type_id INTEGER NOT NULL,
+    quantity INTEGER NOT NULL DEFAULT 0 CHECK(quantity >= 0),
+    PRIMARY KEY(enquiry_element_id,person_type_id),
+    FOREIGN KEY(enquiry_element_id) REFERENCES enquiry_elements(id) ON DELETE CASCADE
+);
+CREATE TABLE IF NOT EXISTS enquiry_element_addons (
+    enquiry_element_id INTEGER NOT NULL, company_id INTEGER NOT NULL, addon_id INTEGER NOT NULL,
+    quantity INTEGER NOT NULL DEFAULT 0 CHECK(quantity >= 0),
+    PRIMARY KEY(enquiry_element_id,addon_id),
+    FOREIGN KEY(enquiry_element_id) REFERENCES enquiry_elements(id) ON DELETE CASCADE
+);
+CREATE TABLE IF NOT EXISTS enquiry_element_addon_days (
+    enquiry_element_id INTEGER NOT NULL, company_id INTEGER NOT NULL, addon_id INTEGER NOT NULL, service_date TEXT NOT NULL,
+    quantity INTEGER NOT NULL DEFAULT 0 CHECK(quantity >= 0),
+    PRIMARY KEY(enquiry_element_id,addon_id,service_date),
+    FOREIGN KEY(enquiry_element_id) REFERENCES enquiry_elements(id) ON DELETE CASCADE
+);
+CREATE TABLE IF NOT EXISTS enquiry_element_addon_people (
+    enquiry_element_id INTEGER NOT NULL, company_id INTEGER NOT NULL, addon_id INTEGER NOT NULL, person_type_id INTEGER NOT NULL,
+    quantity INTEGER NOT NULL DEFAULT 0 CHECK(quantity >= 0),
+    PRIMARY KEY(enquiry_element_id,addon_id,person_type_id),
+    FOREIGN KEY(enquiry_element_id) REFERENCES enquiry_elements(id) ON DELETE CASCADE
+);
+CREATE TABLE IF NOT EXISTS enquiry_element_addon_person_days (
+    enquiry_element_id INTEGER NOT NULL, company_id INTEGER NOT NULL, addon_id INTEGER NOT NULL, person_type_id INTEGER NOT NULL, service_date TEXT NOT NULL,
+    quantity INTEGER NOT NULL DEFAULT 0 CHECK(quantity >= 0),
+    PRIMARY KEY(enquiry_element_id,addon_id,person_type_id,service_date),
+    FOREIGN KEY(enquiry_element_id) REFERENCES enquiry_elements(id) ON DELETE CASCADE
+);
+CREATE TABLE IF NOT EXISTS enquiry_element_selected_addons (
+    enquiry_element_id INTEGER NOT NULL, company_id INTEGER NOT NULL, addon_id INTEGER NOT NULL, sort_order INTEGER NOT NULL DEFAULT 0,
+    PRIMARY KEY(enquiry_element_id,addon_id),
+    FOREIGN KEY(enquiry_element_id) REFERENCES enquiry_elements(id) ON DELETE CASCADE
+);
+
 CREATE TABLE IF NOT EXISTS offers (
     id INTEGER PRIMARY KEY AUTOINCREMENT,
     company_id INTEGER NOT NULL,
@@ -255,6 +291,11 @@ def initialise_web_v1(database) -> None:
                 columns={str(row['name']) for row in connection.execute(f'PRAGMA table_info({table})').fetchall()}
                 if 'enquiry_element_id' in columns:
                     connection.execute(f"""UPDATE {table} SET enquiry_element_id=(SELECT ee.id FROM enquiry_elements ee WHERE ee.enquiry_id={table}.enquiry_id AND ee.company_id={table}.company_id ORDER BY ee.sort_order,ee.id LIMIT 1) WHERE enquiry_element_id IS NULL""")
+        # Backfill per-element child rows for legacy one-element enquiries.
+        connection.execute('''INSERT OR IGNORE INTO enquiry_element_people(enquiry_element_id,company_id,person_type_id,quantity)
+            SELECT ep.enquiry_element_id,ep.company_id,ep.person_type_id,ep.quantity FROM enquiry_people ep WHERE ep.enquiry_element_id IS NOT NULL''')
+        connection.execute('''INSERT OR IGNORE INTO enquiry_element_addons(enquiry_element_id,company_id,addon_id,quantity)
+            SELECT ea.enquiry_element_id,ea.company_id,ea.addon_id,ea.quantity FROM enquiry_addons ea WHERE ea.enquiry_element_id IS NOT NULL''')
         connection.execute(
             "INSERT OR REPLACE INTO web_schema_meta(key,value) VALUES ('schema_version','web-v1-foundation')"
         )
