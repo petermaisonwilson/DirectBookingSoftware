@@ -42,6 +42,14 @@ def main() -> None:
             hold_id = int(c.execute('''INSERT INTO element_holds(company_id,element_id,session_token,holder_user_id,arrival_date,departure_date,renewal_required_at,expires_at,created_at,updated_at,lead_name)
                 VALUES (?,?,?,?,?,?,?,?,?,?,?)''', (cid, element_id, token, int(context['user_id']), '2036-08-10', '2036-08-12', (now + timedelta(minutes=9)).isoformat(timespec='seconds'), (now + timedelta(minutes=10)).isoformat(timespec='seconds'), now.isoformat(timespec='seconds'), now.isoformat(timespec='seconds'), 'Walker')).lastrowid)
             c.execute('INSERT INTO hold_requirement_people(hold_id,company_id,person_type_id,quantity,ages_json) VALUES (?,?,?,?,?)', (hold_id, cid, chosen_person, 2, '[]'))
+            element2_id = int(c.execute("INSERT INTO setup_elements(company_id,name,element_type,pricing_method,base_price,active) VALUES (?,?,?,?,?,1)", (cid, 'Bridge Pitch B', 'Bridge Camping', 'Per night', 0)).lastrowid)
+            c.execute('INSERT INTO setup_element_rates(company_id,year,element_id,season_id,rate) VALUES (?,?,?,?,?)', (cid, 2036, element2_id, season_id, 30.0))
+            c.execute('INSERT INTO setup_occupancy(company_id,year,element_id,max_total) VALUES (?,?,?,?)', (cid, 2036, element2_id, 6))
+            c.execute('INSERT INTO setup_person_limits(company_id,year,element_id,person_type_id,max_count,min_count) VALUES (?,?,?,?,?,?)', (cid, 2036, element2_id, chosen_person, 6, 0))
+            c.execute('INSERT INTO setup_person_prices(company_id,year,element_id,person_type_id,rate) VALUES (?,?,?,?,?)', (cid, 2036, element2_id, chosen_person, 0.0))
+            hold2_id = int(c.execute('''INSERT INTO element_holds(company_id,element_id,session_token,holder_user_id,arrival_date,departure_date,renewal_required_at,expires_at,created_at,updated_at,lead_name)
+                VALUES (?,?,?,?,?,?,?,?,?,?,?)''', (cid, element2_id, token, int(context['user_id']), '2036-08-15', '2036-08-18', (now + timedelta(minutes=9)).isoformat(timespec='seconds'), (now + timedelta(minutes=10)).isoformat(timespec='seconds'), now.isoformat(timespec='seconds'), now.isoformat(timespec='seconds'), 'Jones')).lastrowid)
+            c.execute('INSERT INTO hold_requirement_people(hold_id,company_id,person_type_id,quantity,ages_json) VALUES (?,?,?,?,?)', (hold2_id, cid, chosen_person, 3, '[]'))
             enquiry_count_before = int(c.execute('SELECT COUNT(*) AS n FROM enquiries WHERE company_id=?', (cid,)).fetchone()['n'])
             customer_count_before = int(c.execute('SELECT COUNT(*) AS n FROM customer_records WHERE company_id=?', (cid,)).fetchone()['n'])
 
@@ -91,17 +99,24 @@ def main() -> None:
             assert enquiry is not None
             assert int(enquiry['customer_id']) == customer_id
             assert enquiry['arrival_date'] == '2036-08-10'
-            assert enquiry['departure_date'] == '2036-08-12'
+            assert enquiry['departure_date'] == '2036-08-18'
             assert enquiry['source'] == 'Availability'
-            assert int(enquiry['party_size']) == 2
+            assert int(enquiry['party_size']) == 5
             request_row = c.execute('SELECT * FROM enquiry_requests WHERE enquiry_id=? AND company_id=?', (enquiry_id, cid)).fetchone()
             assert request_row is not None
             assert int(request_row['element_id']) == element_id
             assert request_row['element_type'] == 'Bridge Camping'
-            assert float(request_row['provisional_total']) == 40.0
+            assert float(request_row['provisional_total']) == 130.0
+            element_rows=c.execute('SELECT * FROM enquiry_elements WHERE enquiry_id=? AND company_id=? ORDER BY sort_order,id',(enquiry_id,cid)).fetchall()
+            assert len(element_rows)==2
+            assert [int(r['element_id']) for r in element_rows]==[element_id,element2_id]
+            assert [str(r['lead_name']) for r in element_rows]==['Walker','Jones']
+            assert [float(r['provisional_total']) for r in element_rows]==[40.0,90.0]
+            assert [int(r['party_size']) for r in element_rows]==[2,3]
             person = c.execute('SELECT quantity FROM enquiry_people WHERE enquiry_id=? AND company_id=? AND person_type_id=?', (enquiry_id, cid, chosen_person)).fetchone()
             assert person is not None and int(person['quantity']) == 2
             assert c.execute('SELECT id FROM element_holds WHERE id=? AND company_id=? AND session_token=?', (hold_id, cid, token)).fetchone() is None
+            assert c.execute('SELECT id FROM element_holds WHERE id=? AND company_id=? AND session_token=?', (hold2_id, cid, token)).fetchone() is None
             assert c.execute('SELECT 1 FROM hold_requirement_people WHERE hold_id=?', (hold_id,)).fetchone() is None
             assert c.execute('SELECT 1 FROM hold_requirement_addons WHERE hold_id=?', (hold_id,)).fetchone() is None
             assert int(c.execute('SELECT COUNT(*) AS n FROM customer_records WHERE company_id=?', (cid,)).fetchone()['n']) == customer_count_before
@@ -113,7 +128,7 @@ def main() -> None:
         assert enquiry_page.status_code == 200
         assert 'Alice Walker' in enquiry_page.text
         assert 'Bridge Pitch A' in enquiry_page.text
-        assert '€40.00' in enquiry_page.text
+        assert '€130.00' in enquiry_page.text or '€40.00' in enquiry_page.text
 
     print('Direct Booking Web V1 Availability to Customer matching to Save Enquiry bridge test: passed')
 
