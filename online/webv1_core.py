@@ -234,6 +234,9 @@ def initialise_web_v1(database) -> None:
         connection.executescript(WEB_V1_SCHEMA)
         # Local SQLite databases pre-date Alembic and are upgraded in place here.
         for table in ('enquiry_people','enquiry_addons','enquiry_addon_days','enquiry_addon_people','enquiry_addon_person_days','enquiry_selected_addons'):
+            exists=connection.execute("SELECT 1 FROM sqlite_master WHERE type='table' AND name=?",(table,)).fetchone()
+            if exists is None:
+                continue
             columns={str(row['name']) for row in connection.execute(f'PRAGMA table_info({table})').fetchall()}
             if 'enquiry_element_id' not in columns:
                 connection.execute(f'ALTER TABLE {table} ADD COLUMN enquiry_element_id INTEGER')
@@ -247,7 +250,11 @@ def initialise_web_v1(database) -> None:
             WHERE er.element_id IS NOT NULL AND e.arrival_date IS NOT NULL AND e.departure_date IS NOT NULL
               AND NOT EXISTS (SELECT 1 FROM enquiry_elements ee WHERE ee.enquiry_id=e.id AND ee.company_id=e.company_id)""")
         for table in ('enquiry_people','enquiry_addons','enquiry_addon_days','enquiry_addon_people','enquiry_addon_person_days','enquiry_selected_addons'):
-            connection.execute(f"""UPDATE {table} SET enquiry_element_id=(SELECT ee.id FROM enquiry_elements ee WHERE ee.enquiry_id={table}.enquiry_id AND ee.company_id={table}.company_id ORDER BY ee.sort_order,ee.id LIMIT 1) WHERE enquiry_element_id IS NULL""")
+            exists=connection.execute("SELECT 1 FROM sqlite_master WHERE type='table' AND name=?",(table,)).fetchone()
+            if exists is not None:
+                columns={str(row['name']) for row in connection.execute(f'PRAGMA table_info({table})').fetchall()}
+                if 'enquiry_element_id' in columns:
+                    connection.execute(f"""UPDATE {table} SET enquiry_element_id=(SELECT ee.id FROM enquiry_elements ee WHERE ee.enquiry_id={table}.enquiry_id AND ee.company_id={table}.company_id ORDER BY ee.sort_order,ee.id LIMIT 1) WHERE enquiry_element_id IS NULL""")
         connection.execute(
             "INSERT OR REPLACE INTO web_schema_meta(key,value) VALUES ('schema_version','web-v1-foundation')"
         )
