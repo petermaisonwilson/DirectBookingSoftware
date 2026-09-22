@@ -267,9 +267,9 @@ jobs:
         run: |
           New-Item -ItemType Directory -Force "diag334" | Out-Null
           New-Item -ItemType Directory -Force "diag335" | Out-Null
-          git show "180f4dbdbd25b4cb63c0ff13f4038b2d8a5dec4a:online/webv1_booking_requirements.py" | Set-Content "diag334/webv1_booking_requirements.py"
-          git show "a8e3c535345ffb1bc298594dcc3a6c9e2acacbb5:online/webv1_booking_requirements.py" | Set-Content "diag335/webv1_booking_requirements.py"
-          git show "a8e3c535345ffb1bc298594dcc3a6c9e2acacbb5:online/webv1_booking_progress.py" | Set-Content "diag335/webv1_booking_progress.py"
+          Invoke-WebRequest -Uri "https://raw.githubusercontent.com/petermaisonwilson/DirectBookingSoftware/180f4dbdbd25b4cb63c0ff13f4038b2d8a5dec4a/online/webv1_booking_requirements.py" -OutFile "diag334/webv1_booking_requirements.py"
+          Invoke-WebRequest -Uri "https://raw.githubusercontent.com/petermaisonwilson/DirectBookingSoftware/a8e3c535345ffb1bc298594dcc3a6c9e2acacbb5/online/webv1_booking_requirements.py" -OutFile "diag335/webv1_booking_requirements.py"
+          Invoke-WebRequest -Uri "https://raw.githubusercontent.com/petermaisonwilson/DirectBookingSoftware/a8e3c535345ffb1bc298594dcc3a6c9e2acacbb5/online/webv1_booking_progress.py" -OutFile "diag335/webv1_booking_progress.py"
 
       - name: Upload Firefox diagnostic 334
         uses: actions/upload-artifact@v4
