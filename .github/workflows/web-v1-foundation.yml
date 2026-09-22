@@ -251,9 +251,15 @@ jobs:
           New-Item -ItemType Directory -Force "artifact\online" | Out-Null
           Copy-Item "online\*.py" "artifact\online\" -Force
           Copy-Item "run_online.py" "artifact\run_online.py" -Force
-          Copy-Item "START_WEB_V1.bat" "artifact\START_WEB_V1.bat" -Force
           Copy-Item "requirements-online.txt" "artifact\requirements-online.txt" -Force
           Copy-Item "WEB_V1_FOUNDATION.md" "artifact\WEB_V1_FOUNDATION.md" -Force
+          @'
+DBS Build 302 v3 test package
+
+This package intentionally contains source files only. The Windows batch launcher is not included in this test artifact because browser/security scanners may classify script launchers that create environments and install packages as suspicious.
+
+To test this interim build, keep using the existing trusted DBS launcher from your previous installation and replace only the source files after the package has downloaded normally.
+'@ | Set-Content "artifact\TEST-PACKAGE-NOTES.txt"
 
       - name: Upload Web V1 artifact
         uses: actions/upload-artifact@v4
