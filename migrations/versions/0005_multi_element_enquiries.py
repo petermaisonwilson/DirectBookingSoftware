@@ -33,6 +33,12 @@ def upgrade():
     for table in ("enquiry_people","enquiry_addons","enquiry_addon_days","enquiry_addon_people","enquiry_addon_person_days","enquiry_selected_addons"):
         op.add_column(table, sa.Column("enquiry_element_id", sa.Integer, nullable=True))
         op.create_index("idx_"+table+"_element", table, ["enquiry_element_id"])
+    op.create_table("enquiry_element_people",sa.Column("enquiry_element_id",sa.Integer,nullable=False),sa.Column("company_id",sa.Integer,nullable=False),sa.Column("person_type_id",sa.Integer,nullable=False),sa.Column("quantity",sa.Integer,nullable=False,server_default="0"),sa.PrimaryKeyConstraint("enquiry_element_id","person_type_id"))
+    op.create_table("enquiry_element_addons",sa.Column("enquiry_element_id",sa.Integer,nullable=False),sa.Column("company_id",sa.Integer,nullable=False),sa.Column("addon_id",sa.Integer,nullable=False),sa.Column("quantity",sa.Integer,nullable=False,server_default="0"),sa.PrimaryKeyConstraint("enquiry_element_id","addon_id"))
+    op.create_table("enquiry_element_addon_days",sa.Column("enquiry_element_id",sa.Integer,nullable=False),sa.Column("company_id",sa.Integer,nullable=False),sa.Column("addon_id",sa.Integer,nullable=False),sa.Column("service_date",sa.String(10),nullable=False),sa.Column("quantity",sa.Integer,nullable=False,server_default="0"),sa.PrimaryKeyConstraint("enquiry_element_id","addon_id","service_date"))
+    op.create_table("enquiry_element_addon_people",sa.Column("enquiry_element_id",sa.Integer,nullable=False),sa.Column("company_id",sa.Integer,nullable=False),sa.Column("addon_id",sa.Integer,nullable=False),sa.Column("person_type_id",sa.Integer,nullable=False),sa.Column("quantity",sa.Integer,nullable=False,server_default="0"),sa.PrimaryKeyConstraint("enquiry_element_id","addon_id","person_type_id"))
+    op.create_table("enquiry_element_addon_person_days",sa.Column("enquiry_element_id",sa.Integer,nullable=False),sa.Column("company_id",sa.Integer,nullable=False),sa.Column("addon_id",sa.Integer,nullable=False),sa.Column("person_type_id",sa.Integer,nullable=False),sa.Column("service_date",sa.String(10),nullable=False),sa.Column("quantity",sa.Integer,nullable=False,server_default="0"),sa.PrimaryKeyConstraint("enquiry_element_id","addon_id","person_type_id","service_date"))
+    op.create_table("enquiry_element_selected_addons",sa.Column("enquiry_element_id",sa.Integer,nullable=False),sa.Column("company_id",sa.Integer,nullable=False),sa.Column("addon_id",sa.Integer,nullable=False),sa.Column("sort_order",sa.Integer,nullable=False,server_default="0"),sa.PrimaryKeyConstraint("enquiry_element_id","addon_id"))
     op.add_column("booking_elements", sa.Column("lead_name", sa.String(255), nullable=False, server_default=""))
     # Preserve every existing enquiry as a one-element enquiry.
     op.execute("""
@@ -52,7 +58,16 @@ def upgrade():
             ORDER BY ee.sort_order,ee.id LIMIT 1
         ) WHERE enquiry_element_id IS NULL""")
 
+    op.execute("""INSERT INTO enquiry_element_people(enquiry_element_id,company_id,person_type_id,quantity) SELECT enquiry_element_id,company_id,person_type_id,quantity FROM enquiry_people WHERE enquiry_element_id IS NOT NULL""")
+    op.execute("""INSERT INTO enquiry_element_addons(enquiry_element_id,company_id,addon_id,quantity) SELECT enquiry_element_id,company_id,addon_id,quantity FROM enquiry_addons WHERE enquiry_element_id IS NOT NULL""")
+
 def downgrade():
+    op.drop_table("enquiry_element_selected_addons")
+    op.drop_table("enquiry_element_addon_person_days")
+    op.drop_table("enquiry_element_addon_people")
+    op.drop_table("enquiry_element_addon_days")
+    op.drop_table("enquiry_element_addons")
+    op.drop_table("enquiry_element_people")
     op.drop_column("booking_elements","lead_name")
     for table in ("enquiry_selected_addons","enquiry_addon_person_days","enquiry_addon_people","enquiry_addon_days","enquiry_addons","enquiry_people"):
         op.drop_index("idx_"+table+"_element", table_name=table)
