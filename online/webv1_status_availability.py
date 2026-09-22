@@ -17,7 +17,7 @@ def _booking_conflict(connection, company_id: int, element_id: int, start: str, 
         JOIN bookings b ON b.id=be.booking_id AND b.company_id=be.company_id
         LEFT JOIN booking_status_definitions s ON s.id=b.workflow_status_id AND s.company_id=b.company_id
         WHERE be.company_id=? AND be.element_id=?
-          AND COALESCE(s.blocks_availability, CASE WHEN b.status='cancelled' THEN 0 ELSE 1 END)=1
+          AND CASE WHEN b.status='cancelled' THEN 0 ELSE COALESCE(s.blocks_availability,1) END=1
           AND date(be.arrival_date)<date(?) AND date(be.departure_date)>date(?)
     '''
     params: list[Any] = [company_id, element_id, end, start]
