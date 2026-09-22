@@ -300,6 +300,16 @@ def _save(database, context, company_id:int, customer_id:int, values:dict[str,st
                 for d,pp in bydate.items():
                     for pid,qty in pp.items():
                         if qty:c.execute('INSERT INTO enquiry_addon_person_days(enquiry_id,company_id,addon_id,person_type_id,service_date,quantity) VALUES (?,?,?,?,?,?)',(enquiry_id,company_id,aid,pid,d,qty))
+    if selected_type and element_id and calculation:
+        with database.connect() as c:
+            existing=c.execute('SELECT id FROM enquiry_elements WHERE enquiry_id=? AND company_id=? ORDER BY sort_order,id LIMIT 1',(enquiry_id,company_id)).fetchone()
+            if existing is None:
+                eeid=int(c.execute('''INSERT INTO enquiry_elements(enquiry_id,company_id,element_type,element_id,arrival_date,departure_date,lead_name,party_size,provisional_total,pricing_snapshot_json,sort_order,created_at,updated_at) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?)''',(enquiry_id,company_id,selected_type,element_id,values.get('arrival_date') or '',values.get('departure_date') or '','',party_size,provisional_total,snapshot_json,1,now,now)).lastrowid)
+            else:
+                eeid=int(existing['id']);c.execute('''UPDATE enquiry_elements SET element_type=?,element_id=?,arrival_date=?,departure_date=?,party_size=?,provisional_total=?,pricing_snapshot_json=?,updated_at=? WHERE id=? AND company_id=?''',(selected_type,element_id,values.get('arrival_date') or '',values.get('departure_date') or '',party_size,provisional_total,snapshot_json,now,eeid,company_id))
+            for table in ('enquiry_people','enquiry_addons','enquiry_addon_days','enquiry_addon_people','enquiry_addon_person_days','enquiry_selected_addons'):
+                cols={str(r['name']) for r in c.execute(f'PRAGMA table_info({table})').fetchall()}
+                if 'enquiry_element_id' in cols:c.execute(f'UPDATE {table} SET enquiry_element_id=? WHERE enquiry_id=? AND company_id=? AND enquiry_element_id IS NULL',(eeid,enquiry_id,company_id))
     audit(database,context,company_id,'ENQUIRY_CREATED' if created else 'ENQUIRY_UPDATED','enquiry',enquiry_id,after={'customer_id':customer_id,'element_type':selected_type,'element_id':element_id,'provisional_total':provisional_total}); return int(enquiry_id)
 
 
