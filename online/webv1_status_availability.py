@@ -88,6 +88,17 @@ def availability_state(database, company_id: int, element_id: int, arrival: str,
         enquiry = _enquiry_conflict(c, company_id, element_id, arrival, departure, exclude_enquiry_id)
         if enquiry:
             return {'available': False, 'state': 'ENQUIRY', 'reason': str(enquiry['workflow_name'] or 'Enquiry / Held'), 'enquiry_id': int(enquiry['id']), 'expires_at': enquiry['availability_expires_at']}
+        # A hold belonging to an enquiry that has already become a Booking is stale.
+        # Do not allow it to continue blocking after that Booking is released.
+        c.execute('''DELETE FROM element_holds WHERE company_id=? AND element_id=?
+                     AND date(arrival_date)<date(?) AND date(departure_date)>date(?)
+                     AND session_token IN (
+                       SELECT DISTINCT h2.session_token FROM element_holds h2
+                       JOIN enquiries e2 ON e2.company_id=h2.company_id
+                       JOIN bookings b2 ON b2.company_id=e2.company_id AND b2.enquiry_id=e2.id
+                       WHERE h2.company_id=? AND h2.element_id=?
+                         AND date(h2.arrival_date)<date(?) AND date(h2.departure_date)>date(?)
+                     )''',(company_id,element_id,departure,arrival,company_id,element_id,departure,arrival))
         legacy._purge_expired_holds(c)
         held_rows = c.execute('''SELECT * FROM element_holds WHERE company_id=? AND element_id=?
                             AND date(arrival_date)<date(?) AND date(departure_date)>date(?)
