@@ -264,8 +264,8 @@ jobs:
             '    subprocess.check_call([sys.executable, "-m", "venv", str(venv)])',
             'subprocess.check_call([str(python), "-m", "pip", "install", "-r", "requirements-online.txt"])',
             'env = os.environ.copy()',
-            'subprocess.Popen([str(python), "run_online.py"], cwd=str(root), env=env)',
-            'webbrowser.open("http://127.0.0.1:8000")'
+            '# run_online.py owns browser startup; do not open a second tab here.',
+            'subprocess.Popen([str(python), "run_online.py"], cwd=str(root), env=env)'
           )
           $launcher | Set-Content "artifact\START_DBS.py"
           $notes = @(
