@@ -173,8 +173,11 @@ def main() -> None:
 
         final_review = client.get('/availability/basket/review')
         assert 'Edit Test Pitch 2' in final_review.text and 'Edit Test Peg A' in final_review.text and 'Edit Test Cabin 1' in final_review.text
+        # Hold polling belongs only to the active booking journey. Ordinary
+        # Operations pages must not poll the basket; the basket review must.
         operations = client.get('/operations')
-        assert 'id="global-hold-modal"' in operations.text and "fetch('/availability/basket'" in operations.text
+        assert 'id="global-hold-modal"' not in operations.text and "fetch('/availability/basket'" not in operations.text
+        assert 'id="global-hold-modal"' in final_review.text and "fetch('/availability/basket'" in final_review.text
 
     print('Direct Booking Web V1 Element-relevant requirements and Person minimum test: passed')
 
