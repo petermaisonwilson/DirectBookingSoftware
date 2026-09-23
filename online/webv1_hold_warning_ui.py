@@ -3,9 +3,9 @@ from __future__ import annotations
 import json
 
 
-def hold_warning_markup(context) -> str:
-    """Render the single basket hold warning on every logged-in page for a selected Client."""
-    if not context:
+def hold_warning_markup(context, *, monitor_holds: bool = False) -> str:
+    """Render hold monitoring only on pages participating in an active booking journey."""
+    if not context or not monitor_holds:
         return ''
     company_id = context['acting_company_id'] if context['role'] == 'supervisor' else context['company_id']
     if not company_id:
