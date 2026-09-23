@@ -113,7 +113,10 @@ def register_web_v1(app) -> None:
     register_booking_requirements_core(app)
     register_features_extras_routes(app)
     register_calendar_v5_routes(app)
-    webv1_calendar_v2.register_calendar_v2_routes(app)
+    # Calendar v5 is the authoritative /availability/calendar-v2 route.
+    # Do not register the legacy v2 handler afterwards: Starlette resolves
+    # duplicate paths in registration order, which can render a stale page
+    # beside the v5 booking journey and split basket behaviour.
     install_calendar_edit_semantics(app)
     install_user_display_rules(app)
     install_duration_display(app)
