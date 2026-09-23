@@ -43,8 +43,11 @@ def _window(start: str, arrival: str, departure: str) -> tuple[date, int]:
 
 
 def _basket_rows(database, company_id: int, token: str):
+    # Use the same ISO/tz-aware expiry path as the basket API. SQLite
+    # datetime('now') is not safe against offset-aware ISO timestamps.
+    from .webv1_basket import _purge_expired_basket_rows
     with database.connect() as c:
-        c.execute('DELETE FROM element_holds WHERE expires_at<=datetime(\'now\')')
+        _purge_expired_basket_rows(c, company_id, token)
         return c.execute(
             '''SELECT h.*,e.name AS element_name,e.element_type
                FROM element_holds h
