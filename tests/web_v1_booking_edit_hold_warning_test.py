@@ -183,7 +183,7 @@ def main() -> None:
         fresh_requirements = client.get('/availability/start')
         assert "fetch('/availability/basket'" not in fresh_requirements.text
         # Restore one valid live hold and prove Requirements opts into monitoring.
-        restored_hold = add_hold(pitch2, 'Smith')
+        restored_hold = make_hold(pitch2, 'Smith')
         live_requirements = client.get('/availability/start')
         assert "fetch('/availability/basket'" in live_requirements.text
         with db.connect() as c:
