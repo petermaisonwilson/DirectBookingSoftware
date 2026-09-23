@@ -183,7 +183,8 @@ def main() -> None:
         fresh_requirements = client.get('/availability/start')
         assert "fetch('/availability/basket'" not in fresh_requirements.text
         # Restore one valid live hold and prove Requirements opts into monitoring.
-        restored_hold = make_hold(pitch2, 'Smith')
+        with db.connect() as c:
+            restored_hold = int(c.execute('''INSERT INTO element_holds(company_id,element_id,session_token,holder_user_id,arrival_date,departure_date,renewal_required_at,expires_at,created_at,updated_at,lead_name) VALUES (?,?,?,?,?,?,?,?,?,?,?)''', (cid, pitch2, token, int(context['user_id']), '2035-08-10', '2035-08-13', (now + timedelta(minutes=9)).isoformat(timespec='seconds'), (now + timedelta(minutes=10)).isoformat(timespec='seconds'), now.isoformat(timespec='seconds'), now.isoformat(timespec='seconds'), 'Smith')).lastrowid)
         live_requirements = client.get('/availability/start')
         assert "fetch('/availability/basket'" in live_requirements.text
         with db.connect() as c:
