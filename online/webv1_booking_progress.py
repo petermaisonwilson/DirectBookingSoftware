@@ -153,7 +153,7 @@ def _customer_values(data):
 
 def _customer_stage(database,context,company_id,token,hold_id,values,error='',matches=None):
     item,enquiry_values=_hold_enquiry_values(database,company_id,token,hold_id)
-    if item is None:return layout('Basket','<h1>Basket</h1><div class="error">That held Element has expired or been removed.</div>',context)
+    if item is None:return layout('Basket','<h1>Basket</h1><div class="error">That held Element has expired or been removed.</div>',context, monitor_holds=True)
     details=' · '.join(esc(x) for x in _item_requirements(database,item,company_id)) or 'No special requirements'
     match_html=''
     if matches:
@@ -179,7 +179,7 @@ def _customer_stage(database,context,company_id,token,hold_id,values,error='',ma
     <div><label>Country</label><input name="country" value="{esc(values.get('country',''))}"></div></div>
     <label>Enquiry notes</label><textarea name="notes" rows="4" style="width:100%;padding:9px;border:1px solid #aeb8c4;border-radius:6px">{esc(values.get('notes',''))}</textarea>
     <p><button type="submit">SAVE ENQUIRY</button></p></div></form>'''
-    return layout('Customer Details',body,context)
+    return layout('Customer Details',body,context, monitor_holds=True)
 
 
 def register_booking_progress_routes(app):
@@ -253,10 +253,10 @@ def register_booking_progress_routes(app):
     @app.get('/availability/basket/review',response_class=HTMLResponse)
     def basket_review(request:Request):
         context,company_id=_session_company(database,request);token=request.cookies.get(COOKIE_NAME,'');items=_held_items(database,company_id,token)
-        if not items:return HTMLResponse(layout('Basket','<h1>Basket</h1><div class="card"><p>Your basket is empty.</p><p><a class="button" href="/availability/start">Start booking</a></p></div>',context))
+        if not items:return HTMLResponse(layout('Basket','<h1>Basket</h1><div class="card"><p>Your basket is empty.</p><p><a class="button" href="/availability/start">Start booking</a></p></div>',context, monitor_holds=True))
         rows_html=''
         for item in items:
             hid=int(item['id']);details=_item_requirements(database,item,company_id);detail_html=' · '.join(esc(x) for x in details) or 'No special requirements';lead=esc(str(item['lead_name'] or '').strip() or '—');rows_html+='<tr>'+f'<td><strong>{lead}</strong></td><td><strong>{esc(item["element_name"])}</strong><br><span class="muted">{esc(item["element_type"])}</span></td><td>{_fmt_user_date(str(item["arrival_date"]))}</td><td>{_display_end(str(item["departure_date"]),str(item["pricing_method"]))}</td><td>{detail_html}</td><td>{esc(_currency_symbol(database,company_id))}{(_held_total(database,company_id,token,hid) or 0):.2f}</td><td><a class="button secondary mini-action" href="{_edit_url(item)}">EDIT BOOKING</a> '+'<form method="post" action="/availability/basket/remove-view" class="inline-form">'+f'<input type="hidden" name="csrf" value="{esc(context["csrf_token"])}"><input type="hidden" name="hold_id" value="{hid}"><input type="hidden" name="return_to" value="/availability/basket/review"><button class="secondary mini-action" type="submit">REMOVE</button></form></td></tr>'
         next_text='All Elements above will be saved under one Lead Customer. Each Element can retain its own guest surname.'
         body='<h1>Basket</h1>'+booking_progress_strip(database,context,company_id,token)+'<div class="card"><h2>Verify booking contents</h2><table><thead><tr><th>Name</th><th>Element</th><th>Arrival</th><th>End / Departure</th><th>Requirements</th><th>Total</th><th>Actions</th></tr></thead><tbody>'+rows_html+'</tbody></table>'+f'<p class="muted">{esc(next_text)}</p><p><a class="button secondary" href="/availability/start">ADD ANOTHER ELEMENT</a> <a class="button" href="/availability/basket/customer?hold_id={int(items[0]["id"])}">CONTINUE TO CUSTOMER DETAILS</a></p></div><style>.inline-form{{display:inline;margin:0}}.mini-action{{font-size:12px;padding:5px 8px}}</style>'
-        return HTMLResponse(layout('Basket',body,context))
+        return HTMLResponse(layout('Basket',body,context, monitor_holds=True))
