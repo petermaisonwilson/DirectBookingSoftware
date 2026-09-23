@@ -171,6 +171,10 @@ def main() -> None:
             assert [(int(r['person_type_id']), int(r['quantity'])) for r in fishing_people] == [(adult, 1)]
             assert c.execute('SELECT 1 FROM hold_requirement_addons WHERE hold_id=?', (fishing_hold,)).fetchone() is None
 
+        final_review = client.get('/availability/basket/review')
+        assert 'Edit Test Pitch 2' in final_review.text and 'Edit Test Peg A' in final_review.text and 'Edit Test Cabin 1' in final_review.text
+        # Hold polling belongs only to the active booking journey. Ordinary
+        # Operations pages must not poll the basket; the basket review must.
         # A fresh Requirements page has no live hold and must not start the
         # basket monitor. Once a hold exists, journey pages may monitor it.
         with db.connect() as c:
@@ -192,10 +196,6 @@ def main() -> None:
             c.execute('DELETE FROM hold_requirement_addons WHERE hold_id=?', (restored_hold,))
             c.execute('DELETE FROM element_holds WHERE id=?', (restored_hold,))
 
-        final_review = client.get('/availability/basket/review')
-        assert 'Edit Test Pitch 2' in final_review.text and 'Edit Test Peg A' in final_review.text and 'Edit Test Cabin 1' in final_review.text
-        # Hold polling belongs only to the active booking journey. Ordinary
-        # Operations pages must not poll the basket; the basket review must.
         operations = client.get('/operations')
         assert 'id="global-hold-modal"' not in operations.text and "fetch('/availability/basket'" not in operations.text
         assert 'id="global-hold-modal"' in final_review.text and "fetch('/availability/basket'" in final_review.text
