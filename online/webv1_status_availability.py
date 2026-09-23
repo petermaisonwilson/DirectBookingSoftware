@@ -22,7 +22,7 @@ def _booking_conflict(connection, company_id: int, element_id: int, start: str, 
           AND COALESCE(s.blocks_availability,1)=1
           AND date(be.arrival_date)<date(?) AND date(be.departure_date)>date(?)
     '''
-    params: list[Any] = [company_id, element_id, iso_now(), end, start]
+    params: list[Any] = [company_id, element_id, end, start]
     if exclude_booking_id is not None:
         sql += ' AND b.id<>?'; params.append(exclude_booking_id)
     sql += ' ORDER BY be.arrival_date LIMIT 1'
