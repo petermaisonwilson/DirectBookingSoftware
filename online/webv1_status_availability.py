@@ -3,6 +3,7 @@ from __future__ import annotations
 from datetime import date, timedelta
 from typing import Any
 
+from .database import iso_now
 from .setup015_calculator import _addon_rule
 from .setup015_core import rows
 from .setup015_readiness import element_available_setup_ready
@@ -21,7 +22,7 @@ def _booking_conflict(connection, company_id: int, element_id: int, start: str, 
           AND COALESCE(s.blocks_availability,1)=1
           AND date(be.arrival_date)<date(?) AND date(be.departure_date)>date(?)
     '''
-    params: list[Any] = [company_id, element_id, end, start]
+    params: list[Any] = [company_id, element_id, iso_now(), end, start]
     if exclude_booking_id is not None:
         sql += ' AND b.id<>?'; params.append(exclude_booking_id)
     sql += ' ORDER BY be.arrival_date LIMIT 1'
@@ -39,7 +40,7 @@ def _enquiry_conflict(connection, company_id: int, element_id: int, start: str, 
           AND e.status NOT IN ('closed','converted')
           AND NOT EXISTS (SELECT 1 FROM bookings bx WHERE bx.company_id=e.company_id AND bx.enquiry_id=e.id)
           AND COALESCE(s.blocks_availability,1)=1
-          AND (e.availability_expires_at IS NULL OR datetime(e.availability_expires_at)>datetime('now'))
+          AND (e.availability_expires_at IS NULL OR e.availability_expires_at>?)
           AND date(ee.arrival_date)<date(?) AND date(ee.departure_date)>date(?)
     '''
     params: list[Any] = [company_id, element_id, end, start]
@@ -55,9 +56,9 @@ def _enquiry_conflict(connection, company_id: int, element_id: int, start: str, 
           AND e.status NOT IN ('closed','converted')
           AND NOT EXISTS (SELECT 1 FROM bookings bx WHERE bx.company_id=e.company_id AND bx.enquiry_id=e.id)
           AND COALESCE(s.blocks_availability,1)=1
-          AND (e.availability_expires_at IS NULL OR datetime(e.availability_expires_at)>datetime('now'))
+          AND (e.availability_expires_at IS NULL OR e.availability_expires_at>?)
           AND date(e.arrival_date)<date(?) AND date(e.departure_date)>date(?)'''
-    params += [company_id, element_id, end, start]
+    params += [company_id, element_id, iso_now(), end, start]
     if exclude_enquiry_id is not None:
         sql += ' AND e.id<>?'; params.append(exclude_enquiry_id)
     sql += ' LIMIT 1'
@@ -103,21 +104,13 @@ def availability_state(database, company_id: int, element_id: int, arrival: str,
         enquiry = _enquiry_conflict(c, company_id, element_id, arrival, departure, exclude_enquiry_id)
         if enquiry:
             return {'available': False, 'state': 'ENQUIRY', 'reason': str(enquiry['workflow_name'] or 'Enquiry / Held'), 'enquiry_id': int(enquiry['id']), 'expires_at': enquiry['availability_expires_at']}
-        # A hold belonging to an enquiry that has already become a Booking is stale.
-        # Do not allow it to continue blocking after that Booking is released.
-        c.execute('''DELETE FROM element_holds WHERE company_id=? AND element_id=?
-                     AND date(arrival_date)<date(?) AND date(departure_date)>date(?)
-                     AND session_token IN (
-                       SELECT DISTINCT h2.session_token FROM element_holds h2
-                       JOIN enquiries e2 ON e2.company_id=h2.company_id
-                       JOIN bookings b2 ON b2.company_id=e2.company_id AND b2.enquiry_id=e2.id
-                       WHERE h2.company_id=? AND h2.element_id=?
-                         AND date(h2.arrival_date)<date(?) AND date(h2.departure_date)>date(?)
-                     )''',(company_id,element_id,departure,arrival,company_id,element_id,departure,arrival))
-        legacy._purge_expired_holds(c)
+        # Availability reads are deliberately non-destructive. Expired holds are
+        # invisible immediately, while physical cleanup is reserved for explicit
+        # write/lifecycle operations so polling and page rendering cannot mutate data.
         held_rows = c.execute('''SELECT * FROM element_holds WHERE company_id=? AND element_id=?
                             AND date(arrival_date)<date(?) AND date(departure_date)>date(?)
-                            ORDER BY expires_at DESC,id DESC''', (company_id, element_id, departure, arrival)).fetchall()
+                            AND expires_at>?
+                            ORDER BY expires_at DESC,id DESC''', (company_id, element_id, departure, arrival, iso_now())).fetchall()
         if held_rows:
             foreign = next((h for h in held_rows if not session_token or str(h['session_token']) != session_token), None)
             held = foreign or held_rows[0]

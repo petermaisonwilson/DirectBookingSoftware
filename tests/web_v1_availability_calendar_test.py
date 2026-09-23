@@ -223,6 +223,16 @@ def main() -> None:
             c.execute('UPDATE element_holds SET renewal_required_at=?,expires_at=? WHERE id=?', ('2000-01-01T00:00:00+00:00', '2000-01-01T00:00:01+00:00', expiry_hold))
         expired_status = client.get('/availability/basket')
         assert expired_status.status_code == 200 and expired_status.json()['items'] == []
+        # GET/polling is read-only: expiry makes the hold immediately invisible but
+        # must not delete lifecycle data merely because a page or monitor was opened.
+        with db.connect() as c:
+            assert c.execute('SELECT COUNT(*) AS n FROM element_holds WHERE id=?', (expiry_hold,)).fetchone()['n'] == 1
+        expired_requirements = client.get('/availability/start')
+        assert expired_requirements.status_code == 200
+        assert "fetch('/availability/basket'" not in expired_requirements.text
+        # The next explicit hold-lifecycle write performs physical expiry cleanup.
+        expired_cleanup = client.post('/availability/holds/renew', data={'csrf': csrf})
+        assert expired_cleanup.status_code == 200 and expired_cleanup.json()['count'] == 0
         with db.connect() as c:
             assert c.execute('SELECT COUNT(*) AS n FROM element_holds WHERE id=?', (expiry_hold,)).fetchone()['n'] == 0
             assert c.execute('SELECT COUNT(*) AS n FROM hold_requirement_people WHERE hold_id=?', (expiry_hold,)).fetchone()['n'] == 0

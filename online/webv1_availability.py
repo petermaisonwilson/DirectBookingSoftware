@@ -147,10 +147,10 @@ def availability_state(database, company_id: int, element_id: int, arrival: str,
         booked = _booking_conflict(c, company_id, element_id, arrival, departure, exclude_booking_id)
         if booked:
             return {'available': False, 'state': 'BOOKED', 'reason': f"Booked: {booked['reference']}", 'booking_id': int(booked['id']), 'booking_reference': str(booked['reference'])}
-        _purge_expired_holds(c)
         held = c.execute('''SELECT * FROM element_holds WHERE company_id=? AND element_id=?
                             AND date(arrival_date)<date(?) AND date(departure_date)>date(?)
-                            ORDER BY expires_at DESC LIMIT 1''', (company_id, element_id, departure, arrival)).fetchone()
+                            AND expires_at>?
+                            ORDER BY expires_at DESC LIMIT 1''', (company_id, element_id, departure, arrival, iso_now())).fetchone()
         if held:
             own = bool(session_token and str(held['session_token']) == session_token)
             return {'available': own, 'state': 'HELD_BY_YOU' if own else 'HELD', 'reason': 'Temporarily held' if not own else 'Held in your basket', 'hold_id': int(held['id']), 'expires_at': str(held['expires_at']), 'renewal_required_at': str(held['renewal_required_at'])}
@@ -225,9 +225,8 @@ def register_availability_routes(app) -> None:
         context, cid = _session_company(database, request); token = request.cookies.get(COOKIE_NAME, '')
         now = _now()
         with database.connect() as c:
-            _purge_expired_holds(c)
             hold_rows = c.execute('''SELECT h.*,e.name AS element_name FROM element_holds h JOIN setup_elements e ON e.id=h.element_id
-                                     WHERE h.company_id=? AND h.session_token=? ORDER BY e.name''', (cid, token)).fetchall()
+                                     WHERE h.company_id=? AND h.session_token=? AND h.expires_at>? ORDER BY e.name''', (cid, token, iso_now())).fetchall()
         holds = []
         for h in hold_rows:
             holds.append({'id': int(h['id']), 'element_id': int(h['element_id']), 'element_name': str(h['element_name']), 'arrival_date': str(h['arrival_date']), 'departure_date': str(h['departure_date']), 'renewal_required_at': str(h['renewal_required_at']), 'expires_at': str(h['expires_at']), 'needs_confirmation': now >= _utc(str(h['renewal_required_at']))})

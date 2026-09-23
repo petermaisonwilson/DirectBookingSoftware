@@ -7,6 +7,7 @@ from fastapi import HTTPException, Request
 from fastapi.responses import HTMLResponse, RedirectResponse
 
 from .app import COOKIE_NAME, esc, form_data, layout
+from .database import iso_now
 from .setup015_calculator import _addon_rule
 from .setup015_core import audit, context_for, one, require_csrf, rows, working_company
 from .webv1_booking_progress import booking_progress_strip
@@ -75,8 +76,8 @@ def _load_hold_requirements_into_working(database, cid: int, token: str, hold_id
     with database.connect() as c:
         hold = c.execute(
             '''SELECT id,arrival_date,departure_date,lead_name FROM element_holds
-               WHERE id=? AND company_id=? AND session_token=?''',
-            (hold_id, cid, token),
+               WHERE id=? AND company_id=? AND session_token=? AND expires_at>?''',
+            (hold_id, cid, token, iso_now()),
         ).fetchone()
         if hold is None:
             return False
@@ -114,7 +115,7 @@ def _held_element_type(database, cid: int, token: str, hold_id: int) -> str:
         return ''
     item = one(database, '''SELECT e.element_type FROM element_holds h
                             JOIN setup_elements e ON e.id=h.element_id AND e.company_id=h.company_id
-                            WHERE h.id=? AND h.company_id=? AND h.session_token=?''', (hold_id, cid, token))
+                            WHERE h.id=? AND h.company_id=? AND h.session_token=? AND h.expires_at>?''', (hold_id, cid, token, iso_now()))
     return str(item['element_type']) if item else ''
 
 
@@ -164,7 +165,7 @@ def _requirements_page(database, context, cid, token, message='', edit_hold: int
     saved_people, saved_addons, _, saved_arrival, saved_departure = _saved_requirements(database, cid, token)
     saved_lead_name = _saved_lead_name(database, cid, token)
     with database.connect() as c:
-        basket_count = int(c.execute('SELECT COUNT(*) AS n FROM element_holds WHERE company_id=? AND session_token=?', (cid, token)).fetchone()['n'])
+        basket_count = int(c.execute('SELECT COUNT(*) AS n FROM element_holds WHERE company_id=? AND session_token=? AND expires_at>?', (cid, token, iso_now())).fetchone()['n'])
     additional_element = basket_count > 0 and not edit_hold
     surname_label = 'Next Guest Surname' if additional_element else 'Lead Guest Surname'
     surname_help = '<small><strong>if different</strong></small>' if additional_element else ''

@@ -29,7 +29,7 @@ def _display_end(value,pricing_method):
 
 
 def _held_items(database,company_id,token):
-    return rows(database,'''SELECT h.id,h.element_id,h.arrival_date,h.departure_date,h.expires_at,h.lead_name,e.name AS element_name,e.element_type,e.pricing_method FROM element_holds h JOIN setup_elements e ON e.id=h.element_id AND e.company_id=h.company_id WHERE h.company_id=? AND h.session_token=? ORDER BY h.created_at,h.id''',(company_id,token))
+    return rows(database,'''SELECT h.id,h.element_id,h.arrival_date,h.departure_date,h.expires_at,h.lead_name,e.name AS element_name,e.element_type,e.pricing_method FROM element_holds h JOIN setup_elements e ON e.id=h.element_id AND e.company_id=h.company_id WHERE h.company_id=? AND h.session_token=? AND h.expires_at>? ORDER BY h.created_at,h.id''',(company_id,token,iso_now()))
 
 
 def _item_requirements(database,item,company_id):
