@@ -171,6 +171,26 @@ def main() -> None:
             assert [(int(r['person_type_id']), int(r['quantity'])) for r in fishing_people] == [(adult, 1)]
             assert c.execute('SELECT 1 FROM hold_requirement_addons WHERE hold_id=?', (fishing_hold,)).fetchone() is None
 
+        # A fresh Requirements page has no live hold and must not start the
+        # basket monitor. Once a hold exists, journey pages may monitor it.
+        with db.connect() as c:
+            saved_holds = c.execute('SELECT id FROM element_holds WHERE company_id=? AND session_token=?', (cid, token)).fetchall()
+            saved_ids = [int(r['id']) for r in saved_holds]
+            for hid in saved_ids:
+                c.execute('DELETE FROM hold_requirement_people WHERE hold_id=?', (hid,))
+                c.execute('DELETE FROM hold_requirement_addons WHERE hold_id=?', (hid,))
+            c.execute('DELETE FROM element_holds WHERE company_id=? AND session_token=?', (cid, token))
+        fresh_requirements = client.get('/availability/start')
+        assert "fetch('/availability/basket'" not in fresh_requirements.text
+        # Restore one valid live hold and prove Requirements opts into monitoring.
+        restored_hold = add_hold(pitch2, 'Smith')
+        live_requirements = client.get('/availability/start')
+        assert "fetch('/availability/basket'" in live_requirements.text
+        with db.connect() as c:
+            c.execute('DELETE FROM hold_requirement_people WHERE hold_id=?', (restored_hold,))
+            c.execute('DELETE FROM hold_requirement_addons WHERE hold_id=?', (restored_hold,))
+            c.execute('DELETE FROM element_holds WHERE id=?', (restored_hold,))
+
         final_review = client.get('/availability/basket/review')
         assert 'Edit Test Pitch 2' in final_review.text and 'Edit Test Peg A' in final_review.text and 'Edit Test Cabin 1' in final_review.text
         # Hold polling belongs only to the active booking journey. Ordinary
