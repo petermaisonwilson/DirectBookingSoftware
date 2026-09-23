@@ -68,7 +68,7 @@ def css() -> str:
     """
 
 
-def layout(title: str, body: str, context=None) -> str:
+def layout(title: str, body: str, context=None, *, monitor_holds: bool = False) -> str:
     support = ""
     nav = ""
     if context:
@@ -89,7 +89,7 @@ def layout(title: str, body: str, context=None) -> str:
             '<form method="post" action="/logout" style="display:inline"><button class="link-button" type="submit">Log out</button></form>'
         )
         nav = "<nav>" + "".join(links) + "</nav>"
-    hold_warning = hold_warning_markup(context)
+    hold_warning = hold_warning_markup(context, monitor_holds=monitor_holds)
     return f"""<!doctype html>
 <html><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
 <title>{esc(title)} — DBS</title><style>{css()}</style></head>
