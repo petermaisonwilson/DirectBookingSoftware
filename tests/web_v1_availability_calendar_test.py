@@ -106,6 +106,18 @@ def main() -> None:
         with db.connect() as c:
             assert c.execute('SELECT lead_name FROM element_holds WHERE id=?', (smith_hold,)).fetchone()['lead_name'] == 'Smith'
 
+        # Exact production sequence: hold exists -> calendar/progress renders it ->
+        # immediate basket review must retain and display the same hold.
+        with db.connect() as c:
+            before_review = c.execute('SELECT id,company_id,session_token,expires_at FROM element_holds WHERE id=?', (smith_hold,)).fetchone()
+            assert before_review is not None and int(before_review['company_id']) == company and str(before_review['session_token']) == token
+        immediate_review = client.get('/availability/basket/review')
+        assert immediate_review.status_code == 200 and 'Your basket is empty.' not in immediate_review.text
+        assert 'Current Pitch 2' in immediate_review.text and 'Smith' in immediate_review.text
+        with db.connect() as c:
+            after_review = c.execute('SELECT id,company_id,session_token,expires_at FROM element_holds WHERE id=?', (smith_hold,)).fetchone()
+            assert after_review is not None and int(after_review['company_id']) == company and str(after_review['session_token']) == token
+
         held_calendar = client.get('/availability/calendar-v2', params={'element_type': 'Current Camping', 'start': '2035-07-06', 'arrival': '2035-07-10', 'departure': '2035-07-13'})
         assert held_calendar.status_code == 200
         assert 'cal-cell own-held' in held_calendar.text
