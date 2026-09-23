@@ -43,7 +43,7 @@ def _enquiry_conflict(connection, company_id: int, element_id: int, start: str, 
           AND (e.availability_expires_at IS NULL OR e.availability_expires_at>?)
           AND date(ee.arrival_date)<date(?) AND date(ee.departure_date)>date(?)
     '''
-    params: list[Any] = [company_id, element_id, end, start]
+    params: list[Any] = [company_id, element_id, iso_now(), end, start]
     if exclude_enquiry_id is not None:
         sql += ' AND e.id<>?'; params.append(exclude_enquiry_id)
     sql += ''' UNION ALL
