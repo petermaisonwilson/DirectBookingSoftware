@@ -7,6 +7,7 @@ from fastapi import HTTPException, Request
 from fastapi.responses import HTMLResponse
 
 from .app import COOKIE_NAME, esc, layout
+from .database import iso_now
 from .setup015_core import context_for, rows, working_company
 from .webv1_availability import operating_window
 from .webv1_status_availability import available_elements
@@ -83,16 +84,16 @@ def _records(database, cid: int, element_id: int, start: date, end: date):
           JOIN booking_status_definitions s ON s.id=e.workflow_status_id AND s.company_id=e.company_id
           WHERE e.company_id=? AND er.element_id=? AND e.status NOT IN ('closed','converted')
             AND s.blocks_availability=1
-            AND (e.availability_expires_at IS NULL OR e.availability_expires_at>datetime('now'))
+            AND (e.availability_expires_at IS NULL OR e.availability_expires_at>?)
             AND date(e.arrival_date)<date(?) AND date(e.departure_date)>date(?)
           ORDER BY e.arrival_date
-        ''', (cid, element_id, end.isoformat(), start.isoformat())).fetchall()
+        ''', (cid, element_id, iso_now(), end.isoformat(), start.isoformat())).fetchall()
         closures = c.execute('''SELECT * FROM element_closures WHERE company_id=? AND element_id=?
                                 AND date(start_date)<date(?) AND date(end_date)>date(?) ORDER BY start_date''',
                              (cid, element_id, end.isoformat(), start.isoformat())).fetchall()
-        holds = c.execute('''SELECT * FROM element_holds WHERE company_id=? AND element_id=? AND expires_at>datetime('now')
+        holds = c.execute('''SELECT * FROM element_holds WHERE company_id=? AND element_id=? AND expires_at>?
                              AND date(arrival_date)<date(?) AND date(departure_date)>date(?) ORDER BY arrival_date''',
-                          (cid, element_id, end.isoformat(), start.isoformat())).fetchall()
+                          (cid, element_id, iso_now(), end.isoformat(), start.isoformat())).fetchall()
     return bookings, enquiries, closures, holds
 
 
