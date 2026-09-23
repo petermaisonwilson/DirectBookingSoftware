@@ -62,7 +62,6 @@ def register_basket_routes(app) -> None:
         token = request.cookies.get(COOKIE_NAME, '')
         now = availability._now()
         with database.connect() as c:
-            _purge_expired_basket_rows(c, company_id, token)
             held = c.execute(
                 '''SELECT h.*, e.name AS element_name, e.element_type
                    FROM element_holds h
