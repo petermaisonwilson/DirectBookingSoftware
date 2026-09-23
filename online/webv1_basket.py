@@ -66,9 +66,9 @@ def register_basket_routes(app) -> None:
                 '''SELECT h.*, e.name AS element_name, e.element_type
                    FROM element_holds h
                    JOIN setup_elements e ON e.id=h.element_id AND e.company_id=h.company_id
-                   WHERE h.company_id=? AND h.session_token=?
+                   WHERE h.company_id=? AND h.session_token=? AND h.expires_at>?
                    ORDER BY h.created_at, h.id''',
-                (company_id, token),
+                (company_id, token, iso_now()),
             ).fetchall()
         items = []
         for row in held:
