@@ -161,6 +161,24 @@ def _write_booking(c,database,context,cid,enquiry,elements,workflow_status_id):
             detail={'rule':dict(rule),'when':(snapshot.get('addon_when') or {}).get(str(aid),(snapshot.get('addon_when') or {}).get(aid)),'days':(snapshot.get('addon_days') or {}).get(str(aid),(snapshot.get('addon_days') or {}).get(aid,{})),'people':(snapshot.get('addon_people') or {}).get(str(aid),(snapshot.get('addon_people') or {}).get(aid,{})),'person_days':(snapshot.get('addon_person_days') or {}).get(str(aid),(snapshot.get('addon_person_days') or {}).get(aid,{})),'frozen_amount':amount}
             c.execute('INSERT INTO booking_addons(company_id,booking_element_id,addon_id,quantity,pricing_method_snapshot,unit_price_snapshot,total_amount,rule_snapshot_json) VALUES (?,?,?,?,?,?,?,?)',(cid,beid,aid,qty,addon['pricing_method'],float(rule.get('rate') or 0),amount,json.dumps(detail,separators=(',',':'))))
     c.execute("UPDATE enquiries SET status='converted',availability_expires_at=NULL,updated_at=? WHERE id=? AND company_id=?",(now,enquiry['id'],cid))
+    # Availability->Enquiry normally releases basket holds when the Enquiry is
+    # saved. Conversion defensively enforces the same lifecycle invariant for
+    # legacy/manually-created Enquiries without disturbing unrelated basket
+    # items in the operator's session.
+    token=str(context['token']) if 'token' in context.keys() else ''
+    if token:
+        for ee in elements:
+            stale_holds=c.execute(
+                '''SELECT id FROM element_holds
+                   WHERE company_id=? AND session_token=? AND element_id=?
+                     AND arrival_date=? AND departure_date=?''',
+                (cid,token,ee['element_id'],ee['arrival_date'],ee['departure_date'])
+            ).fetchall()
+            for hold in stale_holds:
+                hold_id=int(hold['id'])
+                c.execute('DELETE FROM hold_requirement_people WHERE hold_id=?',(hold_id,))
+                c.execute('DELETE FROM hold_requirement_addons WHERE hold_id=?',(hold_id,))
+                c.execute('DELETE FROM element_holds WHERE id=? AND company_id=?',(hold_id,cid))
     return booking_id,reference,total
 
 def _conversion_enquiry(database,context,cid,enquiry_id,workflow_status_id):

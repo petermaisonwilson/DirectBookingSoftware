@@ -162,6 +162,9 @@ def main() -> None:
             assert ba is not None and int(ba['addon_id']) == addon_id and float(ba['total_amount']) == 20.0
             frozen = json.loads(ba['rule_snapshot_json']); assert float(frozen['frozen_amount']) == 20.0
             reference = str(b['reference'])
+            assert c.execute('SELECT id FROM element_holds WHERE id=? AND company_id=?', (own_hold_id, cid)).fetchone() is None
+            assert c.execute('SELECT 1 FROM hold_requirement_people WHERE hold_id=?', (own_hold_id,)).fetchone() is None
+            assert c.execute('SELECT 1 FROM hold_requirement_addons WHERE hold_id=?', (own_hold_id,)).fetchone() is None
 
         after = availability_state(db, cid, element_id, '2035-06-10', '2035-06-13')
         assert after['available'] is False and after['state'] == 'BOOKED' and after['booking_id'] == booking_id
