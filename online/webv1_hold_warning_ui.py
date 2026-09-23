@@ -28,7 +28,7 @@ def hold_warning_markup(context) -> str:
       const keep=document.getElementById('global-hold-keep');
       const release=document.getElementById('global-hold-release');
       const csrf={csrf};
-      let hadItems=false,transition=false;
+      let hadItems=false,transition=false,emptyChecks=0;
       async function post(url){{
         const body=new URLSearchParams();body.set('csrf',csrf);
         return fetch(url,{{method:'POST',headers:{{'Content-Type':'application/x-www-form-urlencoded;charset=UTF-8'}},body:body.toString()}});
@@ -39,10 +39,13 @@ def hold_warning_markup(context) -> str:
         if(!r.ok)return;
         let data;try{{data=await r.json()}}catch(e){{return}}
         const items=Array.isArray(data.items)?data.items:[];
-        if(items.length)hadItems=true;
+        if(items.length){{hadItems=true;emptyChecks=0;}}
         if(!items.length){{
           modal.hidden=true;
-          if(hadItems){{transition=true;alert('Your held Elements have expired and have been released.');window.location.reload();}}
+          if(hadItems){{
+            emptyChecks++;
+            if(emptyChecks>=2){{transition=true;alert('Your held Elements have expired and have been released.');window.location.reload();}}
+          }}
           return;
         }}
         if(items.some(x=>x.needs_confirmation)){{
