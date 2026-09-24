@@ -86,6 +86,8 @@ def register_enquiry_routes(app) -> None:
                 eeid=int(erow['id'])
                 epeople=rows(database, '''SELECT ep.quantity,pt.name FROM enquiry_element_people ep JOIN setup_person_types pt ON pt.id=ep.person_type_id AND pt.company_id=ep.company_id WHERE ep.enquiry_element_id=? AND ep.company_id=? ORDER BY pt.name''', (eeid,company_id))
                 eaddons=rows(database, '''SELECT ea.quantity,a.name FROM enquiry_element_addons ea JOIN setup_addons a ON a.id=ea.addon_id AND a.company_id=ea.company_id WHERE ea.enquiry_element_id=? AND ea.company_id=? ORDER BY a.name''', (eeid,company_id))
+                if not eaddons:
+                    eaddons=rows(database, '''SELECT ea.quantity,a.name FROM enquiry_addons ea JOIN setup_addons a ON a.id=ea.addon_id AND a.company_id=ea.company_id WHERE ea.enquiry_id=? AND ea.company_id=? AND (ea.enquiry_element_id=? OR ea.enquiry_element_id IS NULL) ORDER BY a.name''', (enquiry_id,company_id,eeid))
                 people_text=', '.join(f'{esc(r["name"])} × {int(r["quantity"])}' for r in epeople) or '—'
                 addons_text=', '.join(f'{esc(r["name"])} × {int(r["quantity"])}' for r in eaddons) or '—'
                 subtotal=float(erow['provisional_total'] or 0); grand_total+=subtotal
