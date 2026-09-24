@@ -60,7 +60,7 @@ def main() -> None:
 
         details = client.get('/availability/basket/customer', params={'hold_id': hold_id})
         assert details.status_code == 200
-        for text in ('Customer Details', 'Lead Customer', 'Email address *', 'Mobile telephone', 'Fixed telephone', 'SAVE ENQUIRY'):
+        for text in ('Customer Details', 'Lead Customer', '* Required field', 'Email address *', 'Mobile telephone *', 'Fixed telephone', 'Bridge Pitch A', 'Bridge Pitch B', 'SAVE ENQUIRY'):
             assert text in details.text
         assert 'name="last_name" required value="Walker"' in details.text
         with db.connect() as c:
@@ -102,6 +102,8 @@ def main() -> None:
             assert enquiry['departure_date'] == '2036-08-18'
             assert enquiry['source'] == 'Availability'
             assert int(enquiry['party_size']) == 5
+            assert enquiry['availability_expires_at'] is not None
+            assert ' ' in str(enquiry['availability_expires_at'])
             request_row = c.execute('SELECT * FROM enquiry_requests WHERE enquiry_id=? AND company_id=?', (enquiry_id, cid)).fetchone()
             assert request_row is not None
             assert int(request_row['element_id']) == element_id
@@ -121,6 +123,12 @@ def main() -> None:
             assert c.execute('SELECT 1 FROM hold_requirement_addons WHERE hold_id=?', (hold_id,)).fetchone() is None
             assert int(c.execute('SELECT COUNT(*) AS n FROM customer_records WHERE company_id=?', (cid,)).fetchone()['n']) == customer_count_before
 
+        from online.webv1_status_availability import availability_state
+        first_state=availability_state(db,cid,element_id,'2036-08-10','2036-08-12')
+        second_state=availability_state(db,cid,element2_id,'2036-08-15','2036-08-18')
+        assert first_state['available'] is False and first_state['state']=='ENQUIRY' and int(first_state['enquiry_id'])==enquiry_id
+        assert second_state['available'] is False and second_state['state']=='ENQUIRY' and int(second_state['enquiry_id'])==enquiry_id
+
         basket = client.get('/availability/basket')
         assert basket.status_code == 200
         assert basket.json()['count'] == 0
@@ -128,7 +136,9 @@ def main() -> None:
         assert enquiry_page.status_code == 200
         assert 'Alice Walker' in enquiry_page.text
         assert 'Bridge Pitch A' in enquiry_page.text
-        assert '€130.00' in enquiry_page.text or '€40.00' in enquiry_page.text
+        assert 'Bridge Pitch B' in enquiry_page.text
+        assert '€40.00' in enquiry_page.text and '€90.00' in enquiry_page.text
+        assert 'Provisional total: €130.00' in enquiry_page.text
 
     print('Direct Booking Web V1 Availability to Customer matching to Save Enquiry bridge test: passed')
 

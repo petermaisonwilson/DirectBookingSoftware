@@ -154,7 +154,12 @@ def _customer_values(data):
 def _customer_stage(database,context,company_id,token,hold_id,values,error='',matches=None):
     item,enquiry_values=_hold_enquiry_values(database,company_id,token,hold_id)
     if item is None:return layout('Basket','<h1>Basket</h1><div class="error">That held Element has expired or been removed.</div>',context, monitor_holds=True)
-    details=' · '.join(esc(x) for x in _item_requirements(database,item,company_id)) or 'No special requirements'
+    basket_items=_held_items(database,company_id,token)
+    summary_rows=[]
+    for basket_item in basket_items:
+        basket_details=' · '.join(esc(x) for x in _item_requirements(database,basket_item,company_id)) or 'No special requirements'
+        summary_rows.append(f'<p><strong>{esc(basket_item["element_name"])}</strong> — {_fmt_user_date(str(basket_item["arrival_date"]))} to {_display_end(str(basket_item["departure_date"]),str(basket_item["pricing_method"]))}<br>{basket_details}</p>')
+    basket_summary=''.join(summary_rows)
     match_html=''
     if matches:
         rows_html=''
@@ -164,13 +169,13 @@ def _customer_stage(database,context,company_id,token,hold_id,values,error='',ma
         match_html=f'<div class="card"><h2>Possible existing Customer</h2><p>DBS found existing Customer records matching the email or telephone entered. Choose one deliberately, or create a separate Customer.</p><table><thead><tr><th>Customer</th><th>Match</th><th>History</th><th>Action</th></tr></thead><tbody>{rows_html}</tbody></table><p><button class="secondary" type="submit" name="confirm_new" value="1">CREATE SEPARATE CUSTOMER &amp; SAVE ENQUIRY</button></p></div>'
     error_html=f'<div class="error">{esc(error)}</div>' if error else ''
     body=f'''<h1>Customer Details</h1><p><a href="/availability/basket/review">← Back to Basket</a></p>{error_html}
-    <div class="card"><h2>Enquiry being saved</h2><p><strong>{esc(item['element_name'])}</strong> — {_fmt_user_date(str(item['arrival_date']))} to {_display_end(str(item['departure_date']),str(item['pricing_method']))}<br>{details}</p><p class="muted">Nothing is written to the Enquiry Register until SAVE ENQUIRY is completed.</p></div>
+    <div class="card"><h2>Enquiry being saved</h2>{basket_summary}<p class="muted">Nothing is written to the Enquiry Register until SAVE ENQUIRY is completed.</p></div>
     <form method="post" action="/availability/basket/customer"><input type="hidden" name="csrf" value="{esc(context['csrf_token'])}"><input type="hidden" name="hold_id" value="{int(hold_id)}">{match_html}
-    <div class="card"><h2>Lead Customer</h2><div class="grid">
+    <div class="card"><h2>Lead Customer</h2><p class="muted">* Required field</p><div class="grid">
     <div><label>Family name *</label><input name="last_name" required value="{esc(values.get('last_name',''))}"></div>
     <div><label>First name *</label><input name="first_name" required value="{esc(values.get('first_name',''))}"></div>
     <div><label>Email address *</label><input type="email" name="email" required value="{esc(values.get('email',''))}"></div>
-    <div><label>Mobile telephone</label><input name="mobile_phone" value="{esc(values.get('mobile_phone',''))}"></div>
+    <div><label>Mobile telephone *</label><input name="mobile_phone" required value="{esc(values.get('mobile_phone',''))}"></div>
     <div><label>Fixed telephone</label><input name="fixed_phone" value="{esc(values.get('fixed_phone',''))}"></div>
     <div><label>Address line 1</label><input name="address1" value="{esc(values.get('address1',''))}"></div>
     <div><label>Address line 2</label><input name="address2" value="{esc(values.get('address2',''))}"></div>
@@ -226,8 +231,8 @@ def register_booking_progress_routes(app):
             return HTMLResponse(_customer_stage(database,context,company_id,token,hold_id,values,'Enter both Family name and First name.'),400)
         if not values['email']:
             return HTMLResponse(_customer_stage(database,context,company_id,token,hold_id,values,'Email address is compulsory.'),400)
-        if not values['mobile_phone'] and not values['fixed_phone']:
-            return HTMLResponse(_customer_stage(database,context,company_id,token,hold_id,values,'Enter a mobile or fixed telephone number.'),400)
+        if not values['mobile_phone']:
+            return HTMLResponse(_customer_stage(database,context,company_id,token,hold_id,values,'Mobile telephone is compulsory.'),400)
         existing_id=0
         try:existing_id=int(data.get('existing_customer_id','') or 0)
         except (TypeError,ValueError):existing_id=0

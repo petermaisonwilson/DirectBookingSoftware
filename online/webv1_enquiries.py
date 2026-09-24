@@ -74,12 +74,24 @@ def register_enquiry_routes(app) -> None:
         if enquiry is None:
             return HTMLResponse(layout('Enquiry not found', '<div class="error">Enquiry not found.</div>', context), 404)
         request_row = one(database, '''SELECT er.*,se.name AS element_name,se.pricing_method FROM enquiry_requests er LEFT JOIN setup_elements se ON se.id=er.element_id AND se.company_id=er.company_id WHERE er.enquiry_id=? AND er.company_id=?''', (enquiry_id, company_id))
+        element_rows = rows(database, '''SELECT ee.*,se.name AS element_name,se.pricing_method FROM enquiry_elements ee LEFT JOIN setup_elements se ON se.id=ee.element_id AND se.company_id=ee.company_id WHERE ee.enquiry_id=? AND ee.company_id=? ORDER BY ee.sort_order,ee.id''', (enquiry_id, company_id))
         people = rows(database, '''SELECT ep.quantity,pt.name FROM enquiry_people ep JOIN setup_person_types pt ON pt.id=ep.person_type_id AND pt.company_id=ep.company_id WHERE ep.enquiry_id=? AND ep.company_id=? ORDER BY pt.name''', (enquiry_id, company_id))
         addons = rows(database, '''SELECT ea.quantity,a.name FROM enquiry_addons ea JOIN setup_addons a ON a.id=ea.addon_id AND a.company_id=ea.company_id WHERE ea.enquiry_id=? AND ea.company_id=? ORDER BY a.name''', (enquiry_id, company_id))
         customer_link = f'<a href="/operations/customers/{int(enquiry["customer_id"])}">{esc(_customer_name(enquiry))}</a>' if enquiry['customer_id'] is not None else esc(_customer_name(enquiry))
         notice = '<div class="ok">Enquiry saved.</div>' if saved else ''
         if convert_error: notice += f'<div class="error">{esc(convert_error)}</div>'
-        if request_row is None:
+        if element_rows:
+            element_cards=[]; grand_total=0.0
+            for erow in element_rows:
+                eeid=int(erow['id'])
+                epeople=rows(database, '''SELECT ep.quantity,pt.name FROM enquiry_element_people ep JOIN setup_person_types pt ON pt.id=ep.person_type_id AND pt.company_id=ep.company_id WHERE ep.enquiry_element_id=? AND ep.company_id=? ORDER BY pt.name''', (eeid,company_id))
+                eaddons=rows(database, '''SELECT ea.quantity,a.name FROM enquiry_element_addons ea JOIN setup_addons a ON a.id=ea.addon_id AND a.company_id=ea.company_id WHERE ea.enquiry_element_id=? AND ea.company_id=? ORDER BY a.name''', (eeid,company_id))
+                people_text=', '.join(f'{esc(r["name"])} × {int(r["quantity"])}' for r in epeople) or '—'
+                addons_text=', '.join(f'{esc(r["name"])} × {int(r["quantity"])}' for r in eaddons) or '—'
+                subtotal=float(erow['provisional_total'] or 0); grand_total+=subtotal
+                element_cards.append(f'<h3>{esc(erow["element_name"] or "Element")}</h3><p><strong>Element Type:</strong> {esc(erow["element_type"] or "—")}<br><strong>Guest surname:</strong> {esc(erow["lead_name"] or "—")}<br><strong>Arrival:</strong> {_fmt_day(erow["arrival_date"])}<br><strong>Departure:</strong> {_fmt_day(erow["departure_date"])}<br><strong>People:</strong> {people_text}<br><strong>Add-ons:</strong> {addons_text}<br><strong>Element total:</strong> €{subtotal:.2f}</p>')
+            request_html=f'<div class="card"><h2>Requested stay</h2>{"".join(element_cards)}<p><strong>Provisional total: €{grand_total:.2f}</strong></p><p><a class="button" href="/operations/enquiries/{enquiry_id}/edit">Edit / Recalculate Enquiry</a></p></div>'
+        elif request_row is None:
             request_html = f'<div class="card"><h2>Requested stay</h2><p>No Element Type or Element has been attached yet.</p><p><a class="button" href="/operations/enquiries/{enquiry_id}/edit">Edit Enquiry</a></p></div>'
         else:
             people_text = ', '.join(f'{esc(r["name"])} × {int(r["quantity"])}' for r in people) or '—'

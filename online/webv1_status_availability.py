@@ -40,7 +40,7 @@ def _enquiry_conflict(connection, company_id: int, element_id: int, start: str, 
           AND e.status NOT IN ('closed','converted')
           AND NOT EXISTS (SELECT 1 FROM bookings bx WHERE bx.company_id=e.company_id AND bx.enquiry_id=e.id)
           AND COALESCE(s.blocks_availability,1)=1
-          AND (e.availability_expires_at IS NULL OR e.availability_expires_at>?)
+          AND (e.availability_expires_at IS NULL OR datetime(e.availability_expires_at)>datetime(?))
           AND date(ee.arrival_date)<date(?) AND date(ee.departure_date)>date(?)
     '''
     params: list[Any] = [company_id, element_id, iso_now(), end, start]
@@ -56,7 +56,7 @@ def _enquiry_conflict(connection, company_id: int, element_id: int, start: str, 
           AND e.status NOT IN ('closed','converted')
           AND NOT EXISTS (SELECT 1 FROM bookings bx WHERE bx.company_id=e.company_id AND bx.enquiry_id=e.id)
           AND COALESCE(s.blocks_availability,1)=1
-          AND (e.availability_expires_at IS NULL OR e.availability_expires_at>?)
+          AND (e.availability_expires_at IS NULL OR datetime(e.availability_expires_at)>datetime(?))
           AND date(e.arrival_date)<date(?) AND date(e.departure_date)>date(?)'''
     params += [company_id, element_id, iso_now(), end, start]
     if exclude_enquiry_id is not None:
