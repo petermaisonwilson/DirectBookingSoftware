@@ -180,6 +180,17 @@ def main() -> None:
             c.execute('UPDATE setup_person_prices SET rate=999 WHERE company_id=? AND year=? AND element_id=? AND person_type_id=?', (cid, 2035, element_id, person_id))
         booking_page = client.get(f'/operations/bookings/{booking_id}')
         assert booking_page.status_code == 200 and '€380.00' in booking_page.text and 'Frozen Booking' in booking_page.text
+        assert 'Frozen total:' in booking_page.text and 'People:' in booking_page.text and 'Add-ons:' in booking_page.text and 'Lead Passenger:' in booking_page.text
+
+        # Once converted, the Enquiry is historical source data: neither GET nor POST
+        # may reopen its pricing editor or mutate the frozen Booking.
+        edit_converted = client.get(f'/operations/enquiries/{enquiry_id}/edit', follow_redirects=False)
+        assert edit_converted.status_code == 303 and edit_converted.headers['location'] == f'/operations/bookings/{booking_id}'
+        post_converted = client.post(f'/operations/enquiries/{enquiry_id}/edit', data={'csrf': csrf, 'arrival_date':'2035-06-11','departure_date':'2035-06-14'}, follow_redirects=False)
+        assert post_converted.status_code == 303 and post_converted.headers['location'] == f'/operations/bookings/{booking_id}'
+        with db.connect() as c:
+            still_frozen = c.execute('SELECT arrival_date,departure_date,total_amount FROM bookings WHERE id=?',(booking_id,)).fetchone()
+            assert still_frozen['arrival_date']=='2035-06-10' and still_frozen['departure_date']=='2035-06-13' and float(still_frozen['total_amount'])==380.0
 
         page = client.get(f'/operations/bookings/{booking_id}')
         assert '€100.00' in page.text and '€280.00' in page.text and 'BOOKING_PAYMENT_RECORDED' in page.text

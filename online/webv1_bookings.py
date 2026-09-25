@@ -318,9 +318,31 @@ def register_booking_routes(app) -> None:
         statuses = rows(database, 'SELECT * FROM booking_status_definitions WHERE company_id=? AND active=1 ORDER BY display_order,name', (cid,))
         opts = ''.join(f'<option value="{int(s["id"])}" {"selected" if int(s["id"])==int(b["workflow_status_id"] or 0) else ""}>{esc(s["name"])}</option>' for s in statuses)
         notice = '<div class="ok">Booking created from Enquiry. Prices are now frozen.</div>' if created else (f'<div class="ok">{esc(message)}</div>' if message else '')
-        person_text = ', '.join(f'{esc(p["name"])} × {int(p["quantity"])} ({_money(p["total_amount"])})' for p in people) or '—'
-        addon_text = ', '.join(f'{esc(a["name"])} × {int(a["quantity"])} ({_money(a["total_amount"])})' for a in addons) or '—'
-        element_html = ''.join(f'<p><strong>{esc(e["element_name"])}</strong> ({esc(e["element_type"])}) — {_fmt_day(e["arrival_date"])} to {_fmt_day(e["departure_date"])}</p>' for e in elements)
+        element_cards = []
+        for element in elements:
+            element_people = [p for p in people if int(p["booking_element_id"]) == int(element["id"])]
+            element_addons = [a for a in addons if int(a["booking_element_id"]) == int(element["id"])]
+            person_text = ', '.join(f'{esc(p["name"])} × {int(p["quantity"])} ({_money(p["total_amount"])})' for p in element_people) or '—'
+            addon_text = ', '.join(f'{esc(a["name"])} × {int(a["quantity"])} ({_money(a["total_amount"])})' for a in element_addons) or '—'
+            try:
+                frozen_snapshot = json.loads(element["pricing_snapshot_json"] or '{}')
+            except (TypeError, json.JSONDecodeError):
+                frozen_snapshot = {}
+            frozen_total = float(frozen_snapshot.get("total") or frozen_snapshot.get("final_amount") or 0)
+            if frozen_total <= 0:
+                frozen_total = float(element["total_amount"] or 0) + sum(float(p["total_amount"] or 0) for p in element_people) + sum(float(a["total_amount"] or 0) for a in element_addons)
+            lead = str(element["lead_name"] or '').strip() or '—'
+            element_cards.append(
+                f'<div class="frozen-element"><h3>{esc(element["element_name"])}</h3>'
+                f'<p><strong>Type:</strong> {esc(element["element_type"])}<br>'
+                f'<strong>Arrival:</strong> {_fmt_day(element["arrival_date"])}<br>'
+                f'<strong>Departure:</strong> {_fmt_day(element["departure_date"])}<br>'
+                f'<strong>Lead Passenger:</strong> {esc(lead)}<br>'
+                f'<strong>Frozen total:</strong> {_money(frozen_total)}</p>'
+                f'<p><strong>People:</strong> {person_text}</p>'
+                f'<p><strong>Add-ons:</strong> {addon_text}</p></div>'
+            )
+        element_html = ''.join(element_cards) or '<p class="muted">No frozen elements.</p>'
         payment_rows = ''.join(f'<tr><td>{_fmt_day(p["payment_date"])}</td><td>{_money(p["amount"])}</td><td>{esc(p["method"] or "—")}</td><td>{esc(p["reference"] or "—")}</td><td>{esc(p["notes"] or "—")}</td></tr>' for p in payments) or '<tr><td colspan="5" class="muted">No payments recorded.</td></tr>'
         hist = _history(database, cid, booking_id)
         history_rows = ''.join(f'<tr><td>{esc(_fmt_when(h["created_at"]))}</td><td>{esc(((h["first_name"] or "")+" "+(h["last_name"] or "")).strip() or h["actor_role"] or "System")}</td><td>{esc(h["action"])}</td><td>{esc(h["after_json"] or h["before_json"] or "")}</td></tr>' for h in hist) or '<tr><td colspan="4" class="muted">No history yet.</td></tr>'
@@ -328,7 +350,7 @@ def register_booking_routes(app) -> None:
         <div class="grid"><div class="card"><h2>Customer</h2><p><strong>{esc((str(b['first_name'] or '')+' '+str(b['last_name'] or '')).strip() or 'Customer')}</strong><br>{esc(b['email'] or '—')}<br>{esc(b['phone'] or '—')}</p></div>
         <div class="card"><h2>Stay</h2><p><strong>Arrival:</strong> {_fmt_day(b['arrival_date'])}<br><strong>Departure:</strong> {_fmt_day(b['departure_date'])}<br><strong>Total:</strong> {_money(b['total_amount'])}<br><strong>Paid:</strong> {_money(paid)}<br><strong>Outstanding:</strong> {_money(balance)}</p></div></div>
         <div class="card"><h2>Booking Status</h2><form method="post" action="/operations/bookings/{booking_id}/status"><input type="hidden" name="csrf" value="{esc(context['csrf_token'])}"><div class="grid"><div><select name="workflow_status_id">{opts}</select></div><div><button>Change Status</button></div></div></form></div>
-        <div class="card"><h2>Frozen Booking</h2>{element_html}<p><strong>People:</strong> {person_text}</p><p><strong>Add-ons:</strong> {addon_text}</p><p class="muted">These quantities and prices are snapshots. Later Setup price changes do not alter this Booking.</p></div>
+        <div class="card"><h2>Frozen Booking</h2>{element_html}<p class="muted">Each element is shown from its own frozen snapshot. Later Setup price changes do not alter this Booking.</p></div>
         <div class="card"><h2>Payments</h2><table><thead><tr><th>Date</th><th>Amount</th><th>Method</th><th>Reference</th><th>Notes</th></tr></thead><tbody>{payment_rows}</tbody></table><h3>Record payment</h3><form method="post" action="/operations/bookings/{booking_id}/payments"><input type="hidden" name="csrf" value="{esc(context['csrf_token'])}"><div class="grid"><div><label>Amount</label><input name="amount" type="number" min="0.01" step="0.01" required></div><div><label>Date</label><input name="payment_date" type="date" value="{_local_today().isoformat()}" required></div><div><label>Method</label><select name="payment_method_id" required>{''.join(f'<option value="{int(m["id"])}">{esc(m["name"])}</option>' for m in rows(database,'SELECT * FROM payment_method_definitions WHERE company_id=? AND active=1 ORDER BY display_order,name',(cid,)))}</select></div><div><label>Reference</label><input name="reference"></div></div><label>Notes</label><input name="notes"><p><button>Record Payment</button></p></form></div>
         <div class="card"><h2>Booking History</h2><table><thead><tr><th>When</th><th>Who</th><th>Activity</th><th>Detail</th></tr></thead><tbody>{history_rows}</tbody></table></div>'''
         return layout(f'Booking {b["reference"]}', body, context)

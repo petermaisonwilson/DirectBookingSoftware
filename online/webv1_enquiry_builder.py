@@ -341,11 +341,19 @@ def register_enquiry_builder_routes(app)->None:
     def edit(enquiry_id:int,request:Request):
         context=context_for(database,request); cid=working_company(context); enquiry=_enquiry(database,cid,enquiry_id)
         if enquiry is None:return HTMLResponse(layout('Enquiry not found','<div class="error">Enquiry not found.</div>',context),404)
+        if str(enquiry['status'] or '').lower() == 'converted':
+            booking=one(database,'SELECT id,reference FROM bookings WHERE company_id=? AND enquiry_id=? ORDER BY id DESC LIMIT 1',(cid,enquiry_id))
+            destination=f'/operations/bookings/{int(booking["id"])}' if booking is not None else f'/operations/enquiries/{enquiry_id}'
+            return RedirectResponse(destination,303)
         return _form_page(database,context,_customer(database,cid,int(enquiry['customer_id'])),_saved_values(database,cid,enquiry),enquiry_id=enquiry_id)
     @app.post('/operations/enquiries/{enquiry_id}/edit',response_class=HTMLResponse)
     async def update(enquiry_id:int,request:Request):
         context=context_for(database,request); cid=working_company(context); enquiry=_enquiry(database,cid,enquiry_id)
         if enquiry is None:return HTMLResponse(layout('Enquiry not found','<div class="error">Enquiry not found.</div>',context),404)
+        if str(enquiry['status'] or '').lower() == 'converted':
+            booking=one(database,'SELECT id,reference FROM bookings WHERE company_id=? AND enquiry_id=? ORDER BY id DESC LIMIT 1',(cid,enquiry_id))
+            destination=f'/operations/bookings/{int(booking["id"])}' if booking is not None else f'/operations/enquiries/{enquiry_id}'
+            return RedirectResponse(destination,303)
         customer=_customer(database,cid,int(enquiry['customer_id'])); data=await form_data(request); require_csrf(context,data); values=dict(data); basic=_basic_values(data); _,_,date_error=_validate_dates(basic)
         if date_error:return HTMLResponse(_form_page(database,context,customer,values,enquiry_id=enquiry_id,errors={'arrival_date','departure_date'},message=date_error),400)
         calculation=None; action=data.get('action','save')
