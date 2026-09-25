@@ -105,6 +105,8 @@ def main() -> None:
 
         before = availability_state(db, cid, element_id, '2035-06-10', '2035-06-13')
         assert before['available'] is False and before['state'] == 'ENQUIRY'
+        holding_report=client.get('/operations/enquiries?holding=1')
+        assert holding_report.status_code==200 and f'#{enquiry_id}' in holding_report.text and 'Holding' in holding_report.text
 
         first = client.post(f'/operations/enquiries/{enquiry_id}/convert', data={'csrf': csrf, 'workflow_status_id': str(confirmed_id)}, follow_redirects=False)
         assert first.status_code == 303 and f'/operations/enquiries/{enquiry_id}/confirm' in first.headers['location']
