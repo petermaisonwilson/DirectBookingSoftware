@@ -15,6 +15,7 @@ from online.webv1 import register_web_v1
 from online.webv1_status_availability import availability_state
 import online.webv1_bookings as booking_module
 from online.webv1_bookings import convert_enquiry_with_payment, payment_due
+from online.webv1_booking_amendments import amendment_quote, apply_amendment
 
 
 def login(client: TestClient, email: str, password: str) -> None:
@@ -206,6 +207,30 @@ def main() -> None:
 
         page = client.get(f'/operations/bookings/{booking_id}')
         assert '€100.00' in page.text and '€280.00' in page.text and 'BOOKING_PAYMENT_RECORDED' in page.text
+        assert 'Amend Booking' in page.text and 'Preview Amendment' in page.text
+
+        # Confirmed-booking amendment: historical nights remain frozen even after Setup rate changes.
+        # Extending from 3 to 7 nights prices only four new nights at the current €999 rate and
+        # applies the configured duration discount across the whole amended package.
+        with db.connect() as c:
+            c.execute("INSERT INTO setup_duration_discounts(company_id,name,min_nights,discount_type,discount_value,scope_type,element_id,created_at) VALUES (?,?,?,?,?,?,?,?)",
+                      (cid,'7 nights',7,'Percentage',10.0,'Element',element_id,now))
+        quote=amendment_quote(db,cid,booking_id,int(c.execute('SELECT id FROM booking_elements WHERE booking_id=?',(booking_id,)).fetchone()['id']) if False else 0,'2035-06-10','2035-06-17') if False else None
+        with db.connect() as c:
+            beid=int(c.execute('SELECT id FROM booking_elements WHERE booking_id=? AND company_id=?',(booking_id,cid)).fetchone()['id'])
+        quote=amendment_quote(db,cid,booking_id,beid,'2035-06-10','2035-06-17')
+        assert quote['retained_historic_base']==380.0 and quote['added_nights']==4
+        assert quote['added_current_element']==3996.0 and quote['duration_discount']>0
+        assert quote['duration_rule']['name']=='7 nights'
+        amendment_id=apply_amendment(db,ctx,quote)
+        assert amendment_id>0
+        with db.connect() as c:
+            amended=c.execute('SELECT arrival_date,departure_date,total_amount FROM bookings WHERE id=?',(booking_id,)).fetchone()
+            original=c.execute('SELECT original_arrival_date,original_departure_date,original_total_amount FROM booking_elements WHERE id=?',(beid,)).fetchone()
+        assert amended['departure_date']=='2035-06-17'
+        assert original['original_arrival_date']=='2035-06-10' and original['original_departure_date']=='2035-06-13' and float(original['original_total_amount'])==300.0
+        shorter=amendment_quote(db,cid,booking_id,beid,'2035-06-10','2035-06-15')
+        assert shorter['new_nights']==5 and shorter['duration_discount']==0
 
         change = client.post(f'/operations/bookings/{booking_id}/status', data={'csrf': csrf, 'workflow_status_id': str(released_id)}, follow_redirects=False)
         assert change.status_code == 303
