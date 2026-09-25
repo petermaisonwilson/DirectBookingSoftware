@@ -82,3 +82,29 @@ def amendment_quote(database, company_id: int, booking_id: int, booking_element_
         'manual_discount':round(manual,2),'new_element_total':new_element_total,
         'old_booking_total':round(float(booking['total_amount']),2),'new_booking_total':new_booking_total,
     }
+
+
+def apply_amendment(database, context, quote: dict) -> int:
+    """Persist one already-validated amendment as a single database transaction."""
+    cid=int(context['company_id']); booking_id=int(quote['booking_id']); beid=int(quote['booking_element_id'])
+    now=__import__('online.database',fromlist=['iso_now']).iso_now()
+    calculation=json.dumps(quote,separators=(',',':'),sort_keys=True)
+    with database.connect() as c:
+        be=c.execute('SELECT * FROM booking_elements WHERE company_id=? AND booking_id=? AND id=?',(cid,booking_id,beid)).fetchone()
+        booking=c.execute('SELECT * FROM bookings WHERE company_id=? AND id=?',(cid,booking_id)).fetchone()
+        if be is None or booking is None: raise ValueError('Booking element does not exist.')
+        # Re-check availability inside the apply operation so a stale preview cannot overwrite a later booking.
+        state=availability_state(database,cid,int(be['element_id']),quote['new_arrival'],quote['new_departure'],exclude_booking_id=booking_id)
+        if not state['available']: raise ValueError('The amended dates are no longer available.')
+        amendment_id=int(c.execute('''INSERT INTO booking_amendments
+            (company_id,booking_id,booking_element_id,old_arrival_date,old_departure_date,new_arrival_date,new_departure_date,
+             old_booking_total,new_booking_total,manual_discount,calculation_json,created_by_user_id,created_at)
+            VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?)''',
+            (cid,booking_id,beid,quote['old_arrival'],quote['old_departure'],quote['new_arrival'],quote['new_departure'],
+             quote['old_booking_total'],quote['new_booking_total'],quote['manual_discount'],calculation,context.get('user_id'),now)).lastrowid)
+        c.execute('UPDATE booking_elements SET arrival_date=?,departure_date=? WHERE id=? AND company_id=?',
+                  (quote['new_arrival'],quote['new_departure'],beid,cid))
+        bounds=c.execute('SELECT MIN(arrival_date) AS a,MAX(departure_date) AS d FROM booking_elements WHERE booking_id=? AND company_id=?',(booking_id,cid)).fetchone()
+        c.execute('UPDATE bookings SET arrival_date=?,departure_date=?,total_amount=?,updated_at=? WHERE id=? AND company_id=?',
+                  (bounds['a'],bounds['d'],quote['new_booking_total'],now,booking_id,cid))
+    return amendment_id
