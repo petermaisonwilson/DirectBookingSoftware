@@ -31,12 +31,37 @@ CREATE TABLE IF NOT EXISTS booking_payments (
     FOREIGN KEY(booking_id) REFERENCES bookings(id) ON DELETE CASCADE
 );
 CREATE INDEX IF NOT EXISTS idx_booking_payments_booking ON booking_payments(company_id, booking_id, payment_date, id);
+CREATE TABLE IF NOT EXISTS booking_amendments (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    company_id INTEGER NOT NULL,
+    booking_id INTEGER NOT NULL,
+    booking_element_id INTEGER NOT NULL,
+    old_arrival_date TEXT NOT NULL,
+    old_departure_date TEXT NOT NULL,
+    new_arrival_date TEXT NOT NULL,
+    new_departure_date TEXT NOT NULL,
+    old_booking_total REAL NOT NULL,
+    new_booking_total REAL NOT NULL,
+    manual_discount REAL NOT NULL DEFAULT 0,
+    calculation_json TEXT NOT NULL,
+    created_by_user_id INTEGER,
+    created_at TEXT NOT NULL
+);
+CREATE INDEX IF NOT EXISTS idx_booking_amendments_booking ON booking_amendments(company_id, booking_id, id);
 '''
 
 
 def initialise_booking_workflow(database) -> None:
     with database.connect() as c:
         c.executescript(PAYMENT_SCHEMA)
+        columns={str(r['name']) for r in c.execute("PRAGMA table_info(booking_elements)").fetchall()}
+        for name,kind in (('original_arrival_date','TEXT'),('original_departure_date','TEXT'),('original_total_amount','REAL')):
+            if name not in columns:
+                c.execute(f'ALTER TABLE booking_elements ADD COLUMN {name} {kind}')
+        c.execute('''UPDATE booking_elements SET
+            original_arrival_date=COALESCE(original_arrival_date,arrival_date),
+            original_departure_date=COALESCE(original_departure_date,departure_date),
+            original_total_amount=COALESCE(original_total_amount,total_amount)''')
 
 
 def _fmt_day(value: str | None) -> str:
@@ -145,6 +170,7 @@ def _write_booking(c,database,context,cid,enquiry,elements,workflow_status_id):
         except (TypeError,json.JSONDecodeError):snapshot={}
         element_amount=_snapshot_line_amount(snapshot,str(ee['element_name'] or ''))
         beid=int(c.execute('''INSERT INTO booking_elements(company_id,booking_id,element_id,arrival_date,departure_date,pricing_method_snapshot,unit_price_snapshot,total_amount,pricing_snapshot_json,lead_name) VALUES (?,?,?,?,?,?,?,?,?,?)''',(cid,booking_id,ee['element_id'],ee['arrival_date'],ee['departure_date'],ee['pricing_method'] or '',0,element_amount,ee['pricing_snapshot_json'],ee['lead_name'] or '')).lastrowid)
+        c.execute('UPDATE booking_elements SET original_arrival_date=arrival_date,original_departure_date=departure_date,original_total_amount=total_amount WHERE id=?',(beid,))
         year=int(snapshot.get('year') or str(ee['arrival_date'])[:4])
         if 'id' in ee.keys():
             people_rows=c.execute('''SELECT ep.person_type_id,ep.quantity,pt.name FROM enquiry_element_people ep JOIN setup_person_types pt ON pt.id=ep.person_type_id AND pt.company_id=ep.company_id WHERE ep.enquiry_element_id=? AND ep.company_id=?''',(ee['id'],cid)).fetchall()
