@@ -34,6 +34,7 @@ def setup_nav() -> str:
         ("Seasonal pricing", "/setup/pricing"),
         ("Occupancy", "/setup/occupancy"),
         ("Add-on rules", "/setup/addon-rules"),
+        ("Duration Discounts", "/setup/duration-discounts"),
         ("Payment / Deposit Rules", "/setup/payment-methods"),
         ("Price / Rules test", "/setup/price-test"),
     ]

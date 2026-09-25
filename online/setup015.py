@@ -4,6 +4,7 @@ from .setup015_annual import register_annual_routes
 from .setup015_calculator import register_calculator_routes
 from .setup015_catalogue import register_catalogue_routes
 from .setup015_core import copy_previous_year, initialise_setup015
+from .setup015_duration_discounts import register_duration_discount_routes
 from .setup015_element_availability_page import register_element_availability_page
 from .setup015_elements_no_base_price import register_elements_no_base_price
 from .setup015_maintenance import register_setup_maintenance_routes
@@ -41,3 +42,4 @@ def register_setup015(app) -> None:
     register_catalogue_routes(app)
     register_annual_routes(app)
     register_calculator_routes(app)
+    register_duration_discount_routes(app)

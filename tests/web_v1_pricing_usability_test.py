@@ -101,6 +101,8 @@ def main() -> None:
         assert pricing.text.index('<h2>Add season</h2>') < pricing.text.index('<h2>Season maintenance</h2>') < pricing.text.index(pricing_post)
         assert 'setup-guidance-script' in pricing.text
 
+        discounts_page=client.get('/setup/duration-discounts')
+        assert discounts_page.status_code==200 and 'Duration Discounts' in discounts_page.text and '7 nights' in discounts_page.text
         # Enquiry pricing shows duration/basis, and min=max=1 Add-ons get the auto-one UI helper.
         with db.connect() as c:
             addon_id = int(c.execute("INSERT INTO setup_addons(company_id,name,pricing_method,active) VALUES (?,?,?,1)", (company, 'Linen', 'Per night')).lastrowid)
