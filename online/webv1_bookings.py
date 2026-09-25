@@ -14,6 +14,7 @@ from .setup015_core import audit, context_for, one, require_csrf, rows, working_
 from .webv1_booking_status import default_status, status_by_id
 from .webv1_payment_methods import payment_rule
 from .webv1_status_availability import availability_state
+from .webv1_booking_amendments import amendment_quote, apply_amendment
 
 PAYMENT_SCHEMA = '''
 CREATE TABLE IF NOT EXISTS booking_payments (
@@ -391,10 +392,48 @@ def register_booking_routes(app) -> None:
         <div class="grid"><div class="card"><h2>Customer</h2><p><strong>{esc((str(b['first_name'] or '')+' '+str(b['last_name'] or '')).strip() or 'Customer')}</strong><br>{esc(b['email'] or '—')}<br>{esc(b['phone'] or '—')}</p></div>
         <div class="card"><h2>Stay</h2><p><strong>Arrival:</strong> {_fmt_day(b['arrival_date'])}<br><strong>Departure:</strong> {_fmt_day(b['departure_date'])}<br><strong>Total:</strong> {_money(b['total_amount'])}<br><strong>Paid:</strong> {_money(paid)}<br><strong>Outstanding:</strong> {_money(balance)}</p></div></div>
         <div class="card"><h2>Booking Status</h2><form method="post" action="/operations/bookings/{booking_id}/status"><input type="hidden" name="csrf" value="{esc(context['csrf_token'])}"><div class="grid"><div><select name="workflow_status_id">{opts}</select></div><div><button>Change Status</button></div></div></form></div>
+        <div class="card"><h2>Amend Booking</h2><p class="muted">Preview the price before applying. Original frozen booking values remain in history.</p>{''.join(f'<form method="post" action="/operations/bookings/{booking_id}/amend-preview"><input type="hidden" name="csrf" value="{esc(context["csrf_token"])}"><input type="hidden" name="booking_element_id" value="{int(e["id"])}"><h3>{esc(e["element_name"])}</h3><div class="grid"><div><label>Arrival</label><input type="date" name="arrival_date" value="{esc(e["arrival_date"])}" required></div><div><label>Departure</label><input type="date" name="departure_date" value="{esc(e["departure_date"])}" required></div><div><label>Staff discount</label><input type="number" name="manual_discount" min="0" step="0.01" value="0"></div></div><p><button>Preview Amendment</button></p></form>' for e in elements)}</div>
         <div class="card"><h2>Frozen Booking</h2>{element_html}<p class="muted">Each element is shown from its own frozen snapshot. Later Setup price changes do not alter this Booking.</p></div>
         <div class="card"><h2>Payments</h2><table><thead><tr><th>Date</th><th>Amount</th><th>Method</th><th>Reference</th><th>Notes</th></tr></thead><tbody>{payment_rows}</tbody></table><h3>Record payment</h3><form method="post" action="/operations/bookings/{booking_id}/payments"><input type="hidden" name="csrf" value="{esc(context['csrf_token'])}"><div class="grid"><div><label>Amount</label><input name="amount" type="number" min="0.01" step="0.01" required></div><div><label>Date</label><input name="payment_date" type="date" value="{_local_today().isoformat()}" required></div><div><label>Method</label><select name="payment_method_id" required>{''.join(f'<option value="{int(m["id"])}">{esc(m["name"])}</option>' for m in rows(database,'SELECT * FROM payment_method_definitions WHERE company_id=? AND active=1 ORDER BY display_order,name',(cid,)))}</select></div><div><label>Reference</label><input name="reference"></div></div><label>Notes</label><input name="notes"><p><button>Record Payment</button></p></form></div>
         <div class="card"><h2>Booking History</h2><table><thead><tr><th>When</th><th>Who</th><th>Activity</th><th>Detail</th></tr></thead><tbody>{history_rows}</tbody></table></div>'''
         return layout(f'Booking {b["reference"]}', body, context)
+
+
+    @app.post('/operations/bookings/{booking_id}/amend-preview', response_class=HTMLResponse)
+    async def amend_preview(booking_id: int, request: Request):
+        context=context_for(database,request); cid=int(working_company(context)); data=await form_data(request); require_csrf(context,data)
+        try:
+            beid=int(data.get('booking_element_id','')); manual=float(str(data.get('manual_discount','0')).replace(',','.'))
+            quote=amendment_quote(database,cid,booking_id,beid,str(data.get('arrival_date','')),str(data.get('departure_date','')),manual)
+        except (TypeError,ValueError) as exc:
+            return RedirectResponse(f'/operations/bookings/{booking_id}?message='+str(exc).replace(' ','+'),303)
+        rule=quote.get('duration_rule') or {}
+        discount_line=(f"<p><strong>Duration discount:</strong> {_money(quote['duration_discount'])} — {esc(rule.get('name',''))}</p>" if quote['duration_discount'] else '<p><strong>Duration discount:</strong> €0.00</p>')
+        private_note=(f"<p><strong>Private staff discount:</strong> {_money(quote['manual_discount'])}</p>" if quote['manual_discount'] else '')
+        payload=esc(json.dumps(quote,separators=(',',':')))
+        body=f'''<h1>Preview Booking Amendment</h1><div class="card"><p><strong>Current stay:</strong> {_fmt_day(quote['old_arrival'])} → {_fmt_day(quote['old_departure'])}<br>
+        <strong>New stay:</strong> {_fmt_day(quote['new_arrival'])} → {_fmt_day(quote['new_departure'])}<br>
+        <strong>Historical portion retained:</strong> {quote['retained_nights']} night(s) — {_money(quote['retained_historic_base'])}<br>
+        <strong>New nights at current pricing:</strong> {quote['added_nights']} — {_money(quote['added_current_element']+quote['added_recurring'])}</p>
+        {discount_line}{private_note}<p><strong>Old booking total:</strong> {_money(quote['old_booking_total'])}<br><strong>New booking total:</strong> {_money(quote['new_booking_total'])}</p>
+        <form method="post" action="/operations/bookings/{booking_id}/amend-apply"><input type="hidden" name="csrf" value="{esc(context['csrf_token'])}"><input type="hidden" name="quote" value="{payload}"><button>Apply Amendment</button> <a href="/operations/bookings/{booking_id}">Cancel</a></form></div>'''
+        return layout('Preview Booking Amendment',body,context)
+
+    @app.post('/operations/bookings/{booking_id}/amend-apply')
+    async def amend_apply(booking_id: int, request: Request):
+        context=context_for(database,request); cid=int(working_company(context)); data=await form_data(request); require_csrf(context,data)
+        try:
+            submitted=json.loads(str(data.get('quote','{}')))
+            if int(submitted.get('booking_id',0))!=booking_id: raise ValueError('Invalid amendment.')
+            quote=amendment_quote(database,cid,booking_id,int(submitted['booking_element_id']),str(submitted['new_arrival']),str(submitted['new_departure']),float(submitted.get('manual_discount',0)))
+            amendment_id=apply_amendment(database,context,quote)
+        except (KeyError,TypeError,ValueError,json.JSONDecodeError) as exc:
+            return RedirectResponse(f'/operations/bookings/{booking_id}?message='+str(exc).replace(' ','+'),303)
+        private_detail=dict(quote); private_detail['amendment_id']=amendment_id; private_detail['manual_discount_private']=private_detail.pop('manual_discount',0)
+        audit(database,context,cid,'BOOKING_AMENDED','booking',booking_id,
+              before={'arrival_date':quote['old_arrival'],'departure_date':quote['old_departure'],'booking_total':quote['old_booking_total']},
+              after=private_detail)
+        return RedirectResponse(f'/operations/bookings/{booking_id}?message=Booking+amended',303)
 
     @app.post('/operations/bookings/{booking_id}/status')
     async def change_status(booking_id: int, request: Request):
