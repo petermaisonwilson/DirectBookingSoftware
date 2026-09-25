@@ -59,14 +59,14 @@ def register_enquiry_routes(app) -> None:
         if departure_to: where.append('e.departure_date<=?'); params.append(departure_to)
         if holding.strip()=='1':
             where.append("e.status NOT IN ('closed','converted')")
-            where.append("EXISTS (SELECT 1 FROM enquiry_status_definitions es WHERE es.id=e.workflow_status_id AND es.company_id=e.company_id AND es.active=1 AND es.blocks_availability=1 AND (e.availability_expires_at IS NULL OR e.availability_expires_at>?))")
+            where.append("EXISTS (SELECT 1 FROM booking_status_definitions es WHERE es.id=e.workflow_status_id AND es.company_id=e.company_id AND es.active=1 AND COALESCE(es.blocks_availability,1)=1 AND (e.availability_expires_at IS NULL OR e.availability_expires_at>?))")
             params.append(iso_now())
         enquiries = rows(database, f'''SELECT e.*,c.first_name,c.last_name,c.email,c.phone,er.element_type,er.element_id,er.provisional_total,se.name AS element_name,
-            CASE WHEN e.status NOT IN ('closed','converted') AND es.blocks_availability=1 AND (e.availability_expires_at IS NULL OR e.availability_expires_at>?) THEN 1 ELSE 0 END AS holding_space
+            CASE WHEN e.status NOT IN ('closed','converted') AND COALESCE(es.blocks_availability,1)=1 AND (e.availability_expires_at IS NULL OR e.availability_expires_at>?) THEN 1 ELSE 0 END AS holding_space
             FROM enquiries e LEFT JOIN customer_records c ON c.id=e.customer_id AND c.company_id=e.company_id
             LEFT JOIN enquiry_requests er ON er.enquiry_id=e.id AND er.company_id=e.company_id
             LEFT JOIN setup_elements se ON se.id=er.element_id AND se.company_id=e.company_id
-            LEFT JOIN enquiry_status_definitions es ON es.id=e.workflow_status_id AND es.company_id=e.company_id
+            LEFT JOIN booking_status_definitions es ON es.id=e.workflow_status_id AND es.company_id=e.company_id
             WHERE {' AND '.join(where)} ORDER BY e.id DESC''', tuple([iso_now()]+params))
         status_options = '<option value="">All statuses</option>' + ''.join(f'<option value="{v}" {"selected" if v == status_filter else ""}>{esc(v.title())}</option>' for v in STATUSES)
         result_rows = ''.join(f'''<tr><td><a href="/operations/enquiries/{int(r['id'])}">#{int(r['id'])}</a></td><td>{esc(_customer_name(r))}</td><td>{esc(_status_label(r['status']))}</td><td>{_fmt_day(r['arrival_date'])}</td><td>{_fmt_day(r['departure_date'])}</td><td>{esc(r['element_type'] or '—')}</td><td>{esc(r['element_name'] or '—')}</td><td>{'€%.2f' % float(r['provisional_total']) if r['provisional_total'] is not None else '—'}</td><td>{esc(r['source'] or '—')}</td><td>{"Holding" if int(r["holding_space"] or 0) else "Not holding"}</td><td>{_enquiry_action(r, context)}</td></tr>''' for r in enquiries) or '<tr><td colspan="11" class="muted">No matching enquiries.</td></tr>'
