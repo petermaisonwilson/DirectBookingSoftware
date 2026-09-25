@@ -33,6 +33,21 @@ CREATE TABLE IF NOT EXISTS setup_person_prices (
     rate REAL NOT NULL,
     PRIMARY KEY(company_id, year, element_id, person_type_id)
 );
+CREATE TABLE IF NOT EXISTS setup_duration_discounts (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    company_id INTEGER NOT NULL,
+    name TEXT NOT NULL,
+    min_nights INTEGER NOT NULL CHECK(min_nights >= 1),
+    discount_type TEXT NOT NULL CHECK(discount_type IN ('Percentage','Fixed amount','Free nights')),
+    discount_value REAL NOT NULL CHECK(discount_value >= 0),
+    scope_type TEXT NOT NULL DEFAULT 'All elements' CHECK(scope_type IN ('All elements','Element Type','Element')),
+    element_type TEXT NOT NULL DEFAULT '',
+    element_id INTEGER,
+    active INTEGER NOT NULL DEFAULT 1,
+    created_at TEXT NOT NULL,
+    UNIQUE(company_id,name COLLATE NOCASE)
+);
+CREATE INDEX IF NOT EXISTS idx_setup_duration_discounts_company ON setup_duration_discounts(company_id,active,min_nights);
 """
 
 

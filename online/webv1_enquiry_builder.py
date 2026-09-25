@@ -211,7 +211,12 @@ def _calculate(database, company_id: int, values: dict[str, str]):
             parts=key.split('_'); pid=_int_or_zero(parts[4])
             if people_counts.get(pid,0)<=0: addon_errors.add(key)
     if addon_errors: return None,addon_errors,'One or more Add-on quantities are unavailable, exceed the people on the Enquiry, have a missing Person Type price, or fall outside the configured minimum/maximum quantity.'
-    return {'element_id':element_id,'element_type':selected_type,'element_name':str(element['name']),'year':year,'nights':nights,'people_total':people_total,'people_counts':people_counts,'addon_counts':addon_counts,'addon_days':addon_days,'addon_people':addon_people,'addon_person_days':addon_person_days,'addon_when':addon_when,'selected_addons':selected_ids,'lines':lines,'total':round(total,2)},set(),''
+    from .webv1_duration_discounts import duration_discount
+    discount=duration_discount(database,company_id,element_id,nights,total)
+    if discount['discount_amount']>0:
+        rule=discount['rule'] or {}
+        lines.append({'item':'Duration discount','rule':f"{rule.get('name','Discount')} — {int(rule.get('min_nights',nights))}+ nights",'amount':-float(discount['discount_amount'])})
+    return {'element_id':element_id,'element_type':selected_type,'element_name':str(element['name']),'year':year,'nights':nights,'people_total':people_total,'people_counts':people_counts,'addon_counts':addon_counts,'addon_days':addon_days,'addon_people':addon_people,'addon_person_days':addon_person_days,'addon_when':addon_when,'selected_addons':selected_ids,'lines':lines,'base_amount':discount['base_amount'],'discount_amount':discount['discount_amount'],'discount_rule':discount['rule'],'total':discount['final_amount']},set(),''
 
 
 def _form_page(database, context, customer, values: dict[str,str], *, enquiry_id: int|None=None, errors=None, message='', result=None):
@@ -275,7 +280,7 @@ def _basic_values(data: dict[str,str]) -> dict[str,str]: return {k:data.get(k,''
 def _save(database, context, company_id:int, customer_id:int, values:dict[str,str], calculation, enquiry_id:int|None=None)->int:
     now=iso_now(); selected_type=values.get('element_type','').strip(); element_id=_int_or_zero(values.get('element_id')) or None
     if calculation:
-        party_size=int(calculation['people_total']); provisional_total=float(calculation['total']); snapshot_json=json.dumps({'element_type':calculation['element_type'],'element_id':calculation['element_id'],'element_name':calculation['element_name'],'year':calculation['year'],'nights':calculation['nights'],'people_total':calculation['people_total'],'addon_when':calculation['addon_when'],'addon_days':calculation['addon_days'],'addon_people':calculation['addon_people'],'addon_person_days':calculation['addon_person_days'],'selected_addons':calculation['selected_addons'],'lines':calculation['lines'],'total':calculation['total']},separators=(',',':'))
+        party_size=int(calculation['people_total']); provisional_total=float(calculation['total']); snapshot_json=json.dumps({'element_type':calculation['element_type'],'element_id':calculation['element_id'],'element_name':calculation['element_name'],'year':calculation['year'],'nights':calculation['nights'],'people_total':calculation['people_total'],'addon_when':calculation['addon_when'],'addon_days':calculation['addon_days'],'addon_people':calculation['addon_people'],'addon_person_days':calculation['addon_person_days'],'selected_addons':calculation['selected_addons'],'lines':calculation['lines'],'base_amount':calculation.get('base_amount',calculation['total']),'discount_amount':calculation.get('discount_amount',0),'discount_rule':calculation.get('discount_rule'),'total':calculation['total']},separators=(',',':'))
     else: party_size=_int_or_zero(values.get('party_size')) or None; provisional_total=None; snapshot_json='{}'
     created=enquiry_id is None
     with database.connect() as c:

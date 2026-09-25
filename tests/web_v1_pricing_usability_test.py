@@ -63,6 +63,7 @@ def main() -> None:
             c.execute('INSERT INTO setup_occupancy(company_id,year,element_id,max_total) VALUES (?,?,?,?)', (company, 2041, element_id, 4))
             c.execute('INSERT INTO setup_person_limits(company_id,year,element_id,person_type_id,max_count) VALUES (?,?,?,?,?)', (company, 2041, element_id, person_id, 4))
             c.execute('INSERT INTO setup_person_prices(company_id,year,element_id,person_type_id,rate) VALUES (?,?,?,?,?)', (company, 2041, element_id, person_id, 0.0))
+            c.execute("INSERT INTO setup_duration_discounts(company_id,name,min_nights,discount_type,discount_value,scope_type,element_id,created_at) VALUES (?,?,?,?,?,?,?,datetime('now'))", (company,'7 nights',7,'Percentage',10.0,'Element',element_id))
 
         # Existing Season extension inherits the stored Season price automatically.
         ready, _ = element_available_setup_ready(db, company, element_id, date(2041, 9, 20), date(2041, 9, 22))
@@ -116,6 +117,14 @@ def main() -> None:
         assert calc.status_code == 200
         assert 'Duration: 3 night(s)' in calc.text
         assert POUND in calc.text
+        from online.webv1_enquiry_builder import _calculate
+        six=dict(arrival_date='2041-09-10',departure_date='2041-09-16',element_type='Test Type',element_id=str(element_id),**{f'person_{person_id}':'1'})
+        seven=dict(six); seven['departure_date']='2041-09-17'
+        six_result,_,_=_calculate(db,company,six); seven_result,_,_=_calculate(db,company,seven)
+        assert six_result and seven_result
+        assert six_result['discount_amount']==0
+        assert seven_result['discount_amount']>0 and seven_result['discount_rule']['name']=='7 nights'
+        assert any(line['item']=='Duration discount' for line in seven_result['lines'])
 
     print('Direct Booking pricing usability / Season extension regression: passed')
 
