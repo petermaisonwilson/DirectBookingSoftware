@@ -100,10 +100,10 @@ def availability_state(database, company_id: int, element_id: int, arrival: str,
             return {'available': False, 'state': 'CLOSED', 'reason': str(closed['reason'] or 'Closed'), 'closure_id': int(closed['id'])}
         booked = _booking_conflict(c, company_id, element_id, arrival, departure, exclude_booking_id)
         if booked:
-            return {'available': False, 'state': 'BOOKED', 'reason': str(booked['workflow_name'] or f"Booked: {booked['reference']}"), 'booking_id': int(booked['id']), 'booking_reference': str(booked['reference'])}
+            return {'available': False, 'state': 'BOOKED', 'reason': str(booked['workflow_name'] or f"Booked: {booked['reference']}"), 'booking_id': int(booked['id']), 'booking_reference': str(booked['reference']), 'workflow_name': str(booked['workflow_name'] or 'Booked'), 'colour': str(booked['colour'] or '#F3C5C9')}
         enquiry = _enquiry_conflict(c, company_id, element_id, arrival, departure, exclude_enquiry_id)
         if enquiry:
-            return {'available': False, 'state': 'ENQUIRY', 'reason': str(enquiry['workflow_name'] or 'Enquiry / Held'), 'enquiry_id': int(enquiry['id']), 'expires_at': enquiry['availability_expires_at']}
+            return {'available': False, 'state': 'ENQUIRY', 'reason': str(enquiry['workflow_name'] or 'Enquiry / Held'), 'enquiry_id': int(enquiry['id']), 'expires_at': enquiry['availability_expires_at'], 'workflow_name': str(enquiry['workflow_name'] or 'Enquiry / Held'), 'colour': str(enquiry['colour'] or '#FFE39A')}
         # Availability reads are deliberately non-destructive. Expired holds are
         # invisible immediately, while physical cleanup is reserved for explicit
         # write/lifecycle operations so polling and page rendering cannot mutate data.

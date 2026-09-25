@@ -177,8 +177,13 @@ def register_calendar_v5_routes(app) -> None:
                         tag = 'button type="button"' if own_editing_day else 'span'
                         endtag = 'button' if own_editing_day else 'span'
                         cells += f'<{tag} class="cal-cell own-held{cls}{selected}" style="grid-column:{col};grid-row:1" data-date="{day.isoformat()}" data-element="{eid}" data-name="{esc(element["name"])}"></{endtag}>'
-                elif code in {'BOOKED', 'ENQUIRY', 'HELD'}:
-                    cells += f'<span class="cal-cell unavailable{selected}" style="grid-column:{col};grid-row:1" data-date="{day.isoformat()}"></span>'
+                elif code in {'BOOKED', 'ENQUIRY'}:
+                    status_style = f'background:{esc(state.get("colour") or "#F3C5C9")};' if staff else ''
+                    status_title = esc(state.get("workflow_name") or state.get("reason") or "Unavailable") if staff else 'Unavailable'
+                    cells += f'<span class="cal-cell unavailable{selected}" style="grid-column:{col};grid-row:1;{status_style}" data-date="{day.isoformat()}" title="{status_title}"></span>'
+                elif code == 'HELD':
+                    held_style = f'background:{esc(held_colour)};' if staff else ''
+                    cells += f'<span class="cal-cell unavailable{selected}" style="grid-column:{col};grid-row:1;{held_style}" data-date="{day.isoformat()}" title="{"Temporarily held" if not staff else esc(held_name)}"></span>'
                 else:
                     cells += f'<span class="cal-cell closed{selected}" style="grid-column:{col};grid-row:1" data-date="{day.isoformat()}"></span>'
 

@@ -168,6 +168,7 @@ def main() -> None:
 
         after = availability_state(db, cid, element_id, '2035-06-10', '2035-06-13')
         assert after['available'] is False and after['state'] == 'BOOKED' and after['booking_id'] == booking_id
+        assert after['colour'] == confirmed_colour
         cal = client.get('/availability/calendar-v2?element_type=Lodge&arrival=2035-06-10&departure=2035-06-13')
         assert cal.status_code == 200 and reference in cal.text and confirmed_colour in cal.text
         assert 'hold-expiry-calendar-refresh' not in cal.text
