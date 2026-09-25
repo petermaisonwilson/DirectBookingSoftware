@@ -119,6 +119,16 @@ def main() -> None:
         confirm_page = client.get(first.headers['location'])
         assert confirm_page.status_code == 200 and 'Take Payment' in confirm_page.text and 'CONFIRM WITHOUT PAYMENT' in confirm_page.text
         assert 'Payment Required Now:' in confirm_page.text and '€100.00' in confirm_page.text and 'Deposit Pending' in confirm_page.text and 'Party:' in confirm_page.text
+        assert 'Booking Elements' in confirm_page.text and 'Lead Passenger:' in confirm_page.text and 'Element total:' in confirm_page.text
+        # Merely visiting/abandoning Confirm Booking is non-mutating: the Enquiry
+        # remains the availability blocker until an explicit conversion/release.
+        abandoned=client.get(f'/operations/enquiries/{enquiry_id}')
+        assert abandoned.status_code==200
+        with db.connect() as c:
+            assert c.execute('SELECT id FROM bookings WHERE company_id=? AND enquiry_id=?',(cid,enquiry_id)).fetchone() is None
+            assert c.execute('SELECT status FROM enquiries WHERE id=? AND company_id=?',(enquiry_id,cid)).fetchone()['status']=='new'
+        abandoned_state=availability_state(db,cid,element_id,'2035-06-10','2035-06-13')
+        assert abandoned_state['state']=='ENQUIRY' and abandoned_state['available'] is False
         too_small=client.post(f'/operations/enquiries/{enquiry_id}/confirm-payment',data={'csrf':csrf,'workflow_status_id':str(confirmed_id),'payment_method_id':str(cash_id),'amount':'99.00','payment_date':'2035-05-01'},follow_redirects=False)
         assert too_small.status_code==303
         with db.connect() as c:
