@@ -107,6 +107,16 @@ def main() -> None:
         assert before['available'] is False and before['state'] == 'ENQUIRY'
         holding_report=client.get('/operations/enquiries?holding=1')
         assert holding_report.status_code==200 and f'#{enquiry_id}' in holding_report.text and 'Holding' in holding_report.text
+        released_enquiry=client.post(f'/operations/enquiries/{enquiry_id}/release',data={'csrf':csrf},follow_redirects=False)
+        assert released_enquiry.status_code==303
+        assert availability_state(db,cid,element_id,'2035-06-10','2035-06-13')['available'] is True
+        reopened_enquiry=client.post(f'/operations/enquiries/{enquiry_id}/reopen',data={'csrf':csrf},follow_redirects=False)
+        assert reopened_enquiry.status_code==303
+        reopened_state=availability_state(db,cid,element_id,'2035-06-10','2035-06-13')
+        assert reopened_state['state']=='ENQUIRY' and reopened_state['available'] is False
+        with db.connect() as c:
+            actions=[str(r['action']) for r in c.execute("SELECT action FROM audit_log WHERE company_id=? AND entity_type='enquiry' AND entity_id=? ORDER BY id",(cid,enquiry_id)).fetchall()]
+        assert 'ENQUIRY_RELEASED' in actions and 'ENQUIRY_REOPENED' in actions
 
         first = client.post(f'/operations/enquiries/{enquiry_id}/convert', data={'csrf': csrf, 'workflow_status_id': str(confirmed_id)}, follow_redirects=False)
         assert first.status_code == 303 and f'/operations/enquiries/{enquiry_id}/confirm' in first.headers['location']
