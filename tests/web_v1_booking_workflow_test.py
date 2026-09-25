@@ -109,6 +109,13 @@ def main() -> None:
         assert holding_report.status_code==200 and f'#{enquiry_id}' in holding_report.text and 'Holding' in holding_report.text
         released_enquiry=client.post(f'/operations/enquiries/{enquiry_id}/release',data={'csrf':csrf},follow_redirects=False)
         assert released_enquiry.status_code==303
+        released_state=availability_state(db,cid,element_id,'2035-06-10','2035-06-13')
+        assert released_state['state']!='ENQUIRY'
+        # A separate basket hold still blocks these dates; clear it before proving
+        # that the released Enquiry can reclaim availability on Reopen.
+        with db.connect() as c:
+            c.execute('DELETE FROM element_holds WHERE id=? AND company_id=?',(own_hold_id,cid))
+            c.execute('DELETE FROM element_holds WHERE id=? AND company_id=?',(foreign_hold_id,cid))
         assert availability_state(db,cid,element_id,'2035-06-10','2035-06-13')['available'] is True
         reopened_enquiry=client.post(f'/operations/enquiries/{enquiry_id}/reopen',data={'csrf':csrf},follow_redirects=False)
         assert reopened_enquiry.status_code==303
