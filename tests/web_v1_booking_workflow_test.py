@@ -204,9 +204,6 @@ def main() -> None:
             still_frozen = c.execute('SELECT arrival_date,departure_date,total_amount FROM bookings WHERE id=?',(booking_id,)).fetchone()
             assert still_frozen['arrival_date']=='2035-06-10' and still_frozen['departure_date']=='2035-06-13' and float(still_frozen['total_amount'])==380.0
 
-        # Release/reopen lifecycle is verified only after the basket holds used by
-        # conversion have completed, so the two reservation mechanisms stay isolated.
-        lifecycle_enquiry=client.post('/operations/enquiries/new',data={'csrf':csrf,'first_name':'Lifecycle','last_name':'Test','email':'life@example.test','phone':'','arrival_date':'2035-07-01','departure_date':'2035-07-04','party_size':'2','source':'Test','notes':'','element_type':'Lodge','element_id':str(element_id)},follow_redirects=False)
         page = client.get(f'/operations/bookings/{booking_id}')
         assert '€100.00' in page.text and '€280.00' in page.text and 'BOOKING_PAYMENT_RECORDED' in page.text
 
@@ -214,6 +211,30 @@ def main() -> None:
         assert change.status_code == 303
         free = availability_state(db, cid, element_id, '2035-06-10', '2035-06-13')
         assert free['available'] is True
+
+        # Release/reopen is a separate lifecycle from basket holds and conversion.
+        # Prove both successful reclaim and refusal when another Booking owns the dates.
+        with db.connect() as c:
+            life_customer=int(c.execute("INSERT INTO customer_records(company_id,first_name,last_name,email,phone,created_at,updated_at) VALUES (?,?,?,?,?,?,?)",(cid,'Lifecycle','Test','life@example.test','',now,now)).lastrowid)
+            life_id=int(c.execute("INSERT INTO enquiries(company_id,customer_id,status,workflow_status_id,source,arrival_date,departure_date,party_size,notes,created_at,updated_at) VALUES (?,?,?,?,?,?,?,?,?,?,?)",(cid,life_customer,'new',held_id,'Test','2035-07-01','2035-07-04',2,'Lifecycle regression',now,now)).lastrowid)
+            c.execute("INSERT INTO enquiry_requests(enquiry_id,company_id,element_type,element_id,provisional_total,pricing_snapshot_json,updated_at) VALUES (?,?,?,?,?,?,?)",(life_id,cid,'Lodge',element_id,300.0,json.dumps(snapshot),now))
+        assert availability_state(db,cid,element_id,'2035-07-01','2035-07-04')['state']=='ENQUIRY'
+        assert client.post(f'/operations/enquiries/{life_id}/release',data={'csrf':csrf},follow_redirects=False).status_code==303
+        assert availability_state(db,cid,element_id,'2035-07-01','2035-07-04')['available'] is True
+        assert client.post(f'/operations/enquiries/{life_id}/reopen',data={'csrf':csrf},follow_redirects=False).status_code==303
+        assert availability_state(db,cid,element_id,'2035-07-01','2035-07-04')['state']=='ENQUIRY'
+        assert client.post(f'/operations/enquiries/{life_id}/release',data={'csrf':csrf},follow_redirects=False).status_code==303
+        with db.connect() as c:
+            blocker=int(c.execute("INSERT INTO bookings(company_id,reference,customer_id,status,workflow_status_id,arrival_date,departure_date,currency,total_amount,pricing_snapshot_json,created_at,updated_at) VALUES (?,?,?,?,?,?,?,?,?,?,?,?)",(cid,'DB-LIFECYCLE-BLOCK',life_customer,'confirmed',confirmed_id,'2035-07-01','2035-07-04','EUR',300.0,'{}',now,now)).lastrowid)
+            c.execute("INSERT INTO booking_elements(company_id,booking_id,element_id,arrival_date,departure_date,pricing_method_snapshot,unit_price_snapshot,total_amount,pricing_snapshot_json) VALUES (?,?,?,?,?,?,?,?,?)",(cid,blocker,element_id,'2035-07-01','2035-07-04','Per night',100.0,300.0,'{}'))
+        refused=client.post(f'/operations/enquiries/{life_id}/reopen',data={'csrf':csrf},follow_redirects=False)
+        assert refused.status_code==303 and 'Cannot+reopen' in refused.headers['location']
+        with db.connect() as c:
+            assert c.execute("SELECT status FROM enquiries WHERE id=?",(life_id,)).fetchone()['status']=='closed'
+            c.execute("DELETE FROM booking_elements WHERE booking_id=?",(blocker,))
+            c.execute("DELETE FROM bookings WHERE id=?",(blocker,))
+            life_actions=[str(r['action']) for r in c.execute("SELECT action FROM audit_log WHERE company_id=? AND entity_type='enquiry' AND entity_id=? ORDER BY id",(cid,life_id)).fetchall()]
+        assert 'ENQUIRY_RELEASED' in life_actions and 'ENQUIRY_REOPENED' in life_actions
         page = client.get(f'/operations/bookings/{booking_id}')
         assert 'BOOKING_STATUS_CHANGED' in page.text
 
