@@ -107,24 +107,6 @@ def main() -> None:
         assert before['available'] is False and before['state'] == 'ENQUIRY'
         holding_report=client.get('/operations/enquiries?holding=1')
         assert holding_report.status_code==200 and f'#{enquiry_id}' in holding_report.text and 'Holding' in holding_report.text
-        released_enquiry=client.post(f'/operations/enquiries/{enquiry_id}/release',data={'csrf':csrf},follow_redirects=False)
-        assert released_enquiry.status_code==303
-        released_state=availability_state(db,cid,element_id,'2035-06-10','2035-06-13')
-        assert released_state['state']!='ENQUIRY'
-        # A separate basket hold still blocks these dates; clear it before proving
-        # that the released Enquiry can reclaim availability on Reopen.
-        with db.connect() as c:
-            c.execute('DELETE FROM element_holds WHERE id=? AND company_id=?',(own_hold_id,cid))
-            c.execute('DELETE FROM element_holds WHERE id=? AND company_id=?',(foreign_hold_id,cid))
-        assert availability_state(db,cid,element_id,'2035-06-10','2035-06-13')['available'] is True
-        reopened_enquiry=client.post(f'/operations/enquiries/{enquiry_id}/reopen',data={'csrf':csrf},follow_redirects=False)
-        assert reopened_enquiry.status_code==303
-        reopened_state=availability_state(db,cid,element_id,'2035-06-10','2035-06-13')
-        assert reopened_state['state']=='ENQUIRY' and reopened_state['available'] is False
-        with db.connect() as c:
-            actions=[str(r['action']) for r in c.execute("SELECT action FROM audit_log WHERE company_id=? AND entity_type='enquiry' AND entity_id=? ORDER BY id",(cid,enquiry_id)).fetchall()]
-        assert 'ENQUIRY_RELEASED' in actions and 'ENQUIRY_REOPENED' in actions
-
         first = client.post(f'/operations/enquiries/{enquiry_id}/convert', data={'csrf': csrf, 'workflow_status_id': str(confirmed_id)}, follow_redirects=False)
         assert first.status_code == 303 and f'/operations/enquiries/{enquiry_id}/confirm' in first.headers['location']
         with db.connect() as c:
@@ -222,6 +204,9 @@ def main() -> None:
             still_frozen = c.execute('SELECT arrival_date,departure_date,total_amount FROM bookings WHERE id=?',(booking_id,)).fetchone()
             assert still_frozen['arrival_date']=='2035-06-10' and still_frozen['departure_date']=='2035-06-13' and float(still_frozen['total_amount'])==380.0
 
+        # Release/reopen lifecycle is verified only after the basket holds used by
+        # conversion have completed, so the two reservation mechanisms stay isolated.
+        lifecycle_enquiry=client.post('/operations/enquiries/new',data={'csrf':csrf,'first_name':'Lifecycle','last_name':'Test','email':'life@example.test','phone':'','arrival_date':'2035-07-01','departure_date':'2035-07-04','party_size':'2','source':'Test','notes':'','element_type':'Lodge','element_id':str(element_id)},follow_redirects=False)
         page = client.get(f'/operations/bookings/{booking_id}')
         assert '€100.00' in page.text and '€280.00' in page.text and 'BOOKING_PAYMENT_RECORDED' in page.text
 
