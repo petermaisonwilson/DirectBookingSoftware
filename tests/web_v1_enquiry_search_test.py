@@ -88,9 +88,9 @@ def main() -> None:
         assert 'Alice Walker' in by_phone.text
         assert 'Bob Smith' not in by_phone.text
 
-        by_status = client.get('/operations/enquiries?status=qualified')
-        assert 'Bob Smith' in by_status.text
-        assert 'Alice Walker' not in by_status.text
+        assert '>Qualified</option>' not in all_enquiries.text
+        released_filter = client.get('/operations/enquiries?holding=0')
+        assert released_filter.status_code == 200
 
         by_source = client.get('/operations/enquiries?source=web')
         assert 'Bob Smith' in by_source.text

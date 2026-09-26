@@ -7,6 +7,7 @@ from .setup015_calculator import _element_rate_for_date, _price_element
 from .setup015_core import one, rows
 from .webv1_duration_discounts import duration_discount
 from .webv1_status_availability import availability_state
+from .webv1_booking_finance import sync_payment_status
 
 
 def _dates(a: str, d: str):
@@ -68,7 +69,12 @@ def amendment_quote(database, company_id: int, booking_id: int, booking_element_
     mixed_base=round(retained_historic+added_element+recurring_added,2)
     discount=duration_discount(database,company_id,int(be['element_id']),new_nights,mixed_base)
     manual=max(0.0,min(float(manual_discount or 0),float(discount['final_amount'])))
+    prior=one(database,'SELECT calculation_json FROM booking_amendments WHERE company_id=? AND booking_id=? AND booking_element_id=? ORDER BY id DESC LIMIT 1',(company_id,booking_id,booking_element_id))
     element_old_final=float(snap.get('total') or (old_package-old_discount))
+    if prior is not None:
+        try: prior_calc=json.loads(prior['calculation_json'] or '{}')
+        except (TypeError,json.JSONDecodeError): prior_calc={}
+        element_old_final=float(prior_calc.get('new_element_total') or element_old_final)
     other_total=float(booking['total_amount'])-element_old_final
     new_element_total=round(float(discount['final_amount'])-manual,2)
     new_booking_total=round(other_total+new_element_total,2)
@@ -107,4 +113,5 @@ def apply_amendment(database, context, quote: dict) -> int:
         bounds=c.execute('SELECT MIN(arrival_date) AS a,MAX(departure_date) AS d FROM booking_elements WHERE booking_id=? AND company_id=?',(booking_id,cid)).fetchone()
         c.execute('UPDATE bookings SET arrival_date=?,departure_date=?,total_amount=?,updated_at=? WHERE id=? AND company_id=?',
                   (bounds['a'],bounds['d'],quote['new_booking_total'],now,booking_id,cid))
+        sync_payment_status(database,cid,booking_id,connection=c)
     return amendment_id

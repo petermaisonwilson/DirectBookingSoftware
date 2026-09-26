@@ -71,7 +71,7 @@ def main() -> None:
             released = c.execute("SELECT id FROM booking_status_definitions WHERE company_id=? AND active=1 AND internal_state='RELEASED' ORDER BY display_order,id LIMIT 1", (cid,)).fetchone()
             held = c.execute("SELECT id,name FROM booking_status_definitions WHERE company_id=? AND active=1 AND internal_state='HELD' ORDER BY display_order,id LIMIT 1", (cid,)).fetchone()
             confirmed_id = int(confirmed['id']); confirmed_colour = str(confirmed['colour']); released_id = int(released['id']); held_id = int(held['id'])
-            assert str(held['name']) == 'Keep as Quote'
+            assert str(held['internal_state']) == 'HELD'
 
             future = datetime.now(timezone.utc) + timedelta(minutes=30)
             own_hold_id = int(c.execute('''INSERT INTO element_holds(company_id,element_id,session_token,holder_user_id,arrival_date,departure_date,renewal_required_at,expires_at,created_at,updated_at,lead_name)
@@ -94,15 +94,8 @@ def main() -> None:
 
         detail = client.get(f'/operations/enquiries/{enquiry_id}')
         assert detail.status_code == 200
-        assert 'Keep as Quote' in detail.text and 'KEEP AS QUOTE' in detail.text
+        assert 'Keep as Quote' not in detail.text and 'KEEP AS QUOTE' not in detail.text
         assert 'Confirm Booking' in detail.text and 'CONFIRM BOOKING' in detail.text
-
-        quote = client.post(f'/operations/enquiries/{enquiry_id}/quote-status', data={'csrf': csrf, 'workflow_status_id': str(held_id)}, follow_redirects=False)
-        assert quote.status_code == 303
-        with db.connect() as c:
-            kept = c.execute('SELECT status,workflow_status_id FROM enquiries WHERE id=? AND company_id=?', (enquiry_id, cid)).fetchone()
-            assert kept['status'] == 'new' and int(kept['workflow_status_id']) == held_id
-            assert c.execute('SELECT id FROM bookings WHERE company_id=? AND enquiry_id=?', (cid, enquiry_id)).fetchone() is None
 
         before = availability_state(db, cid, element_id, '2035-06-10', '2035-06-13')
         assert before['available'] is False and before['state'] == 'ENQUIRY'
@@ -206,7 +199,9 @@ def main() -> None:
             assert still_frozen['arrival_date']=='2035-06-10' and still_frozen['departure_date']=='2035-06-13' and float(still_frozen['total_amount'])==380.0
 
         page = client.get(f'/operations/bookings/{booking_id}')
-        assert '€100.00' in page.text and '€280.00' in page.text and 'BOOKING_PAYMENT_RECORDED' in page.text
+        assert '€100.00' in page.text and '€280.00' in page.text and 'Recorded payment €100.00' in page.text
+        assert 'value="280.00"' in page.text
+        assert 'Change Status' not in page.text and 'controlled automatically by DBS' in page.text
         assert 'Amend Booking' in page.text and 'Preview Amendment' in page.text
 
         # Confirmed-booking amendment: historical nights remain frozen even after Setup rate changes.
@@ -225,17 +220,14 @@ def main() -> None:
         amendment_id=apply_amendment(db,ctx,quote)
         assert amendment_id>0
         with db.connect() as c:
-            amended=c.execute('SELECT arrival_date,departure_date,total_amount FROM bookings WHERE id=?',(booking_id,)).fetchone()
+            amended=c.execute('SELECT b.arrival_date,b.departure_date,b.total_amount,s.name AS status_name FROM bookings b LEFT JOIN booking_status_definitions s ON s.id=b.workflow_status_id WHERE b.id=?',(booking_id,)).fetchone()
             original=c.execute('SELECT original_arrival_date,original_departure_date,original_total_amount FROM booking_elements WHERE id=?',(beid,)).fetchone()
         assert amended['departure_date']=='2035-06-17'
+        assert amended['status_name']=='Deposit Paid'
         assert original['original_arrival_date']=='2035-06-10' and original['original_departure_date']=='2035-06-13' and float(original['original_total_amount'])==300.0
         shorter=amendment_quote(db,cid,booking_id,beid,'2035-06-10','2035-06-15')
         assert shorter['new_nights']==5 and shorter['duration_discount']==0
 
-        change = client.post(f'/operations/bookings/{booking_id}/status', data={'csrf': csrf, 'workflow_status_id': str(released_id)}, follow_redirects=False)
-        assert change.status_code == 303
-        free = availability_state(db, cid, element_id, '2035-06-10', '2035-06-13')
-        assert free['available'] is True
 
         # Release/reopen is a separate lifecycle from basket holds and conversion.
         # Prove both successful reclaim and refusal when another Booking owns the dates.
@@ -261,14 +253,14 @@ def main() -> None:
             life_actions=[str(r['action']) for r in c.execute("SELECT action FROM audit_log WHERE company_id=? AND entity_type='enquiry' AND entity_id=? ORDER BY id",(cid,life_id)).fetchall()]
         assert 'ENQUIRY_RELEASED' in life_actions and 'ENQUIRY_REOPENED' in life_actions
         page = client.get(f'/operations/bookings/{booking_id}')
-        assert 'BOOKING_STATUS_CHANGED' in page.text
+        assert 'Booking History' in page.text and 'What happened' in page.text
 
         ops = client.get('/operations'); assert '/operations/bookings' in ops.text
         register = client.get('/operations/bookings'); assert reference in register.text
 
         with db.connect() as c:
             actions = [str(r['action']) for r in c.execute("SELECT action FROM audit_log WHERE company_id=? AND entity_type='booking' AND entity_id=?", (cid, str(booking_id))).fetchall()]
-            assert 'BOOKING_CREATED' in actions and 'BOOKING_PAYMENT_RECORDED' in actions and 'BOOKING_STATUS_CHANGED' in actions
+            assert 'BOOKING_CREATED' in actions and 'BOOKING_PAYMENT_RECORDED' in actions
 
     print('Direct Booking Web V1 Booking workflow test: passed')
 

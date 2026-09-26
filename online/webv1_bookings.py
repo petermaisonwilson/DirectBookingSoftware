@@ -15,6 +15,7 @@ from .webv1_booking_status import default_status, status_by_id
 from .webv1_payment_methods import payment_rule
 from .webv1_status_availability import availability_state
 from .webv1_booking_amendments import amendment_quote, apply_amendment
+from .webv1_booking_finance import booking_financials, sync_payment_status
 
 PAYMENT_SCHEMA = '''
 CREATE TABLE IF NOT EXISTS booking_payments (
@@ -324,28 +325,6 @@ def register_booking_routes(app) -> None:
         audit(database,context,cid,'BOOKING_CONFIRMED_WITHOUT_PAYMENT','booking',booking_id,after={'reason':reason,'enquiry_id':enquiry_id})
         return RedirectResponse(f'/operations/bookings/{booking_id}?created=1&message=Confirmed+without+payment',303)
 
-    @app.post('/operations/enquiries/{enquiry_id}/quote-status')
-    async def keep_as_quote(enquiry_id: int, request: Request):
-        context = context_for(database, request); cid = int(working_company(context)); data = await form_data(request); require_csrf(context, data)
-        try:
-            status_id = int(data.get('workflow_status_id', ''))
-        except (TypeError, ValueError):
-            return RedirectResponse(f'/operations/enquiries/{enquiry_id}?convert_error=Choose+a+valid+Quote+Status', 303)
-        status = status_by_id(database, cid, status_id)
-        if status is None or not int(status['active']) or str(status['internal_state']) != 'HELD':
-            return RedirectResponse(f'/operations/enquiries/{enquiry_id}?convert_error=Choose+a+valid+Quote+Status', 303)
-        enquiry = one(database, 'SELECT * FROM enquiries WHERE id=? AND company_id=?', (enquiry_id, cid))
-        if enquiry is None or str(enquiry['status']) == 'converted':
-            return RedirectResponse(f'/operations/enquiries/{enquiry_id}?convert_error=Enquiry+cannot+be+kept+as+a+Quote', 303)
-        expiry = None
-        if int(status['blocks_availability']) and status['expiry_minutes'] is not None:
-            expiry = (datetime.fromisoformat(iso_now()) + timedelta(minutes=int(status['expiry_minutes']))).isoformat(timespec='seconds')
-        with database.connect() as c:
-            c.execute('UPDATE enquiries SET workflow_status_id=?,availability_expires_at=?,updated_at=? WHERE id=? AND company_id=?',
-                      (status_id, expiry, iso_now(), enquiry_id, cid))
-        audit(database, context, cid, 'ENQUIRY_QUOTE_STATUS_CHANGED', 'enquiry', enquiry_id, dict(enquiry),
-              {'workflow_status_id': status_id, 'status_name': status['name'], 'availability_expires_at': expiry})
-        return RedirectResponse(f'/operations/enquiries/{enquiry_id}?saved=1', 303)
 
     @app.get('/operations/bookings/{booking_id}', response_class=HTMLResponse)
     def detail(booking_id: int, request: Request, created: int = 0, message: str = ''):
@@ -356,10 +335,13 @@ def register_booking_routes(app) -> None:
         people = rows(database, '''SELECT bp.*,pt.name FROM booking_people bp JOIN booking_elements be ON be.id=bp.booking_element_id JOIN setup_person_types pt ON pt.id=bp.person_type_id AND pt.company_id=bp.company_id WHERE be.booking_id=? AND bp.company_id=? ORDER BY pt.name''', (booking_id, cid))
         addons = rows(database, '''SELECT ba.*,a.name FROM booking_addons ba JOIN booking_elements be ON be.id=ba.booking_element_id JOIN setup_addons a ON a.id=ba.addon_id AND a.company_id=ba.company_id WHERE be.booking_id=? AND ba.company_id=? ORDER BY a.name''', (booking_id, cid))
         payments = rows(database, 'SELECT * FROM booking_payments WHERE company_id=? AND booking_id=? ORDER BY payment_date,id', (cid, booking_id))
-        paid = sum(float(p['amount']) for p in payments); balance = max(0.0, float(b['total_amount']) - paid)
-        statuses = rows(database, 'SELECT * FROM booking_status_definitions WHERE company_id=? AND active=1 ORDER BY display_order,name', (cid,))
-        opts = ''.join(f'<option value="{int(s["id"])}" {"selected" if int(s["id"])==int(b["workflow_status_id"] or 0) else ""}>{esc(s["name"])}</option>' for s in statuses)
+        financials = booking_financials(database, cid, booking_id)
+        paid = financials['paid']; balance = financials['outstanding']
         notice = '<div class="ok">Booking created from Enquiry. Prices are now frozen.</div>' if created else (f'<div class="ok">{esc(message)}</div>' if message else '')
+        amendment_rows = rows(database, 'SELECT * FROM booking_amendments WHERE company_id=? AND booking_id=? ORDER BY id', (cid, booking_id))
+        latest_amendment = {}
+        for ar in amendment_rows:
+            latest_amendment[int(ar['booking_element_id'])] = ar
         element_cards = []
         for element in elements:
             element_people = [p for p in people if int(p["booking_element_id"]) == int(element["id"])]
@@ -374,28 +356,58 @@ def register_booking_routes(app) -> None:
             if frozen_total <= 0:
                 frozen_total = float(element["total_amount"] or 0) + sum(float(p["total_amount"] or 0) for p in element_people) + sum(float(a["total_amount"] or 0) for a in element_addons)
             lead = str(element["lead_name"] or '').strip() or '—'
+            latest = latest_amendment.get(int(element['id']))
+            current_total = frozen_total
+            staff_adjustment = ''
+            if latest is not None:
+                try:
+                    calc = json.loads(latest['calculation_json'] or '{}')
+                except (TypeError, json.JSONDecodeError):
+                    calc = {}
+                current_total = float(calc.get('new_element_total') or frozen_total)
+                manual = float(latest['manual_discount'] or 0)
+                if manual > 0:
+                    staff_adjustment = f'<br><strong>Staff discount:</strong> −{_money(manual)}'
+                staff_adjustment += f'<br><strong>Current element total:</strong> {_money(current_total)}'
             element_cards.append(
                 f'<div class="frozen-element"><h3>{esc(element["element_name"])}</h3>'
                 f'<p><strong>Type:</strong> {esc(element["element_type"])}<br>'
                 f'<strong>Arrival:</strong> {_fmt_day(element["arrival_date"])}<br>'
                 f'<strong>Departure:</strong> {_fmt_day(element["departure_date"])}<br>'
                 f'<strong>Lead Passenger:</strong> {esc(lead)}<br>'
-                f'<strong>Frozen total:</strong> {_money(frozen_total)}</p>'
+                f'<strong>Frozen total:</strong> {_money(frozen_total)}{staff_adjustment}</p>'
                 f'<p><strong>People:</strong> {person_text}</p>'
                 f'<p><strong>Add-ons:</strong> {addon_text}</p></div>'
             )
         element_html = ''.join(element_cards) or '<p class="muted">No frozen elements.</p>'
         payment_rows = ''.join(f'<tr><td>{_fmt_day(p["payment_date"])}</td><td>{_money(p["amount"])}</td><td>{esc(p["method"] or "—")}</td><td>{esc(p["reference"] or "—")}</td><td>{esc(p["notes"] or "—")}</td></tr>' for p in payments) or '<tr><td colspan="5" class="muted">No payments recorded.</td></tr>'
         hist = _history(database, cid, booking_id)
-        history_rows = ''.join(f'<tr><td>{esc(_fmt_when(h["created_at"]))}</td><td>{esc(((h["first_name"] or "")+" "+(h["last_name"] or "")).strip() or h["actor_role"] or "System")}</td><td>{esc(h["action"])}</td><td>{esc(h["after_json"] or h["before_json"] or "")}</td></tr>' for h in hist) or '<tr><td colspan="4" class="muted">No history yet.</td></tr>'
+        def history_text(h):
+            try: after=json.loads(h['after_json'] or '{}')
+            except (TypeError,json.JSONDecodeError): after={}
+            action=str(h['action'] or '')
+            if action=='BOOKING_PAYMENT_RECORDED':
+                return f"Recorded payment {_money(after.get('amount',0))}" + (f" by {after.get('method')}" if after.get('method') else '')
+            if action=='BOOKING_AMENDED':
+                old=after.get('old_booking_total'); new=after.get('new_booking_total')
+                text=f"Amended booking to {_fmt_day(after.get('new_arrival'))}–{_fmt_day(after.get('new_departure'))}"
+                if old is not None and new is not None: text+=f"; total {_money(old)} → {_money(new)}"
+                manual=float(after.get('manual_discount_private') or 0)
+                if manual: text+=f"; staff discount {_money(manual)}"
+                return text
+            if action=='BOOKING_CREATED': return f"Created booking {after.get('reference','')}".strip()
+            if action=='BOOKING_CONFIRMED_WITHOUT_PAYMENT': return 'Confirmed booking without payment' + (f": {after.get('reason')}" if after.get('reason') else '')
+            labels={'BOOKING_STATUS_CHANGED':'Booking status changed','BOOKING_STATUS_AUTOMATIC':'Booking status updated automatically'}
+            return labels.get(action, action.replace('_',' ').title())
+        history_rows = ''.join(f'<tr><td>{esc(_fmt_when(h["created_at"]))}</td><td>{esc(((h["first_name"] or "")+" "+(h["last_name"] or "")).strip() or h["actor_role"] or "System")}</td><td>{esc(history_text(h))}</td></tr>' for h in hist) or '<tr><td colspan="3" class="muted">No history yet.</td></tr>'
         body = f'''<h1>Booking {esc(b['reference'])}</h1><p><a href="/operations/bookings">← Bookings</a> &nbsp; <a href="/availability/calendar?arrival={esc(b['arrival_date'])}&departure={esc(b['departure_date'])}">Availability Calendar</a></p>{notice}
         <div class="grid"><div class="card"><h2>Customer</h2><p><strong>{esc((str(b['first_name'] or '')+' '+str(b['last_name'] or '')).strip() or 'Customer')}</strong><br>{esc(b['email'] or '—')}<br>{esc(b['phone'] or '—')}</p></div>
         <div class="card"><h2>Stay</h2><p><strong>Arrival:</strong> {_fmt_day(b['arrival_date'])}<br><strong>Departure:</strong> {_fmt_day(b['departure_date'])}<br><strong>Total:</strong> {_money(b['total_amount'])}<br><strong>Paid:</strong> {_money(paid)}<br><strong>Outstanding:</strong> {_money(balance)}</p></div></div>
-        <div class="card"><h2>Booking Status</h2><form method="post" action="/operations/bookings/{booking_id}/status"><input type="hidden" name="csrf" value="{esc(context['csrf_token'])}"><div class="grid"><div><select name="workflow_status_id">{opts}</select></div><div><button>Change Status</button></div></div></form></div>
+        <div class="card"><h2>Booking Status</h2><p><strong>{esc(b['workflow_name'] or b['status'])}</strong></p><p class="muted">Status is controlled automatically by DBS from the booking lifecycle and account balance.</p></div>
         <div class="card"><h2>Amend Booking</h2><p class="muted">Preview the price before applying. Original frozen booking values remain in history.</p>{''.join(f'<form method="post" action="/operations/bookings/{booking_id}/amend-preview"><input type="hidden" name="csrf" value="{esc(context["csrf_token"])}"><input type="hidden" name="booking_element_id" value="{int(e["id"])}"><h3>{esc(e["element_name"])}</h3><div class="grid"><div><label>Arrival</label><input type="date" name="arrival_date" value="{esc(e["arrival_date"])}" required></div><div><label>Departure</label><input type="date" name="departure_date" value="{esc(e["departure_date"])}" required></div><div><label>Staff discount</label><input type="number" name="manual_discount" min="0" step="0.01" value="0"></div></div><p><button>Preview Amendment</button></p></form>' for e in elements)}</div>
         <div class="card"><h2>Frozen Booking</h2>{element_html}<p class="muted">Each element is shown from its own frozen snapshot. Later Setup price changes do not alter this Booking.</p></div>
-        <div class="card"><h2>Payments</h2><table><thead><tr><th>Date</th><th>Amount</th><th>Method</th><th>Reference</th><th>Notes</th></tr></thead><tbody>{payment_rows}</tbody></table><h3>Record payment</h3><form method="post" action="/operations/bookings/{booking_id}/payments"><input type="hidden" name="csrf" value="{esc(context['csrf_token'])}"><div class="grid"><div><label>Amount</label><input name="amount" type="number" min="0.01" step="0.01" required></div><div><label>Date</label><input name="payment_date" type="date" value="{_local_today().isoformat()}" required></div><div><label>Method</label><select name="payment_method_id" required>{''.join(f'<option value="{int(m["id"])}">{esc(m["name"])}</option>' for m in rows(database,'SELECT * FROM payment_method_definitions WHERE company_id=? AND active=1 ORDER BY display_order,name',(cid,)))}</select></div><div><label>Reference</label><input name="reference"></div></div><label>Notes</label><input name="notes"><p><button>Record Payment</button></p></form></div>
-        <div class="card"><h2>Booking History</h2><table><thead><tr><th>When</th><th>Who</th><th>Activity</th><th>Detail</th></tr></thead><tbody>{history_rows}</tbody></table></div>'''
+        <div class="card"><h2>Payments</h2><table><thead><tr><th>Date</th><th>Amount</th><th>Method</th><th>Reference</th><th>Notes</th></tr></thead><tbody>{payment_rows}</tbody></table><h3>Record payment</h3><form method="post" action="/operations/bookings/{booking_id}/payments"><input type="hidden" name="csrf" value="{esc(context['csrf_token'])}"><div class="grid"><div><label>Amount</label><input name="amount" type="number" min="0.01" step="0.01" value="{balance:.2f}" required></div><div><label>Date</label><input name="payment_date" type="date" value="{_local_today().isoformat()}" required></div><div><label>Method</label><select name="payment_method_id" required>{''.join(f'<option value="{int(m["id"])}">{esc(m["name"])}</option>' for m in rows(database,'SELECT * FROM payment_method_definitions WHERE company_id=? AND active=1 ORDER BY display_order,name',(cid,)))}</select></div><div><label>Reference</label><input name="reference"></div></div><label>Notes</label><input name="notes"><p><button>Record Payment</button></p></form></div>
+        <div class="card"><h2>Booking History</h2><table><thead><tr><th>When</th><th>Who</th><th>What happened</th></tr></thead><tbody>{history_rows}</tbody></table></div>'''
         return layout(f'Booking {b["reference"]}', body, context)
 
 
@@ -429,34 +441,13 @@ def register_booking_routes(app) -> None:
             amendment_id=apply_amendment(database,context,quote)
         except (KeyError,TypeError,ValueError,json.JSONDecodeError) as exc:
             return RedirectResponse(f'/operations/bookings/{booking_id}?message='+str(exc).replace(' ','+'),303)
+        sync_payment_status(database,cid,booking_id)
         private_detail=dict(quote); private_detail['amendment_id']=amendment_id; private_detail['manual_discount_private']=private_detail.pop('manual_discount',0)
         audit(database,context,cid,'BOOKING_AMENDED','booking',booking_id,
               before={'arrival_date':quote['old_arrival'],'departure_date':quote['old_departure'],'booking_total':quote['old_booking_total']},
               after=private_detail)
         return RedirectResponse(f'/operations/bookings/{booking_id}?message=Booking+amended',303)
 
-    @app.post('/operations/bookings/{booking_id}/status')
-    async def change_status(booking_id: int, request: Request):
-        context = context_for(database, request); cid = int(working_company(context)); data = await form_data(request); require_csrf(context, data)
-        b = _booking(database, cid, booking_id)
-        if b is None:
-            return RedirectResponse('/operations/bookings', 303)
-        try:
-            sid = int(data.get('workflow_status_id', ''))
-        except ValueError:
-            return RedirectResponse(f'/operations/bookings/{booking_id}', 303)
-        status = status_by_id(database, cid, sid)
-        if status is None or not int(status['active']):
-            return RedirectResponse(f'/operations/bookings/{booking_id}', 303)
-        before = {'workflow_status_id': b['workflow_status_id'], 'workflow_name': b['workflow_name']}
-        internal = str(status['internal_state'])
-        legacy = 'cancelled' if internal == 'RELEASED' else ('completed' if internal == 'ON_SITE' and str(status['name']).lower().startswith('complete') else 'confirmed')
-        with database.connect() as c:
-            c.execute('UPDATE bookings SET workflow_status_id=?,status=?,updated_at=? WHERE id=? AND company_id=?', (sid, legacy, iso_now(), booking_id, cid))
-            if internal=='RELEASED' and b['enquiry_id']:
-                c.execute("UPDATE enquiries SET status='closed',availability_expires_at=NULL,updated_at=? WHERE id=? AND company_id=? AND status='converted'",(iso_now(),int(b['enquiry_id']),cid))
-        audit(database, context, cid, 'BOOKING_STATUS_CHANGED', 'booking', booking_id, before, {'workflow_status_id': sid, 'workflow_name': str(status['name']), 'internal_state': internal, 'blocks_availability': int(status['blocks_availability'])})
-        return RedirectResponse(f'/operations/bookings/{booking_id}?message=Booking+status+updated', 303)
 
     @app.post('/operations/bookings/{booking_id}/payments')
     async def add_payment(booking_id: int, request: Request):
@@ -484,8 +475,7 @@ def register_booking_routes(app) -> None:
                 VALUES (?,?,?,?,?,?,?,?,?)''', (cid, booking_id, amount, payment_date, str(method['name']), str(data.get('reference','')).strip(), str(data.get('notes','')).strip(), context['user_id'], iso_now())).lastrowid)
             total=float(c.execute('SELECT total_amount FROM bookings WHERE id=? AND company_id=?',(booking_id,cid)).fetchone()['total_amount'])
             paid=float(c.execute('SELECT COALESCE(SUM(amount),0) AS n FROM booking_payments WHERE booking_id=? AND company_id=?',(booking_id,cid)).fetchone()['n'])
-            desired=_status_named(database,cid,'Balance Paid' if paid>=total else 'Deposit Paid')
-            if desired: c.execute('UPDATE bookings SET workflow_status_id=?,updated_at=? WHERE id=? AND company_id=?',(int(desired['id']),iso_now(),booking_id,cid))
+            sync_payment_status(database,cid,booking_id,connection=c)
         audit(database, context, cid, 'BOOKING_PAYMENT_RECORDED', 'booking', booking_id, after={'payment_id': payment_id, 'amount': amount, 'payment_date': payment_date, 'method': str(method['name']), 'reference': str(data.get('reference','')).strip()})
         return RedirectResponse(f'/operations/bookings/{booking_id}?message=Payment+recorded', 303)
 
@@ -495,13 +485,5 @@ def enquiry_conversion_panel(database, context, enquiry_id: int) -> str:
     existing = one(database, 'SELECT id,reference FROM bookings WHERE company_id=? AND enquiry_id=? ORDER BY id DESC LIMIT 1', (cid, enquiry_id))
     if existing:
         return f'<div class="card"><h2>Booking</h2><p>This Enquiry has been converted to <a href="/operations/bookings/{int(existing["id"])}"><strong>{esc(existing["reference"])}</strong></a>.</p></div>'
-    enquiry = one(database, 'SELECT workflow_status_id FROM enquiries WHERE company_id=? AND id=?', (cid, enquiry_id))
-    quote_statuses = rows(database, "SELECT * FROM booking_status_definitions WHERE company_id=? AND active=1 AND internal_state='HELD' ORDER BY display_order,id", (cid,))
-    quote_html = ''
-    if quote_statuses:
-        current_id = int(enquiry['workflow_status_id'] or 0) if enquiry else 0
-        quote_default = next((q for q in quote_statuses if int(q['id']) == current_id), quote_statuses[0])
-        quote_opts = ''.join(f'<option value="{int(q["id"])}" {"selected" if int(q["id"])==int(quote_default["id"]) else ""}>{esc(q["name"])}</option>' for q in quote_statuses)
-        quote_html = f'''<div class="card"><h2>Keep as Quote</h2><p>Store this priced Enquiry while it is awaiting sending or a decision from the customer. This does not create a Booking.</p><form method="post" action="/operations/enquiries/{enquiry_id}/quote-status"><input type="hidden" name="csrf" value="{esc(context['csrf_token'])}"><div class="grid"><div><label>Quote / Enquiry Status</label><select name="workflow_status_id">{quote_opts}</select></div><div style="align-self:end"><button>KEEP AS QUOTE</button></div></div></form></div>'''
     booking_html = f'''<div class="card"><h2>Confirm Booking</h2><p>Continue to Take Payment. The Booking is not created until payment is recorded or deliberately confirmed without payment.</p><form method="post" action="/operations/enquiries/{enquiry_id}/convert"><input type="hidden" name="csrf" value="{esc(context['csrf_token'])}"><p><button>CONFIRM BOOKING</button></p></form></div>'''
-    return quote_html + booking_html
+    return booking_html
