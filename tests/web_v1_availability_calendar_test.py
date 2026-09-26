@@ -195,6 +195,10 @@ def main() -> None:
         edited_review = client.get('/availability/basket/review')
         assert 'Smith' in edited_review.text and '2 Current Child U12 (ages 7, 10)' in edited_review.text and 'Current Pets 1' in edited_review.text
         assert 'Jones' in edited_review.text and 'Current Motorhome 1' in edited_review.text
+        customer_stage = client.get('/availability/basket/customer', params={'hold_id': smith_hold})
+        assert customer_stage.status_code == 200
+        assert '<strong>Guest surname:</strong> Jones' in customer_stage.text
+        assert '<strong>Guest surname:</strong> Smith' not in customer_stage.text
 
         # REMOVE only Smith; Jones remains intact.
         removed = client.post('/availability/basket/remove-view', data={'csrf': csrf, 'hold_id': str(smith_hold), 'return_to': '/availability/basket/review'}, follow_redirects=False)

@@ -156,9 +156,12 @@ def _customer_stage(database,context,company_id,token,hold_id,values,error='',ma
     if item is None:return layout('Basket','<h1>Basket</h1><div class="error">That held Element has expired or been removed.</div>',context, monitor_holds=True)
     basket_items=_held_items(database,company_id,token)
     summary_rows=[]
+    lead_surname=str(values.get('last_name','') or item['lead_name'] or '').strip()
     for basket_item in basket_items:
         basket_details=' · '.join(esc(x) for x in _item_requirements(database,basket_item,company_id)) or 'No special requirements'
-        summary_rows.append(f'<p><strong>{esc(basket_item["element_name"])}</strong> — {_fmt_user_date(str(basket_item["arrival_date"]))} to {_display_end(str(basket_item["departure_date"]),str(basket_item["pricing_method"]))}<br>{basket_details}</p>')
+        guest_surname=str(basket_item['lead_name'] or '').strip()
+        guest_line=(f'<br><strong>Guest surname:</strong> {esc(guest_surname)}' if guest_surname and guest_surname.casefold()!=lead_surname.casefold() else '')
+        summary_rows.append(f'<p><strong>{esc(basket_item["element_name"])}</strong> — {_fmt_user_date(str(basket_item["arrival_date"]))} to {_display_end(str(basket_item["departure_date"]),str(basket_item["pricing_method"]))}{guest_line}<br>{basket_details}</p>')
     basket_summary=''.join(summary_rows)
     match_html=''
     if matches:
