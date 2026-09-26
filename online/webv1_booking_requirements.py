@@ -167,8 +167,8 @@ def _requirements_page(database, context, cid, token, message='', edit_hold: int
     with database.connect() as c:
         basket_count = int(c.execute('SELECT COUNT(*) AS n FROM element_holds WHERE company_id=? AND session_token=? AND expires_at>?', (cid, token, iso_now())).fetchone()['n'])
     additional_element = basket_count > 0 and not edit_hold
-    surname_label = 'Next Guest Surname' if additional_element else 'Lead Guest Surname'
-    surname_help = '<small><strong>if different</strong></small>' if additional_element else ''
+    surname_label = 'Next Guest Surname (if different)' if additional_element else 'Lead Passenger Name'
+    surname_help = ''
     error = f'<div class="error">{esc(message)}</div>' if message else ''
     progress = booking_progress_strip(database, context, cid, token)
     edit_hidden = f'<input type="hidden" name="edit_hold" value="{int(edit_hold)}">' if edit_hold else ''
