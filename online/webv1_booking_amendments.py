@@ -101,7 +101,7 @@ def apply_amendment(database, context, quote: dict) -> int:
              old_booking_total,new_booking_total,manual_discount,calculation_json,created_by_user_id,created_at)
             VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?)''',
             (cid,booking_id,beid,quote['old_arrival'],quote['old_departure'],quote['new_arrival'],quote['new_departure'],
-             quote['old_booking_total'],quote['new_booking_total'],quote['manual_discount'],calculation,context.get('user_id'),now)).lastrowid)
+             quote['old_booking_total'],quote['new_booking_total'],quote['manual_discount'],calculation,context['user_id'],now)).lastrowid)
         c.execute('UPDATE booking_elements SET arrival_date=?,departure_date=? WHERE id=? AND company_id=?',
                   (quote['new_arrival'],quote['new_departure'],beid,cid))
         bounds=c.execute('SELECT MIN(arrival_date) AS a,MAX(departure_date) AS d FROM booking_elements WHERE booking_id=? AND company_id=?',(booking_id,cid)).fetchone()
