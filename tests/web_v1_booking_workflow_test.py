@@ -71,7 +71,7 @@ def main() -> None:
             released = c.execute("SELECT id FROM booking_status_definitions WHERE company_id=? AND active=1 AND internal_state='RELEASED' ORDER BY display_order,id LIMIT 1", (cid,)).fetchone()
             held = c.execute("SELECT id,name FROM booking_status_definitions WHERE company_id=? AND active=1 AND internal_state='HELD' ORDER BY display_order,id LIMIT 1", (cid,)).fetchone()
             confirmed_id = int(confirmed['id']); confirmed_colour = str(confirmed['colour']); released_id = int(released['id']); held_id = int(held['id'])
-            assert str(held['internal_state']) == 'HELD'
+            assert str(held['name']) == 'Keep as Quote'
 
             future = datetime.now(timezone.utc) + timedelta(minutes=30)
             own_hold_id = int(c.execute('''INSERT INTO element_holds(company_id,element_id,session_token,holder_user_id,arrival_date,departure_date,renewal_required_at,expires_at,created_at,updated_at,lead_name)
