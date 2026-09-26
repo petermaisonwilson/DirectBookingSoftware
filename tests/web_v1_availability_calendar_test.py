@@ -38,7 +38,7 @@ def main() -> None:
         start = client.get('/availability/start')
         assert start.status_code == 200
         assert 'Booking requirements' in start.text and 'coming and when?' in start.text
-        assert 'Lead Guest Surname' in start.text and 'name="lead_name"' in start.text and 'placeholder="SURNAME"' in start.text
+        assert 'Lead Passenger Name' in start.text and 'name="lead_name"' in start.text and 'placeholder="SURNAME"' in start.text
         assert 'name="arrival"' in start.text and 'name="departure"' in start.text
         assert 'age is requested only where the Client has enabled' in start.text and 'Ask for age' in start.text
 
