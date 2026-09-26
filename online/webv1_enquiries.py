@@ -59,6 +59,7 @@ def register_enquiry_routes(app) -> None:
         if departure_to: where.append('e.departure_date<=?'); params.append(departure_to)
         if holding.strip()=='1':
             where.append("e.status NOT IN ('closed','converted')")
+            where.append("NOT EXISTS (SELECT 1 FROM bookings bx WHERE bx.company_id=e.company_id AND bx.enquiry_id=e.id)")
             where.append("EXISTS (SELECT 1 FROM booking_status_definitions es WHERE es.id=e.workflow_status_id AND es.company_id=e.company_id AND es.active=1 AND COALESCE(es.blocks_availability,1)=1 AND (e.availability_expires_at IS NULL OR e.availability_expires_at>?))")
             params.append(iso_now())
         enquiries = rows(database, f'''SELECT e.*,c.first_name,c.last_name,c.email,c.phone,er.element_type,er.element_id,er.provisional_total,se.name AS element_name,
