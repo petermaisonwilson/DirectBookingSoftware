@@ -93,6 +93,7 @@ def register_calendar_v5_routes(app) -> None:
         <div class="grid"><div><label>Add/Change Element</label><select id="element-type" name="element_type">{options}</select></div>
         <div><label>Arrival</label><input id="arrival-date" type="date" name="arrival" value="{esc(arrival)}"></div>
         <div><label>Departure</label><input id="departure-date" type="date" name="departure" value="{esc(departure)}"></div></div><p>
+        <button type="submit" formaction="/availability/start">ADD / CHANGE ELEMENT</button>
         <a class="button secondary" href="/availability/calendar-v2?{preserve}&start={(visible_start-timedelta(days=14)).isoformat()}">← Previous 14 days</a>
         <a class="button secondary" href="/availability/calendar-v2?{preserve}&start={(visible_start+timedelta(days=14)).isoformat()}">Next 14 days →</a>
         {'<a class="button secondary" href="/setup/booking-statuses">Booking Statuses</a>' if staff else ''}</p></form></div>'''
