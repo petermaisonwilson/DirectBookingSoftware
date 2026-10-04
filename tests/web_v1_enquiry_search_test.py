@@ -55,7 +55,7 @@ def main() -> None:
             enquiry_bob = int(c.execute(
                 '''INSERT INTO enquiries(company_id,customer_id,status,source,arrival_date,departure_date,party_size,notes,created_at,updated_at)
                    VALUES (?,?,?,?,?,?,?,?,?,?)''',
-                (forest, bob, 'qualified', 'Website', '2026-10-01', '2026-10-05', 4, 'Family stay', now, now),
+                (forest, bob, 'closed', 'Website', '2026-10-01', '2026-10-05', 4, 'Family stay', now, now),
             ).lastrowid)
             enquiry_river = int(c.execute(
                 '''INSERT INTO enquiries(company_id,customer_id,status,source,arrival_date,departure_date,party_size,notes,created_at,updated_at)
@@ -89,8 +89,11 @@ def main() -> None:
         assert 'Bob Smith' not in by_phone.text
 
         assert '>Qualified</option>' not in all_enquiries.text
+        holding_filter = client.get('/operations/enquiries?holding=1')
+        assert holding_filter.status_code == 200 and 'Alice Walker' in holding_filter.text and 'Bob Smith' not in holding_filter.text and 'Holding Space' in holding_filter.text
         released_filter = client.get('/operations/enquiries?holding=0')
         assert released_filter.status_code == 200
+        assert 'Bob Smith' in released_filter.text and 'Alice Walker' not in released_filter.text and 'Released' in released_filter.text
 
         by_source = client.get('/operations/enquiries?source=web')
         assert 'Bob Smith' in by_source.text
