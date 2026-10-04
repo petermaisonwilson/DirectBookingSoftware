@@ -42,6 +42,8 @@ def main() -> None:
             c.execute("INSERT INTO setup_person_prices(company_id,year,element_id,person_type_id,rate) VALUES (?,?,?,?,?)", (cid, 2035, element_id, person_id, 10))
             addon_id = int(c.execute("INSERT INTO setup_addons(company_id,name,pricing_method,active) VALUES (?,?,?,1)", (cid, 'Breakfast', 'Fixed once')).lastrowid)
             c.execute("INSERT INTO setup_type_addons(company_id,year,element_type,addon_id,allowed,min_qty,max_qty,rate) VALUES (?,?,?,?,?,?,?,?)", (cid, 2035, 'Lodge', addon_id, 1, 1, 4, 20))
+            free_addon_id = int(c.execute("INSERT INTO setup_addons(company_id,name,pricing_method,active) VALUES (?,?,?,1)", (cid, 'Motorhome U8 Tons', 'Fixed once')).lastrowid)
+            c.execute("INSERT INTO setup_type_addons(company_id,year,element_type,addon_id,allowed,min_qty,max_qty,rate) VALUES (?,?,?,?,?,?,?,?)", (cid, 2035, 'Lodge', free_addon_id, 1, 1, 1, 0))
 
             c.execute('INSERT OR REPLACE INTO setup_occupancy(company_id,year,element_id,max_total) VALUES (?,?,?,?)', (cid, 2035, element_id, 6))
             people = c.execute('SELECT id FROM setup_person_types WHERE company_id=? AND active=1', (cid,)).fetchall()
@@ -57,16 +59,18 @@ def main() -> None:
             snapshot = {
                 'element_type': 'Lodge', 'element_id': element_id, 'element_name': 'Lake Lodge 1', 'year': 2035,
                 'nights': 3, 'people_total': 2, 'addon_when': {str(addon_id): 'every_day'},
-                'addon_days': {}, 'addon_people': {}, 'addon_person_days': {}, 'selected_addons': [addon_id],
+                'addon_days': {}, 'addon_people': {}, 'addon_person_days': {}, 'selected_addons': [addon_id, free_addon_id],
                 'lines': [
                     {'item': 'Lake Lodge 1', 'rule': 'Per night', 'amount': 300.0},
                     {'item': 'Adult', 'rule': '2 adults', 'amount': 60.0},
                     {'item': 'Breakfast', 'rule': 'Fixed once', 'amount': 20.0},
+                    {'item': 'Motorhome U8 Tons', 'rule': 'Fixed once', 'amount': 0.0},
                 ], 'total': 380.0,
             }
             c.execute("INSERT INTO enquiry_requests(enquiry_id,company_id,element_type,element_id,provisional_total,pricing_snapshot_json,updated_at) VALUES (?,?,?,?,?,?,?)", (enquiry_id, cid, 'Lodge', element_id, 380.0, json.dumps(snapshot), now))
             c.execute("INSERT INTO enquiry_people(enquiry_id,company_id,person_type_id,quantity) VALUES (?,?,?,?)", (enquiry_id, cid, person_id, 2))
             c.execute("INSERT INTO enquiry_addons(enquiry_id,company_id,addon_id,quantity) VALUES (?,?,?,?)", (enquiry_id, cid, addon_id, 1))
+            c.execute("INSERT INTO enquiry_addons(enquiry_id,company_id,addon_id,quantity) VALUES (?,?,?,?)", (enquiry_id, cid, free_addon_id, 1))
             confirmed = c.execute("SELECT id,colour FROM booking_status_definitions WHERE company_id=? AND active=1 AND internal_state='CONFIRMED' ORDER BY display_order,id LIMIT 1", (cid,)).fetchone()
             released = c.execute("SELECT id FROM booking_status_definitions WHERE company_id=? AND active=1 AND internal_state='RELEASED' ORDER BY display_order,id LIMIT 1", (cid,)).fetchone()
             held = c.execute("SELECT id,name FROM booking_status_definitions WHERE company_id=? AND active=1 AND internal_state='HELD' ORDER BY display_order,id LIMIT 1", (cid,)).fetchone()
@@ -115,6 +119,8 @@ def main() -> None:
         assert confirm_page.status_code == 200 and 'Take Payment' in confirm_page.text and 'CONFIRM WITHOUT PAYMENT' in confirm_page.text
         assert 'Payment Required Now:' in confirm_page.text and '€100.00' in confirm_page.text and 'Deposit Pending' in confirm_page.text and 'Party:' in confirm_page.text
         assert 'Booking Elements' in confirm_page.text and 'Lead Passenger:' in confirm_page.text and 'Element total:' in confirm_page.text
+        assert 'Breakfast (€20.00)' in confirm_page.text
+        assert 'Motorhome U8 Tons' in confirm_page.text and 'Motorhome U8 Tons (€0.00)' not in confirm_page.text
         assert 'readonly' not in confirm_page.text and 'min="100.00"' in confirm_page.text and 'max="380.00"' in confirm_page.text
         # Merely visiting/abandoning Confirm Booking is non-mutating: the Enquiry
         # remains the availability blocker until an explicit conversion/release.
@@ -168,8 +174,10 @@ def main() -> None:
             assert be is not None and int(be['element_id']) == element_id and float(be['total_amount']) == 300.0
             bp = c.execute('SELECT * FROM booking_people WHERE booking_element_id=?', (be['id'],)).fetchone()
             assert bp is not None and int(bp['quantity']) == 2 and float(bp['total_amount']) == 60.0
-            ba = c.execute('SELECT * FROM booking_addons WHERE booking_element_id=?', (be['id'],)).fetchone()
-            assert ba is not None and int(ba['addon_id']) == addon_id and float(ba['total_amount']) == 20.0
+            ba = c.execute('SELECT * FROM booking_addons WHERE booking_element_id=? AND addon_id=?', (be['id'], addon_id)).fetchone()
+            free_ba = c.execute('SELECT * FROM booking_addons WHERE booking_element_id=? AND addon_id=?', (be['id'], free_addon_id)).fetchone()
+            assert ba is not None and float(ba['total_amount']) == 20.0
+            assert free_ba is not None and float(free_ba['total_amount']) == 0.0
             frozen = json.loads(ba['rule_snapshot_json']); assert float(frozen['frozen_amount']) == 20.0
             reference = str(b['reference'])
             assert c.execute('SELECT id FROM element_holds WHERE id=? AND company_id=?', (own_hold_id, cid)).fetchone() is None
@@ -192,6 +200,8 @@ def main() -> None:
         booking_page = client.get(f'/operations/bookings/{booking_id}')
         assert booking_page.status_code == 200 and '€380.00' in booking_page.text and 'Frozen Booking' in booking_page.text
         assert 'Frozen total:' in booking_page.text and 'People:' in booking_page.text and 'Add-ons:' in booking_page.text and 'Lead Passenger:' in booking_page.text
+        assert 'Breakfast × 1 (€20.00)' in booking_page.text
+        assert 'Motorhome U8 Tons × 1' in booking_page.text and 'Motorhome U8 Tons × 1 (€0.00)' not in booking_page.text
 
         # Once converted, the Enquiry is historical source data: neither GET nor POST
         # may reopen its pricing editor or mutate the frozen Booking.
