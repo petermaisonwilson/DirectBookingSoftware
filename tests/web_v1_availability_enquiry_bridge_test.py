@@ -47,11 +47,44 @@ def main() -> None:
             c.execute('INSERT INTO setup_occupancy(company_id,year,element_id,max_total) VALUES (?,?,?,?)', (cid, 2036, element2_id, 6))
             c.execute('INSERT INTO setup_person_limits(company_id,year,element_id,person_type_id,max_count,min_count) VALUES (?,?,?,?,?,?)', (cid, 2036, element2_id, chosen_person, 6, 0))
             c.execute('INSERT INTO setup_person_prices(company_id,year,element_id,person_type_id,rate) VALUES (?,?,?,?,?)', (cid, 2036, element2_id, chosen_person, 0.0))
-            hold2_id = int(c.execute('''INSERT INTO element_holds(company_id,element_id,session_token,holder_user_id,arrival_date,departure_date,renewal_required_at,expires_at,created_at,updated_at,lead_name)
-                VALUES (?,?,?,?,?,?,?,?,?,?,?)''', (cid, element2_id, token, int(context['user_id']), '2036-08-15', '2036-08-18', (now + timedelta(minutes=9)).isoformat(timespec='seconds'), (now + timedelta(minutes=10)).isoformat(timespec='seconds'), now.isoformat(timespec='seconds'), now.isoformat(timespec='seconds'), 'Jones')).lastrowid)
-            c.execute('INSERT INTO hold_requirement_people(hold_id,company_id,person_type_id,quantity,ages_json) VALUES (?,?,?,?,?)', (hold2_id, cid, chosen_person, 3, '[]'))
             enquiry_count_before = int(c.execute('SELECT COUNT(*) AS n FROM enquiries WHERE company_id=?', (cid,)).fetchone()['n'])
             customer_count_before = int(c.execute('SELECT COUNT(*) AS n FROM customer_records WHERE company_id=?', (cid,)).fetchone()['n'])
+
+        # TEST DATA ONLY: exercise the real Add / Change Element path rather than
+        # seeding a second hold directly. The first held Element must remain intact.
+        add_start = client.get('/availability/start', params={'element_type': 'Bridge Camping'})
+        assert add_start.status_code == 200
+        assert 'Next Guest Surname (if different)' in add_start.text
+        assert 'name="lead_name" placeholder="SURNAME" required value="Walker"' in add_start.text
+        assert 'name="edit_hold"' not in add_start.text
+
+        add_requirements = client.post('/availability/requirements', data={
+            'csrf': csrf,
+            'lead_name': 'Jones',
+            'element_type': 'Bridge Camping',
+            'arrival': '2036-08-15',
+            'departure': '2036-08-18',
+            f'person_{chosen_person}': '3',
+        }, follow_redirects=False)
+        assert add_requirements.status_code == 303
+        assert '/availability/calendar-v2?' in add_requirements.headers['location']
+        second_hold = client.post('/availability/hold', data={
+            'csrf': csrf,
+            'element_id': str(element2_id),
+            'arrival_date': '2036-08-15',
+            'departure_date': '2036-08-18',
+        })
+        assert second_hold.status_code == 200 and second_hold.json()['ok'] is True
+        hold2_id = int(second_hold.json()['hold']['id'])
+        with db.connect() as c:
+            first_hold = c.execute('SELECT lead_name FROM element_holds WHERE id=?', (hold_id,)).fetchone()
+            second_hold_row = c.execute('SELECT lead_name FROM element_holds WHERE id=?', (hold2_id,)).fetchone()
+            assert first_hold is not None and str(first_hold['lead_name']) == 'Walker'
+            assert second_hold_row is not None and str(second_hold_row['lead_name']) == 'Jones'
+            first_people = c.execute('SELECT quantity FROM hold_requirement_people WHERE hold_id=? AND person_type_id=?', (hold_id, chosen_person)).fetchone()
+            second_people = c.execute('SELECT quantity FROM hold_requirement_people WHERE hold_id=? AND person_type_id=?', (hold2_id, chosen_person)).fetchone()
+            assert first_people is not None and int(first_people['quantity']) == 2
+            assert second_people is not None and int(second_people['quantity']) == 3
 
         review = client.get('/availability/basket/review')
         assert review.status_code == 200
