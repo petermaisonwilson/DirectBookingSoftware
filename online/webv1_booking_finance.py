@@ -49,9 +49,9 @@ def sync_payment_status(database, company_id: int, booking_id: int, *, connectio
         c.execute('''INSERT INTO audit_log(company_id,actor_user_id,actor_role,acting_company_id,action,entity_type,entity_id,before_json,after_json,created_at)
                      VALUES (?,?,?,?,?,?,?,?,?,?)''',
                   (company_id,
-                   context.get('user_id') if context else None,
-                   context.get('role') if context else 'System',
-                   context.get('acting_company_id') if context else None,
+                   context['user_id'] if context else None,
+                   context['role'] if context else 'System',
+                   context['acting_company_id'] if context else None,
                    'BOOKING_STATUS_AUTOMATIC','booking',str(booking_id),
                    json.dumps({'workflow_status_id': old_status_id}),
                    json.dumps({'workflow_status_id': new_status_id, 'system_code': wanted,
