@@ -313,7 +313,7 @@ def main() -> None:
 
         with db.connect() as c:
             actions = [str(r['action']) for r in c.execute("SELECT action FROM audit_log WHERE company_id=? AND entity_type='booking' AND entity_id=?", (cid, str(booking_id))).fetchall()]
-            assert 'BOOKING_CREATED' in actions and 'BOOKING_PAYMENT_RECORDED' in actions
+            assert 'BOOKING_CREATED' in actions and 'BOOKING_PAYMENT_RECORDED' in actions and 'BOOKING_STATUS_AUTOMATIC' in actions
 
     print('Direct Booking Web V1 Booking workflow test: passed')
 
