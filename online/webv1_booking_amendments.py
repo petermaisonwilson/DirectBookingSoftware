@@ -17,7 +17,7 @@ def _dates(a: str, d: str):
 
 
 def amendment_quote(database, company_id: int, booking_id: int, booking_element_id: int,
-                    new_arrival: str, new_departure: str, manual_discount: float=0.0) -> dict:
+                    new_arrival: str, new_departure: str, manual_discount: float | None=None) -> dict:
     be=one(database,'''SELECT be.*,se.name AS element_name,se.pricing_method
         FROM booking_elements be JOIN setup_elements se ON se.id=be.element_id AND se.company_id=be.company_id
         WHERE be.company_id=? AND be.booking_id=? AND be.id=?''',(company_id,booking_id,booking_element_id))
@@ -68,8 +68,10 @@ def amendment_quote(database, company_id: int, booking_id: int, booking_element_
 
     mixed_base=round(retained_historic+added_element+recurring_added,2)
     discount=duration_discount(database,company_id,int(be['element_id']),new_nights,mixed_base)
-    manual=max(0.0,min(float(manual_discount or 0),float(discount['final_amount'])))
-    prior=one(database,'SELECT calculation_json FROM booking_amendments WHERE company_id=? AND booking_id=? AND booking_element_id=? ORDER BY id DESC LIMIT 1',(company_id,booking_id,booking_element_id))
+    prior=one(database,'SELECT calculation_json,manual_discount FROM booking_amendments WHERE company_id=? AND booking_id=? AND booking_element_id=? ORDER BY id DESC LIMIT 1',(company_id,booking_id,booking_element_id))
+    prior_manual=float(prior['manual_discount'] or 0) if prior is not None else 0.0
+    requested_manual=prior_manual if manual_discount is None else float(manual_discount or 0)
+    manual=max(0.0,min(requested_manual,float(discount['final_amount'])))
     element_old_final=float(snap.get('total') or (old_package-old_discount))
     if prior is not None:
         try: prior_calc=json.loads(prior['calculation_json'] or '{}')
