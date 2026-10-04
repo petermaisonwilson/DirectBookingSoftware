@@ -80,6 +80,12 @@ def initialise_booking_statuses(database) -> None:
         if 'workflow_status_id' not in _columns(c, 'bookings'):
             c.execute('ALTER TABLE bookings ADD COLUMN workflow_status_id INTEGER')
         _seed_defaults(c)
+        if 'system_code' not in _columns(c, 'booking_status_definitions'):
+            c.execute('ALTER TABLE booking_status_definitions ADD COLUMN system_code TEXT')
+        # Stable machine meanings for finance-driven statuses. These are assigned once
+        # and survive later client edits to the visible status name/short name.
+        for status_name, system_code in (('Keep as Quote','HELD'),('Enquiry / Held','HELD'),('Payment Pending','PAYMENT_PENDING'),('Deposit Paid','DEPOSIT_PAID'),('Balance Paid','BALANCE_PAID'),('On Site','ON_SITE'),('Released / Cancelled','RELEASED')):
+            c.execute('UPDATE booking_status_definitions SET system_code=? WHERE system_code IS NULL AND name=? COLLATE NOCASE', (system_code, status_name))
         now = iso_now()
         for company in c.execute('SELECT id FROM companies').fetchall():
             cid = int(company['id'])
@@ -139,6 +145,13 @@ def default_status(database, company_id: int, internal_state: str):
     result = rows(database, '''SELECT * FROM booking_status_definitions
                               WHERE company_id=? AND active=1 AND internal_state=?
                               ORDER BY display_order,id LIMIT 1''', (company_id, internal_state))
+    return result[0] if result else None
+
+
+def status_by_system_code(database, company_id: int, system_code: str):
+    result = rows(database, '''SELECT * FROM booking_status_definitions
+                              WHERE company_id=? AND active=1 AND system_code=?
+                              ORDER BY id LIMIT 1''', (company_id, system_code))
     return result[0] if result else None
 
 
