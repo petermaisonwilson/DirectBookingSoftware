@@ -38,6 +38,7 @@ def _enquiry_action(row, context) -> str:
     if status == 'converted': return '—'
     if status == 'closed':
         return f'<form method="post" action="/operations/enquiries/{enquiry_id}/reopen" style="display:inline"><input type="hidden" name="csrf" value="{csrf}"><button class="secondary">REOPEN ENQUIRY</button></form>'
+    if not int(row['holding_space'] or 0): return '—'
     return f'''<form method="post" action="/operations/enquiries/{enquiry_id}/release" style="display:inline" onsubmit="return confirm('Release this enquiry? The enquiry and its history will be retained, but its reserved availability will be released.')"><input type="hidden" name="csrf" value="{csrf}"><button class="secondary">RELEASE ENQUIRY</button></form>'''
 
 def register_enquiry_routes(app) -> None:
@@ -59,18 +60,18 @@ def register_enquiry_routes(app) -> None:
         if departure_to: where.append('e.departure_date<=?'); params.append(departure_to)
         holding_clause = """e.status NOT IN ('closed','converted')
             AND NOT EXISTS (SELECT 1 FROM bookings bx WHERE bx.company_id=e.company_id AND bx.enquiry_id=e.id)
-            AND COALESCE((SELECT esh.blocks_availability FROM booking_status_definitions esh WHERE esh.id=e.workflow_status_id AND esh.company_id=e.company_id AND esh.active=1),1)=1 AND (e.availability_expires_at IS NULL OR e.availability_expires_at>?)"""
+            AND COALESCE((SELECT esh.blocks_availability FROM booking_status_definitions esh WHERE esh.id=e.workflow_status_id AND esh.company_id=e.company_id AND esh.active=1),1)=1"""
         if holding.strip()=='1':
-            where.append('(' + holding_clause + ')'); params.append(iso_now())
+            where.append('(' + holding_clause + ')')
         elif holding.strip()=='0':
             where.append("e.status='closed'")
         enquiries = rows(database, f'''SELECT e.*,c.first_name,c.last_name,c.email,c.phone,er.element_type,er.element_id,er.provisional_total,se.name AS element_name,
-            CASE WHEN e.status NOT IN ('closed','converted') AND NOT EXISTS (SELECT 1 FROM bookings bx2 WHERE bx2.company_id=e.company_id AND bx2.enquiry_id=e.id) AND COALESCE(es.blocks_availability,1)=1 AND (e.availability_expires_at IS NULL OR e.availability_expires_at>?) THEN 1 ELSE 0 END AS holding_space
+            CASE WHEN e.status NOT IN ('closed','converted') AND NOT EXISTS (SELECT 1 FROM bookings bx2 WHERE bx2.company_id=e.company_id AND bx2.enquiry_id=e.id) AND COALESCE(es.blocks_availability,1)=1 THEN 1 ELSE 0 END AS holding_space
             FROM enquiries e LEFT JOIN customer_records c ON c.id=e.customer_id AND c.company_id=e.company_id
             LEFT JOIN enquiry_requests er ON er.enquiry_id=e.id AND er.company_id=e.company_id
             LEFT JOIN setup_elements se ON se.id=er.element_id AND se.company_id=e.company_id
             LEFT JOIN booking_status_definitions es ON es.id=e.workflow_status_id AND es.company_id=e.company_id
-            WHERE {' AND '.join(where)} ORDER BY e.id DESC''', tuple([iso_now()]+params))
+            WHERE {' AND '.join(where)} ORDER BY e.id DESC''', tuple(params))
         status_options = '<option value="">All statuses</option>' + ''.join(f'<option value="{v}" {"selected" if v == status_filter else ""}>{esc(v.title())}</option>' for v in STATUSES)
         result_rows = ''.join(f'''<tr><td><a href="/operations/enquiries/{int(r['id'])}">#{int(r['id'])}</a></td><td>{esc(_customer_name(r))}</td><td>{esc(_status_label(r['status']))}</td><td>{_fmt_day(r['arrival_date'])}</td><td>{_fmt_day(r['departure_date'])}</td><td>{esc(r['element_type'] or '—')}</td><td>{esc(r['element_name'] or '—')}</td><td>{'€%.2f' % float(r['provisional_total']) if r['provisional_total'] is not None else '—'}</td><td>{esc(r['source'] or '—')}</td><td>{"Holding Space" if int(r["holding_space"] or 0) else ("Released" if str(r["status"])=="closed" else ("Converted" if str(r["status"])=="converted" else "Not Holding"))}</td><td>{_enquiry_action(r, context)}</td></tr>''' for r in enquiries) or '<tr><td colspan="11" class="muted">No matching enquiries.</td></tr>'
         body = f'''<h1>Enquiries</h1><p><a href="/operations">← Operations</a></p><div class="card"><form method="get" action="/operations/enquiries"><div class="grid"><div><label>Customer search</label><input name="q" value="{esc(search)}" placeholder="Name, email or telephone"></div><div><label>Status</label><select name="status">{status_options}</select></div><div><label>Source</label><input name="source" value="{esc(source_filter)}"></div><div><label>Arrival from</label><input type="date" name="arrival_from" value="{esc(arrival_from)}"></div><div><label>Arrival to</label><input type="date" name="arrival_to" value="{esc(arrival_to)}"></div><div><label>Departure from</label><input type="date" name="departure_from" value="{esc(departure_from)}"></div><div><label>Departure to</label><input type="date" name="departure_to" value="{esc(departure_to)}"></div><div><label>Availability</label><select name="holding"><option value="">All</option><option value="1" {"selected" if holding=="1" else ""}>Holding Space</option><option value="0" {"selected" if holding=="0" else ""}>Released</option></select></div></div><p><button>Search Enquiries</button> <a class="button secondary" href="/operations/enquiries">Clear</a></p></form></div><div class="card"><p><strong>{len(enquiries)}</strong> matching enquiry/enquiries</p><table><thead><tr><th>No.</th><th>Customer</th><th>Status</th><th>Arrival</th><th>Departure</th><th>Element Type</th><th>Element</th><th>Provisional</th><th>Source</th><th>Availability</th><th>Action</th></tr></thead><tbody>{result_rows}</tbody></table></div>'''
