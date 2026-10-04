@@ -47,10 +47,12 @@ def main() -> None:
                 (riverside, 'River', 'Guest', 'river@example.test', '0633333333', now, now),
             ).lastrowid)
 
+            held_status = c.execute("SELECT id FROM booking_status_definitions WHERE company_id=? AND active=1 AND internal_state='HELD' ORDER BY id LIMIT 1", (forest,)).fetchone()
+            assert held_status is not None
             enquiry_alice = int(c.execute(
-                '''INSERT INTO enquiries(company_id,customer_id,status,source,arrival_date,departure_date,party_size,notes,created_at,updated_at)
-                   VALUES (?,?,?,?,?,?,?,?,?,?)''',
-                (forest, alice, 'new', 'Phone', '2026-09-10', '2026-09-12', 2, 'Electric pitch', now, now),
+                '''INSERT INTO enquiries(company_id,customer_id,status,source,arrival_date,departure_date,party_size,notes,created_at,updated_at,workflow_status_id,availability_expires_at)
+                   VALUES (?,?,?,?,?,?,?,?,?,?,?,?)''',
+                (forest, alice, 'new', 'Phone', '2026-09-10', '2026-09-12', 2, 'Electric pitch', now, now, int(held_status['id']), '2099-09-12T10:00:00+00:00'),
             ).lastrowid)
             enquiry_bob = int(c.execute(
                 '''INSERT INTO enquiries(company_id,customer_id,status,source,arrival_date,departure_date,party_size,notes,created_at,updated_at)
