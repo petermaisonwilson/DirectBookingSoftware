@@ -192,6 +192,9 @@ def main() -> None:
             assert jones_child is not None and int(jones_child['quantity']) == 0
             assert jones_motorhome is not None and int(jones_motorhome['quantity']) == 1
 
+        calendar_add = client.get('/availability/calendar-v2?element_type=Pitch&arrival=2035-06-10&departure=2035-06-13')
+        assert calendar_add.status_code == 200 and 'ADD / CHANGE ELEMENT' in calendar_add.text and 'NEW BOOKING' not in calendar_add.text
+
         edited_review = client.get('/availability/basket/review')
         assert 'Smith' in edited_review.text and '2 Current Child U12 (ages 7, 10)' in edited_review.text and 'Current Pets 1' in edited_review.text
         assert 'Jones' in edited_review.text and 'Current Motorhome 1' in edited_review.text
