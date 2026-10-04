@@ -167,6 +167,11 @@ def _requirements_page(database, context, cid, token, message='', edit_hold: int
     with database.connect() as c:
         basket_count = int(c.execute('SELECT COUNT(*) AS n FROM element_holds WHERE company_id=? AND session_token=? AND expires_at>?', (cid, token, iso_now())).fetchone()['n'])
     additional_element = basket_count > 0 and not edit_hold
+    if additional_element and not saved_lead_name:
+        first_hold = one(database, '''SELECT lead_name FROM element_holds
+            WHERE company_id=? AND session_token=? AND expires_at>?
+            ORDER BY created_at,id LIMIT 1''', (cid, token, iso_now()))
+        saved_lead_name = str(first_hold['lead_name'] or '') if first_hold else ''
     surname_label = 'Next Guest Surname (if different)' if additional_element else 'Lead Passenger Name'
     surname_help = ''
     error = f'<div class="error">{esc(message)}</div>' if message else ''
