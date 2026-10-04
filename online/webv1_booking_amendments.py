@@ -115,5 +115,5 @@ def apply_amendment(database, context, quote: dict) -> int:
         bounds=c.execute('SELECT MIN(arrival_date) AS a,MAX(departure_date) AS d FROM booking_elements WHERE booking_id=? AND company_id=?',(booking_id,cid)).fetchone()
         c.execute('UPDATE bookings SET arrival_date=?,departure_date=?,total_amount=?,updated_at=? WHERE id=? AND company_id=?',
                   (bounds['a'],bounds['d'],quote['new_booking_total'],now,booking_id,cid))
-        sync_payment_status(database,cid,booking_id,connection=c)
+        sync_payment_status(database,cid,booking_id,connection=c,context=context)
     return amendment_id
