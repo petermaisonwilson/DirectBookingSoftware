@@ -110,13 +110,7 @@ def initialise_booking_statuses(database) -> None:
                 WHERE company_id=NEW.company_id AND active=1 AND internal_state='HELD'
                 ORDER BY display_order,id LIMIT 1
               ),
-              availability_expires_at=(
-                SELECT CASE WHEN expiry_minutes IS NULL THEN NULL
-                            ELSE datetime('now','+' || expiry_minutes || ' minutes') END
-                FROM booking_status_definitions
-                WHERE company_id=NEW.company_id AND active=1 AND internal_state='HELD'
-                ORDER BY display_order,id LIMIT 1
-              )
+              availability_expires_at=NULL
           WHERE id=NEW.id;
         END;
 
