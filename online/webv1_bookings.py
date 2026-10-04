@@ -480,7 +480,7 @@ def register_booking_routes(app) -> None:
                 VALUES (?,?,?,?,?,?,?,?,?)''', (cid, booking_id, amount, payment_date, str(method['name']), str(data.get('reference','')).strip(), str(data.get('notes','')).strip(), context['user_id'], iso_now())).lastrowid)
             total=float(c.execute('SELECT total_amount FROM bookings WHERE id=? AND company_id=?',(booking_id,cid)).fetchone()['total_amount'])
             paid=float(c.execute('SELECT COALESCE(SUM(amount),0) AS n FROM booking_payments WHERE booking_id=? AND company_id=?',(booking_id,cid)).fetchone()['n'])
-            sync_payment_status(database,cid,booking_id,connection=c)
+            sync_payment_status(database,cid,booking_id,connection=c,context=context)
         audit(database, context, cid, 'BOOKING_PAYMENT_RECORDED', 'booking', booking_id, after={'payment_id': payment_id, 'amount': amount, 'payment_date': payment_date, 'method': str(method['name']), 'reference': str(data.get('reference','')).strip()})
         return RedirectResponse(f'/operations/bookings/{booking_id}?message=Payment+recorded', 303)
 
