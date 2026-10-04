@@ -135,8 +135,7 @@ def main() -> None:
             assert enquiry['departure_date'] == '2036-08-18'
             assert enquiry['source'] == 'Availability'
             assert int(enquiry['party_size']) == 5
-            assert enquiry['availability_expires_at'] is not None
-            assert ' ' in str(enquiry['availability_expires_at'])
+            assert enquiry['availability_expires_at'] is None
             request_row = c.execute('SELECT * FROM enquiry_requests WHERE enquiry_id=? AND company_id=?', (enquiry_id, cid)).fetchone()
             assert request_row is not None
             assert int(request_row['element_id']) == element_id
@@ -157,9 +156,9 @@ def main() -> None:
             assert int(c.execute('SELECT COUNT(*) AS n FROM customer_records WHERE company_id=?', (cid,)).fetchone()['n']) == customer_count_before
 
         from online.webv1_status_availability import availability_state
-        first_state=availability_state(db,cid,element_id,'2036-08-10','2036-08-12')
+        # TEST DATA ONLY: even a legacy/stale expiry timestamp must not silently release a saved Enquiry.\n        # Once the temporary basket is converted, only explicit Release Enquiry frees inventory.\n        with db.connect() as c:\n            c.execute("UPDATE enquiries SET availability_expires_at='2000-01-01 00:00:00' WHERE id=? AND company_id=?", (enquiry_id,cid))\n        first_state=availability_state(db,cid,element_id,'2036-08-10','2036-08-12')
         second_state=availability_state(db,cid,element2_id,'2036-08-15','2036-08-18')
-        assert first_state['available'] is False and first_state['state']=='ENQUIRY' and int(first_state['enquiry_id'])==enquiry_id
+        assert first_state['available'] is False and first_state['state']=='ENQUIRY' and int(first_state['enquiry_id'])==enquiry_id\n        holding_report=client.get('/operations/enquiries?holding=1')\n        assert holding_report.status_code==200 and f'<a href="/operations/enquiries/{enquiry_id}">#{enquiry_id}</a>' in holding_report.text\n        enquiry_anchor=f'<a href="/operations/enquiries/{enquiry_id}">#{enquiry_id}</a>'\n        enquiry_row=holding_report.text.split(enquiry_anchor,1)[1].split('</tr>',1)[0]\n        assert 'Holding Space' in enquiry_row and 'RELEASE ENQUIRY' in enquiry_row
         assert second_state['available'] is False and second_state['state']=='ENQUIRY' and int(second_state['enquiry_id'])==enquiry_id
 
         basket = client.get('/availability/basket')
