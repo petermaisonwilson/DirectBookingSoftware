@@ -96,6 +96,12 @@ def main() -> None:
         assert payment_due(db,cid,120.0,'2035-06-10',today=datetime(2035,1,1).date())[0]==120.0
         assert payment_due(db,cid,380.0,'2035-01-20',today=datetime(2035,1,1).date())[0]==380.0
 
+        # TEST DATA ONLY: visible status labels are client-editable, but finance
+        # automation must continue to use the stable machine meaning.
+        with db.connect() as c:
+            c.execute("UPDATE booking_status_definitions SET name='Part Paid' WHERE company_id=? AND system_code='DEPOSIT_PAID'", (cid,))
+            c.execute("UPDATE booking_status_definitions SET name='Settled' WHERE company_id=? AND system_code='BALANCE_PAID'", (cid,))
+
         detail = client.get(f'/operations/enquiries/{enquiry_id}')
         assert detail.status_code == 200
         assert 'Keep as Quote' not in detail.text and 'KEEP AS QUOTE' not in detail.text
@@ -219,6 +225,21 @@ def main() -> None:
         assert 'Change Status' not in page.text and 'controlled automatically by DBS' in page.text
         assert 'Amend Booking' in page.text and 'Preview Amendment' in page.text
 
+        # TEST DATA ONLY: pay the remaining balance using the normal route. Renaming
+        # the visible statuses above must not stop DBS selecting the correct state.
+        paid_off = client.post(f'/operations/bookings/{booking_id}/payments', data={
+            'csrf': csrf, 'amount': '230.00', 'payment_date': '2035-05-02',
+            'payment_method_id': str(cash_id), 'reference': 'BAL-1', 'notes': 'Balance'
+        }, follow_redirects=False)
+        assert paid_off.status_code == 303
+        with db.connect() as c:
+            paid_status = c.execute('''SELECT s.name,s.system_code FROM bookings b
+                JOIN booking_status_definitions s ON s.id=b.workflow_status_id AND s.company_id=b.company_id
+                WHERE b.id=? AND b.company_id=?''', (booking_id, cid)).fetchone()
+            assert paid_status['name'] == 'Settled' and paid_status['system_code'] == 'BALANCE_PAID'
+        paid_page = client.get(f'/operations/bookings/{booking_id}')
+        assert 'Outstanding:</strong> €0.00' in paid_page.text
+
         # Confirmed-booking amendment: historical nights remain frozen even after Setup rate changes.
         # Extending from 3 to 7 nights prices only four new nights at the current €999 rate and
         # applies the configured duration discount across the whole amended package.
@@ -235,10 +256,10 @@ def main() -> None:
         amendment_id=apply_amendment(db,ctx,quote)
         assert amendment_id>0
         with db.connect() as c:
-            amended=c.execute('SELECT b.arrival_date,b.departure_date,b.total_amount,s.name AS status_name FROM bookings b LEFT JOIN booking_status_definitions s ON s.id=b.workflow_status_id WHERE b.id=?',(booking_id,)).fetchone()
+            amended=c.execute('SELECT b.arrival_date,b.departure_date,b.total_amount,s.name AS status_name,s.system_code FROM bookings b LEFT JOIN booking_status_definitions s ON s.id=b.workflow_status_id WHERE b.id=?',(booking_id,)).fetchone()
             original=c.execute('SELECT original_arrival_date,original_departure_date,original_total_amount FROM booking_elements WHERE id=?',(beid,)).fetchone()
         assert amended['departure_date']=='2035-06-17'
-        assert amended['status_name']=='Deposit Paid'
+        assert amended['status_name']=='Part Paid' and amended['system_code']=='DEPOSIT_PAID'
         assert original['original_arrival_date']=='2035-06-10' and original['original_departure_date']=='2035-06-13' and float(original['original_total_amount'])==300.0
         shorter=amendment_quote(db,cid,booking_id,beid,'2035-06-10','2035-06-15')
         assert shorter['new_nights']==5 and shorter['duration_discount']==0
