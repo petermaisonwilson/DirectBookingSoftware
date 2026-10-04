@@ -11,7 +11,7 @@ from .app import esc, form_data, layout
 from .database import iso_now
 from .setup015_calculator import _addon_rule
 from .setup015_core import audit, context_for, one, require_csrf, rows, working_company
-from .webv1_booking_status import default_status, status_by_id
+from .webv1_booking_status import default_status, status_by_id, status_by_system_code
 from .webv1_payment_methods import payment_rule
 from .webv1_status_availability import availability_state
 from .webv1_booking_amendments import amendment_quote, apply_amendment
@@ -314,7 +314,7 @@ def register_booking_routes(app) -> None:
         method=one(database,'SELECT * FROM payment_method_definitions WHERE company_id=? AND id=? AND active=1',(cid,method_id))
         if method is None: return RedirectResponse(f'/operations/enquiries/{enquiry_id}?convert_error=Choose+an+active+Payment+Method',303)
         if str(method['method_type'])=='card': return RedirectResponse(f'/operations/enquiries/{enquiry_id}?convert_error=Card+provider+connection+is+not+configured+yet',303)
-        total=sum(float(e['provisional_total'] or 0) for e in _enquiry_elements(database,cid,enquiry_id)); status=_status_named(database,cid,'Balance Paid' if round(amount,2)>=round(total,2) else 'Deposit Paid') or default_status(database,cid,'CONFIRMED')
+        total=sum(float(e['provisional_total'] or 0) for e in _enquiry_elements(database,cid,enquiry_id)); status=status_by_system_code(database,cid,'BALANCE_PAID' if round(amount,2)>=round(total,2) else 'DEPOSIT_PAID') or default_status(database,cid,'CONFIRMED')
         try: booking_id=convert_enquiry_with_payment(database,context,cid,enquiry_id,int(status['id']),amount=amount,payment_date=str(data.get('payment_date','')),method=method,reference=str(data.get('reference','')).strip(),notes=str(data.get('notes','')).strip())
         except ValueError as exc: return RedirectResponse(f'/operations/enquiries/{enquiry_id}?convert_error={esc(str(exc))}',303)
         return RedirectResponse(f'/operations/bookings/{booking_id}?created=1',303)
@@ -323,7 +323,7 @@ def register_booking_routes(app) -> None:
     async def confirm_without_payment(enquiry_id:int,request:Request):
         context=context_for(database,request); cid=int(working_company(context)); data=await form_data(request); require_csrf(context,data); reason=str(data.get('reason','')).strip()
         if not reason: return RedirectResponse(f'/operations/enquiries/{enquiry_id}?convert_error=A+reason+is+required+to+confirm+without+payment',303)
-        pending=_status_named(database,cid,'Payment Pending') or default_status(database,cid,'RESERVED')
+        pending=status_by_system_code(database,cid,'PAYMENT_PENDING') or default_status(database,cid,'RESERVED')
         try: booking_id=convert_enquiry(database,context,cid,enquiry_id,int(pending['id']))
         except (TypeError,ValueError) as exc: return RedirectResponse(f'/operations/enquiries/{enquiry_id}?convert_error={esc(str(exc))}',303)
         audit(database,context,cid,'BOOKING_CONFIRMED_WITHOUT_PAYMENT','booking',booking_id,after={'reason':reason,'enquiry_id':enquiry_id})
