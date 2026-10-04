@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+import json
+
 from .database import iso_now
 
 
@@ -16,10 +18,10 @@ def booking_financials(database, company_id: int, booking_id: int, *, connection
     return {'total': total, 'paid': round(paid, 2), 'outstanding': round(max(0.0, total-paid), 2)}
 
 
-def sync_payment_status(database, company_id: int, booking_id: int, *, connection=None) -> dict:
+def sync_payment_status(database, company_id: int, booking_id: int, *, connection=None, context=None) -> dict:
     if connection is None:
         with database.connect() as c:
-            result = sync_payment_status(database, company_id, booking_id, connection=c)
+            result = sync_payment_status(database, company_id, booking_id, connection=c, context=context)
         return result
     c = connection
     booking = c.execute('''SELECT b.workflow_status_id,s.internal_state
@@ -40,5 +42,19 @@ def sync_payment_status(database, company_id: int, booking_id: int, *, connectio
         wanted = 'PAYMENT_PENDING'
     status = c.execute('SELECT id FROM booking_status_definitions WHERE company_id=? AND active=1 AND system_code=? ORDER BY id LIMIT 1', (company_id, wanted)).fetchone()
     if status is not None and int(status['id']) != int(booking['workflow_status_id'] or 0):
-        c.execute('UPDATE bookings SET workflow_status_id=?,updated_at=? WHERE company_id=? AND id=?', (int(status['id']), iso_now(), company_id, booking_id))
+        old_status_id = int(booking['workflow_status_id'] or 0)
+        new_status_id = int(status['id'])
+        now = iso_now()
+        c.execute('UPDATE bookings SET workflow_status_id=?,updated_at=? WHERE company_id=? AND id=?', (new_status_id, now, company_id, booking_id))
+        c.execute('''INSERT INTO audit_log(company_id,actor_user_id,actor_role,acting_company_id,action,entity_type,entity_id,before_json,after_json,created_at)
+                     VALUES (?,?,?,?,?,?,?,?,?,?)''',
+                  (company_id,
+                   context.get('user_id') if context else None,
+                   context.get('role') if context else 'System',
+                   context.get('acting_company_id') if context else None,
+                   'BOOKING_STATUS_AUTOMATIC','booking',str(booking_id),
+                   json.dumps({'workflow_status_id': old_status_id}),
+                   json.dumps({'workflow_status_id': new_status_id, 'system_code': wanted,
+                               'paid': financials['paid'], 'outstanding': financials['outstanding']}),
+                   now))
     return financials
