@@ -115,6 +115,7 @@ def main() -> None:
         assert confirm_page.status_code == 200 and 'Take Payment' in confirm_page.text and 'CONFIRM WITHOUT PAYMENT' in confirm_page.text
         assert 'Payment Required Now:' in confirm_page.text and '€100.00' in confirm_page.text and 'Deposit Pending' in confirm_page.text and 'Party:' in confirm_page.text
         assert 'Booking Elements' in confirm_page.text and 'Lead Passenger:' in confirm_page.text and 'Element total:' in confirm_page.text
+        assert 'readonly' not in confirm_page.text and 'min="100.00"' in confirm_page.text and 'max="380.00"' in confirm_page.text
         # Merely visiting/abandoning Confirm Booking is non-mutating: the Enquiry
         # remains the availability blocker until an explicit conversion/release.
         abandoned=client.get(f'/operations/enquiries/{enquiry_id}')
@@ -149,6 +150,10 @@ def main() -> None:
             assert c.execute('SELECT status FROM enquiries WHERE id=?',(enquiry_id,)).fetchone()['status']=='new'
         with db.connect() as c:
             assert c.execute('SELECT id FROM bookings WHERE company_id=? AND enquiry_id=?', (cid, enquiry_id)).fetchone() is None
+
+        too_large=client.post(f'/operations/enquiries/{enquiry_id}/confirm-payment',data={'csrf':csrf,'workflow_status_id':str(confirmed_id),'payment_method_id':str(cash_id),'amount':'381.00','payment_date':'2035-05-01'},follow_redirects=False)
+        assert too_large.status_code==303
+        with db.connect() as c: assert c.execute('SELECT id FROM bookings WHERE company_id=? AND enquiry_id=?',(cid,enquiry_id)).fetchone() is None
 
         converted = client.post(f'/operations/enquiries/{enquiry_id}/confirm-payment', data={'csrf': csrf, 'workflow_status_id': str(confirmed_id), 'payment_method_id': str(cash_id), 'amount': '100.00', 'payment_date': '2035-05-01', 'reference': 'DEP-1', 'notes': 'Deposit'}, follow_redirects=False)
         assert converted.status_code == 303 and '/operations/bookings/' in converted.headers['location']
