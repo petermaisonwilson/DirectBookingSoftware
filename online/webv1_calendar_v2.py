@@ -84,7 +84,6 @@ def _records(database, cid: int, element_id: int, start: date, end: date):
           JOIN booking_status_definitions s ON s.id=e.workflow_status_id AND s.company_id=e.company_id
           WHERE e.company_id=? AND er.element_id=? AND e.status NOT IN ('closed','converted')
             AND s.blocks_availability=1
-            AND (e.availability_expires_at IS NULL OR e.availability_expires_at>?)
             AND date(e.arrival_date)<date(?) AND date(e.departure_date)>date(?)
           ORDER BY e.arrival_date
         ''', (cid, element_id, iso_now(), end.isoformat(), start.isoformat())).fetchall()
@@ -232,7 +231,7 @@ def register_calendar_v2_routes(app) -> None:
                     customer = (f"{e['first_name']} {e['last_name']}").strip() or 'Customer'
                     colour = str(e['colour'] or held_colour)
                     label = f'{customer} · Enquiry #{int(e["enquiry_id"])} · {e["workflow_name"] or held_name}'
-                    bars += _bar(label, colour, cols, href=f'/operations/enquiries/{int(e["enquiry_id"])}', title=f'Expires {e["availability_expires_at"] or "when released"}')
+                    bars += _bar(label, colour, cols, href=f'/operations/enquiries/{int(e["enquiry_id"])}', title='Held until explicitly released')
                 else:
                     bars += _bar('Held', held_colour, cols, title='Temporarily unavailable')
             for c in closures:
