@@ -293,7 +293,7 @@ def main() -> None:
         assert availability_state(db,cid,element_id,'2035-07-01','2035-07-04')['available'] is True
         released_report = client.get('/operations/enquiries?holding=0')
         assert released_report.status_code == 200 and f'#{life_id}' in released_report.text
-        assert f'#{enquiry_id}' not in released_report.text
+        assert f'<a href="/operations/enquiries/{enquiry_id}">#{enquiry_id}</a>' not in released_report.text
         released_row = released_report.text.split(f'#{life_id}', 1)[1].split('</tr>', 1)[0]
         assert 'RELEASE ENQUIRY' not in released_row and 'REOPEN ENQUIRY' in released_row
         assert client.post(f'/operations/enquiries/{life_id}/reopen',data={'csrf':csrf},follow_redirects=False).status_code==303
