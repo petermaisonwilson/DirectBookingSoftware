@@ -86,7 +86,7 @@ def _records(database, cid: int, element_id: int, start: date, end: date):
             AND s.blocks_availability=1
             AND date(e.arrival_date)<date(?) AND date(e.departure_date)>date(?)
           ORDER BY e.arrival_date
-        ''', (cid, element_id, iso_now(), end.isoformat(), start.isoformat())).fetchall()
+        ''', (cid, element_id, end.isoformat(), start.isoformat())).fetchall()
         closures = c.execute('''SELECT * FROM element_closures WHERE company_id=? AND element_id=?
                                 AND date(start_date)<date(?) AND date(end_date)>date(?) ORDER BY start_date''',
                              (cid, element_id, end.isoformat(), start.isoformat())).fetchall()
