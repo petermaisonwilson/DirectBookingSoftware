@@ -293,7 +293,9 @@ def register_booking_routes(app) -> None:
             addons=[]
             for line in snap.get('lines') or []:
                 item=str(line.get('item',''))
-                if item and item!=str(e['element_name']) and item!='Duration discount' and not any(item==str(p['name']) for p in (people_rows if 'id' in e.keys() else [])): addons.append(f'{esc(item)} ({_money(line.get("amount",0))})')
+                if item and item!=str(e['element_name']) and item!='Duration discount' and not any(item==str(p['name']) for p in (people_rows if 'id' in e.keys() else [])):
+                    amount=float(line.get("amount",0) or 0)
+                    addons.append(esc(item) + (f' ({_money(amount)})' if abs(amount) >= 0.005 else ''))
             lead=str(e['lead_name'] or '').strip() or customer
             element_cards.append(f'<div class="frozen-element"><h3>{esc(e["element_name"])}</h3><p><strong>Stay:</strong> {_fmt_day(e["arrival_date"])} to {_fmt_day(e["departure_date"])}<br><strong>Lead Passenger:</strong> {esc(lead)}<br><strong>People:</strong> {", ".join(people_bits) or "—"}<br><strong>Add-ons:</strong> {", ".join(addons) or "—"}<br><strong>Element total:</strong> {_money(e["provisional_total"])}</p></div>')
         element_summary=''.join(element_cards)
@@ -349,7 +351,7 @@ def register_booking_routes(app) -> None:
             element_people = [p for p in people if int(p["booking_element_id"]) == int(element["id"])]
             element_addons = [a for a in addons if int(a["booking_element_id"]) == int(element["id"])]
             person_text = ', '.join(f'{esc(p["name"])} × {int(p["quantity"])} ({_money(p["total_amount"])})' for p in element_people) or '—'
-            addon_text = ', '.join(f'{esc(a["name"])} × {int(a["quantity"])} ({_money(a["total_amount"])})' for a in element_addons) or '—'
+            addon_text = ', '.join(f'{esc(a["name"])} × {int(a["quantity"])}' + (f' ({_money(a["total_amount"])})' if abs(float(a["total_amount"] or 0)) >= 0.005 else '') for a in element_addons) or '—'
             try:
                 frozen_snapshot = json.loads(element["pricing_snapshot_json"] or '{}')
             except (TypeError, json.JSONDecodeError):
