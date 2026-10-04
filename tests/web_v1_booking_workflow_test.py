@@ -155,7 +155,7 @@ def main() -> None:
         assert too_large.status_code==303
         with db.connect() as c: assert c.execute('SELECT id FROM bookings WHERE company_id=? AND enquiry_id=?',(cid,enquiry_id)).fetchone() is None
 
-        converted = client.post(f'/operations/enquiries/{enquiry_id}/confirm-payment', data={'csrf': csrf, 'workflow_status_id': str(confirmed_id), 'payment_method_id': str(cash_id), 'amount': '100.00', 'payment_date': '2035-05-01', 'reference': 'DEP-1', 'notes': 'Deposit'}, follow_redirects=False)
+        converted = client.post(f'/operations/enquiries/{enquiry_id}/confirm-payment', data={'csrf': csrf, 'workflow_status_id': str(confirmed_id), 'payment_method_id': str(cash_id), 'amount': '150.00', 'payment_date': '2035-05-01', 'reference': 'DEP-1', 'notes': 'Deposit above minimum'}, follow_redirects=False)
         assert converted.status_code == 303 and '/operations/bookings/' in converted.headers['location']
         booking_id = int(converted.headers['location'].split('/operations/bookings/')[1].split('?')[0])
 
@@ -204,8 +204,8 @@ def main() -> None:
             assert still_frozen['arrival_date']=='2035-06-10' and still_frozen['departure_date']=='2035-06-13' and float(still_frozen['total_amount'])==380.0
 
         page = client.get(f'/operations/bookings/{booking_id}')
-        assert '€100.00' in page.text and '€280.00' in page.text and 'Recorded payment €100.00' in page.text
-        assert 'value="280.00"' in page.text
+        assert '€150.00' in page.text and '€230.00' in page.text and 'Recorded payment €150.00' in page.text
+        assert 'value="230.00"' in page.text
         assert 'Change Status' not in page.text and 'controlled automatically by DBS' in page.text
         assert 'Amend Booking' in page.text and 'Preview Amendment' in page.text
 
