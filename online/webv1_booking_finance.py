@@ -33,12 +33,12 @@ def sync_payment_status(database, company_id: int, booking_id: int, *, connectio
     if str(booking['internal_state'] or '') in {'RELEASED','ON_SITE'}:
         return financials
     if financials['outstanding'] <= 0:
-        wanted = 'Balance Paid'
+        wanted = 'BALANCE_PAID'
     elif financials['paid'] > 0:
-        wanted = 'Deposit Paid'
+        wanted = 'DEPOSIT_PAID'
     else:
-        wanted = 'Payment Pending'
-    status = c.execute('SELECT id FROM booking_status_definitions WHERE company_id=? AND active=1 AND name=? COLLATE NOCASE ORDER BY id LIMIT 1', (company_id, wanted)).fetchone()
+        wanted = 'PAYMENT_PENDING'
+    status = c.execute('SELECT id FROM booking_status_definitions WHERE company_id=? AND active=1 AND system_code=? ORDER BY id LIMIT 1', (company_id, wanted)).fetchone()
     if status is not None and int(status['id']) != int(booking['workflow_status_id'] or 0):
         c.execute('UPDATE bookings SET workflow_status_id=?,updated_at=? WHERE company_id=? AND id=?', (int(status['id']), iso_now(), company_id, booking_id))
     return financials
