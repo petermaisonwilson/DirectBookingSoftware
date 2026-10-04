@@ -85,6 +85,8 @@ def main() -> None:
 
         setup_page = client.get('/setup')
         assert setup_page.status_code == 200 and 'Payment Methods' in setup_page.text and '/setup/payment-methods' in setup_page.text
+        duration_page=client.get('/setup/duration-discounts')
+        assert duration_page.status_code==200 and 'Duration Discounts' in duration_page.text and 'Add Duration Discount' in duration_page.text
         rules_page=client.get('/setup/payment-methods')
         assert rules_page.status_code==200 and 'Payment / Deposit Rules' in rules_page.text and 'Always Require Full Payment' in rules_page.text
         saved_rules=client.post('/setup/payment-rules',data={'csrf':csrf,'deposit_type':'percent','deposit_value':'25','full_payment_threshold':'150','balance_due_days':'30'},follow_redirects=False)
@@ -243,9 +245,21 @@ def main() -> None:
         # Confirmed-booking amendment: historical nights remain frozen even after Setup rate changes.
         # Extending from 3 to 7 nights prices only four new nights at the current €999 rate and
         # applies the configured duration discount across the whole amended package.
+        duration_saved = client.post('/setup/duration-discounts', data={
+            'csrf': csrf, 'name': '7 nights', 'min_nights': '7',
+            'discount_type': 'Percentage', 'discount_value': '10',
+            'scope_type': 'Element', 'element_id': str(element_id), 'element_type': ''
+        }, follow_redirects=False)
+        assert duration_saved.status_code == 303
         with db.connect() as c:
-            c.execute("INSERT INTO setup_duration_discounts(company_id,name,min_nights,discount_type,discount_value,scope_type,element_id,created_at) VALUES (?,?,?,?,?,?,?,?)",
-                      (cid,'7 nights',7,'Percentage',10.0,'Element',element_id,now))
+            duration_row = c.execute("SELECT id,active FROM setup_duration_discounts WHERE company_id=? AND name='7 nights'", (cid,)).fetchone()
+            assert duration_row is not None and int(duration_row['active']) == 1
+            duration_id = int(duration_row['id'])
+        toggled = client.post('/setup/duration-discounts/toggle', data={'csrf': csrf, 'id': str(duration_id)}, follow_redirects=False)
+        assert toggled.status_code == 303
+        with db.connect() as c:
+            assert int(c.execute('SELECT active FROM setup_duration_discounts WHERE id=?', (duration_id,)).fetchone()['active']) == 0
+        assert client.post('/setup/duration-discounts/toggle', data={'csrf': csrf, 'id': str(duration_id)}, follow_redirects=False).status_code == 303
         quote=amendment_quote(db,cid,booking_id,int(c.execute('SELECT id FROM booking_elements WHERE booking_id=?',(booking_id,)).fetchone()['id']) if False else 0,'2035-06-10','2035-06-17') if False else None
         with db.connect() as c:
             beid=int(c.execute('SELECT id FROM booking_elements WHERE booking_id=? AND company_id=?',(booking_id,cid)).fetchone()['id'])
