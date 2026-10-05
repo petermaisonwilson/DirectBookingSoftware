@@ -37,6 +37,7 @@ def _enquiry_conflict(connection, company_id: int, element_id: int, start: str, 
         JOIN enquiry_elements ee ON ee.enquiry_id=e.id AND ee.company_id=e.company_id
         LEFT JOIN booking_status_definitions s ON s.id=e.workflow_status_id AND s.company_id=e.company_id
         WHERE e.company_id=? AND ee.element_id=?
+          AND COALESCE(ee.recovery_state,'held')='held'
           AND e.status NOT IN ('closed','converted')
           AND NOT EXISTS (SELECT 1 FROM bookings bx WHERE bx.company_id=e.company_id AND bx.enquiry_id=e.id)
           AND COALESCE(s.blocks_availability,1)=1
