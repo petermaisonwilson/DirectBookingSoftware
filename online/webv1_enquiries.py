@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+from urllib.parse import quote_plus
 
 from fastapi import Request
 from fastapi.responses import HTMLResponse, RedirectResponse
@@ -9,6 +10,7 @@ from .app import esc, layout
 from .setup015_core import context_for, one, rows, working_company
 from .webv1_bookings import enquiry_conversion_panel
 from .webv1_status_availability import availability_state
+from .webv1_enquiry_builder import _calculate
 from .database import iso_now
 from .app import form_data
 from .setup015_core import audit, require_csrf
@@ -101,7 +103,12 @@ def register_enquiry_routes(app) -> None:
                 people_text=', '.join(f'{esc(r["name"])} × {int(r["quantity"])}' for r in epeople) or '—'
                 addons_text=', '.join(f'{esc(r["name"])} × {int(r["quantity"])}' for r in eaddons) or '—'
                 subtotal=float(erow['provisional_total'] or 0); grand_total+=subtotal
-                element_cards.append(f'<h3>{esc(erow["element_name"] or "Element")}</h3><p><strong>Element Type:</strong> {esc(erow["element_type"] or "—")}<br><strong>Guest surname:</strong> {esc(erow["lead_name"] or "—")}<br><strong>Arrival:</strong> {_fmt_day(erow["arrival_date"])}<br><strong>Departure:</strong> {_fmt_day(erow["departure_date"])}<br><strong>People:</strong> {people_text}<br><strong>Add-ons:</strong> {addons_text}<br><strong>Element total:</strong> €{subtotal:.2f}</p>')
+                recovery=str(erow['recovery_state'] or 'held') if 'recovery_state' in erow.keys() else 'held'
+                if recovery == 'needs_replacement':
+                    recovery_html = f'<div style="border:2px solid #b42318;background:#fff1f0;padding:10px;border-radius:7px"><strong style="color:#b42318">NOT AVAILABLE — REPLACEMENT REQUIRED</strong><br>The original Element is no longer available for these dates. <a class="button" href="/availability/calendar-v2?recovery_enquiry={enquiry_id}&recovery_element={eeid}&element_type={quote_plus(str(erow["element_type"] or ""))}&arrival={esc(erow["arrival_date"])}&departure={esc(erow["departure_date"])}">FIND REPLACEMENT</a></div>'
+                else:
+                    recovery_html = '<p><strong style="color:#267326">AVAILABLE — HELD AGAIN</strong></p>' if str(enquiry['status']) == 'new' else ''
+                element_cards.append(f'<h3>{esc(erow["element_name"] or "Element")}</h3>{recovery_html}<p><strong>Element Type:</strong> {esc(erow["element_type"] or "—")}<br><strong>Guest surname:</strong> {esc(erow["lead_name"] or "—")}<br><strong>Arrival:</strong> {_fmt_day(erow["arrival_date"])}<br><strong>Departure:</strong> {_fmt_day(erow["departure_date"])}<br><strong>People:</strong> {people_text}<br><strong>Add-ons:</strong> {addons_text}<br><strong>Element total:</strong> €{subtotal:.2f}</p>')
             request_html=f'<div class="card"><h2>Requested stay</h2>{"".join(element_cards)}<p><strong>Provisional total: €{grand_total:.2f}</strong></p><p><a class="button" href="/operations/enquiries/{enquiry_id}/edit">Edit / Recalculate Enquiry</a></p></div>'
         elif request_row is None:
             request_html = f'<div class="card"><h2>Requested stay</h2><p>No Element Type or Element has been attached yet.</p><p><a class="button" href="/operations/enquiries/{enquiry_id}/edit">Edit Enquiry</a></p></div>'
@@ -144,16 +151,56 @@ def register_enquiry_routes(app) -> None:
             return RedirectResponse('/operations/enquiries', 303)
         elements=rows(database,'SELECT * FROM enquiry_elements WHERE enquiry_id=? AND company_id=? ORDER BY sort_order,id',(enquiry_id,company_id))
         if not elements:
-            legacy=one(database,'SELECT element_id FROM enquiry_requests WHERE enquiry_id=? AND company_id=?',(enquiry_id,company_id))
-            if legacy is not None and legacy['element_id'] is not None and enquiry['arrival_date'] and enquiry['departure_date']:
-                elements=[{'element_id':legacy['element_id'],'arrival_date':enquiry['arrival_date'],'departure_date':enquiry['departure_date']}]
-        if not elements:
-            return RedirectResponse(f'/operations/enquiries/{enquiry_id}?convert_error=Availability+must+be+rechecked+before+this+Enquiry+can+be+reopened', 303)
+            return RedirectResponse(f'/operations/enquiries/{enquiry_id}?convert_error=Availability+must+be+rechecked+before+this+Enquiry+can+be+reopened',303)
+        available_ids=[]; missing_ids=[]
         for element in elements:
             state=availability_state(database,company_id,int(element['element_id']),str(element['arrival_date']),str(element['departure_date']),exclude_enquiry_id=enquiry_id)
-            if not state.get('available'):
-                return RedirectResponse(f'/operations/enquiries/{enquiry_id}?convert_error=Cannot+reopen:+one+or+more+original+Elements+are+no+longer+available',303)
+            (available_ids if state.get('available') else missing_ids).append(int(element['id']))
+        now=iso_now()
         with database.connect() as c:
-            c.execute("UPDATE enquiries SET status='new',updated_at=? WHERE id=? AND company_id=?", (iso_now(), enquiry_id, company_id))
-        audit(database, context, company_id, 'ENQUIRY_REOPENED', 'enquiry', enquiry_id, before={'status': 'closed'}, after={'status': 'new', 'availability_rechecked': True})
-        return RedirectResponse(f'/operations/enquiries/{enquiry_id}?saved=1', 303)
+            c.execute("UPDATE enquiries SET status='new',updated_at=? WHERE id=? AND company_id=?",(now,enquiry_id,company_id))
+            for eeid in available_ids:
+                c.execute("UPDATE enquiry_elements SET recovery_state='held',updated_at=? WHERE id=? AND company_id=?",(now,eeid,company_id))
+            for eeid in missing_ids:
+                c.execute("UPDATE enquiry_elements SET recovery_state='needs_replacement',updated_at=? WHERE id=? AND company_id=?",(now,eeid,company_id))
+        audit(database,context,company_id,'ENQUIRY_REOPENED','enquiry',enquiry_id,before={'status':'closed'},after={'status':'new','availability_rechecked':True,'elements_reheld':available_ids,'elements_needing_replacement':missing_ids})
+        message='Enquiry+reopened.' if not missing_ids else f'Enquiry+partly+reopened:+{len(available_ids)}+Element(s)+held,+{len(missing_ids)}+require+replacement.'
+        return RedirectResponse(f'/operations/enquiries/{enquiry_id}?convert_error={message}',303)
+
+    @app.post('/operations/enquiries/{enquiry_id}/elements/{enquiry_element_id}/replace')
+    async def replace_recovery_element(enquiry_id:int,enquiry_element_id:int,request:Request):
+        context=context_for(database,request); company_id=int(working_company(context))
+        data=await form_data(request); require_csrf(context,data)
+        enquiry=one(database,"SELECT * FROM enquiries WHERE id=? AND company_id=? AND status='new'",(enquiry_id,company_id))
+        old=one(database,"SELECT * FROM enquiry_elements WHERE id=? AND enquiry_id=? AND company_id=?",(enquiry_element_id,enquiry_id,company_id))
+        if enquiry is None or old is None or str(old['recovery_state'] or 'held')!='needs_replacement':
+            return JSONResponse({'ok':False,'error':'That Enquiry Element is not awaiting replacement.'},status_code=409)
+        try:
+            element_id=int(data.get('element_id','')); arrival=str(data.get('arrival_date','')); departure=str(data.get('departure_date',''))
+        except (TypeError,ValueError):
+            return JSONResponse({'ok':False,'error':'Choose a valid replacement Element.'},status_code=409)
+        state=availability_state(database,company_id,element_id,arrival,departure,exclude_enquiry_id=enquiry_id)
+        if not state.get('available'):
+            return JSONResponse({'ok':False,'error':state.get('reason') or 'That Element is no longer available.'},status_code=409)
+        chosen=one(database,'SELECT * FROM setup_elements WHERE id=? AND company_id=? AND active=1',(element_id,company_id))
+        if chosen is None or str(chosen['element_type'])!=str(old['element_type']):
+            return JSONResponse({'ok':False,'error':'Choose a replacement from the same Element Type.'},status_code=409)
+        values={'arrival_date':arrival,'departure_date':departure,'party_size':str(int(old['party_size'] or 0)),'source':'Availability','notes':'','element_type':str(old['element_type']),'element_id':str(element_id)}
+        for p in rows(database,'SELECT person_type_id,quantity FROM enquiry_element_people WHERE enquiry_element_id=? AND company_id=?',(enquiry_element_id,company_id)):
+            values[f'person_{int(p["person_type_id"])}']=str(int(p['quantity'] or 0))
+        for a in rows(database,'SELECT addon_id,quantity FROM enquiry_element_addons WHERE enquiry_element_id=? AND company_id=?',(enquiry_element_id,company_id)):
+            if int(a['quantity'] or 0)>0:
+                values[f'addon_{int(a["addon_id"])}']=str(int(a['quantity'])); values[f'addon_selected_{int(a["addon_id"])}']='1'; values[f'addon_when_{int(a["addon_id"])}']='every_day'
+        calculation,_,error=_calculate(database,company_id,values)
+        if error or calculation is None:
+            return JSONResponse({'ok':False,'error':error or 'Unable to price that replacement.'},status_code=409)
+        snap=json.dumps({'element_type':calculation['element_type'],'element_id':calculation['element_id'],'element_name':calculation['element_name'],'year':calculation['year'],'nights':calculation['nights'],'people_total':calculation['people_total'],'addon_when':calculation['addon_when'],'addon_days':calculation['addon_days'],'addon_people':calculation['addon_people'],'addon_person_days':calculation['addon_person_days'],'selected_addons':calculation['selected_addons'],'lines':calculation['lines'],'total':calculation['total']},separators=(',',':'))
+        now=iso_now()
+        with database.connect() as c:
+            c.execute("UPDATE enquiry_elements SET element_id=?,arrival_date=?,departure_date=?,provisional_total=?,pricing_snapshot_json=?,recovery_state='held',updated_at=? WHERE id=? AND enquiry_id=? AND company_id=?",(element_id,arrival,departure,float(calculation['total']),snap,now,enquiry_element_id,enquiry_id,company_id))
+            bounds=c.execute("SELECT MIN(arrival_date) a,MAX(departure_date) d,SUM(COALESCE(party_size,0)) p FROM enquiry_elements WHERE enquiry_id=? AND company_id=?",(enquiry_id,company_id)).fetchone()
+            c.execute("UPDATE enquiries SET arrival_date=?,departure_date=?,party_size=?,updated_at=? WHERE id=? AND company_id=?",(bounds['a'],bounds['d'],int(bounds['p'] or 0),now,enquiry_id,company_id))
+            unresolved=int(c.execute("SELECT COUNT(*) n FROM enquiry_elements WHERE enquiry_id=? AND company_id=? AND recovery_state='needs_replacement'",(enquiry_id,company_id)).fetchone()['n'])
+        audit(database,context,company_id,'ENQUIRY_ELEMENT_REPLACED','enquiry',enquiry_id,before={'enquiry_element_id':enquiry_element_id,'element_id':int(old['element_id']),'arrival_date':old['arrival_date'],'departure_date':old['departure_date']},after={'enquiry_element_id':enquiry_element_id,'element_id':element_id,'arrival_date':arrival,'departure_date':departure,'remaining_replacements':unresolved})
+        return JSONResponse({'ok':True,'enquiry_id':enquiry_id,'remaining_replacements':unresolved})
+
