@@ -27,6 +27,8 @@ on:
 
 jobs:
   test-web-v1-windows:
+    permissions:
+      contents: write
     runs-on: windows-latest
     timeout-minutes: 20
     steps:
@@ -276,7 +278,32 @@ jobs:
           )
           $notes | Set-Content "artifact\TEST-PACKAGE-NOTES.txt"
 
-      - name: Upload Web V1 artifact
+      - name: Create Peter download ZIP
+        id: peter_zip
+        shell: pwsh
+        run: |
+          $build = "${{ steps.dbs_build.outputs.build }}"
+          $zip = "DBS_Build_${build}_v3_Test_${{ github.run_number }}.zip"
+          if (Test-Path $zip) { Remove-Item $zip -Force }
+          Compress-Archive -Path "artifact\*" -DestinationPath $zip -CompressionLevel Optimal
+          $hash = (Get-FileHash $zip -Algorithm SHA256).Hash.ToLower()
+          "${hash}  ${zip}" | Set-Content "${zip}.sha256"
+          "zip=${zip}" | Out-File -FilePath $env:GITHUB_OUTPUT -Append
+          "sha256=${hash}" | Out-File -FilePath $env:GITHUB_OUTPUT -Append
+          Write-Host "Peter download: $zip"
+          Write-Host "SHA256: $hash"
+
+      - name: Publish Peter download as GitHub pre-release
+        if: github.event_name != 'pull_request'
+        shell: pwsh
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          $tag = "dbs-build-${{ steps.dbs_build.outputs.build }}-test-${{ github.run_number }}"
+          $zip = "${{ steps.peter_zip.outputs.zip }}"
+          gh release create $tag $zip "${zip}.sha256" --target "${{ github.sha }}" --prerelease --title "DBS Build ${{ steps.dbs_build.outputs.build }} v3 Test #${{ github.run_number }}" --notes "Automated green test build. Direct ZIP created by the DBS workflow. SHA256: ${{ steps.peter_zip.outputs.sha256 }}"
+
+      - name: Upload Web V1 diagnostic artifact
         uses: actions/upload-artifact@v4
         with:
           name: DBS-Build-${{ steps.dbs_build.outputs.build }}
