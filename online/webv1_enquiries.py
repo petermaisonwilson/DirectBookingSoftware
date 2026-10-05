@@ -45,6 +45,15 @@ def _enquiry_action(row, context) -> str:
 
 def register_enquiry_routes(app) -> None:
     database = app.state.database
+    # Build 302 v3 databases are also opened directly by the portable launcher
+    # and test harness, so keep this additive schema upgrade idempotent here as
+    # well as in Alembic migration 0007.
+    with database.connect() as c:
+        columns={str(r['name']) for r in c.execute("PRAGMA table_info(enquiry_elements)").fetchall()}
+        if columns and 'recovery_state' not in columns:
+            c.execute("ALTER TABLE enquiry_elements ADD COLUMN recovery_state TEXT NOT NULL DEFAULT 'held'")
+        if columns:
+            c.execute("CREATE INDEX IF NOT EXISTS idx_enquiry_elements_recovery ON enquiry_elements(company_id,enquiry_id,recovery_state)")
 
     @app.get('/operations/enquiries', response_class=HTMLResponse)
     def enquiry_register(request: Request, q: str = '', status: str = '', source: str = '', arrival_from: str = '', arrival_to: str = '', departure_from: str = '', departure_to: str = '', holding: str = ''):
