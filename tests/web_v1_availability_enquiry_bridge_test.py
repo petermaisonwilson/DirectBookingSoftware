@@ -138,6 +138,13 @@ def main() -> None:
         assert new_enquiry_page.status_code == 200
         assert 'HOLDING SPACE' in new_enquiry_page.text
         assert 'HELD AGAIN' not in new_enquiry_page.text
+        # TEST DATA ONLY: editing a held Enquiry must load the authoritative
+        # element-specific requirements, not zeroed legacy enquiry-wide values.
+        edit_page = client.get(f'/operations/enquiries/{enquiry_id}/edit')
+        assert edit_page.status_code == 200
+        assert 'Current space remains held while you edit.' in edit_page.text
+        assert 'SAVE CHANGES' in edit_page.text
+        assert 'CHECK CHANGES &amp; PRICE' in edit_page.text
         with db.connect() as c:
             enquiry = c.execute('SELECT * FROM enquiries WHERE id=? AND company_id=?', (enquiry_id, cid)).fetchone()
             assert enquiry is not None
