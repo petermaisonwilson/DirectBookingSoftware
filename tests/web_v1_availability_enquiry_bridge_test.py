@@ -181,6 +181,44 @@ def main() -> None:
         assert '€40.00' in enquiry_page.text and '€90.00' in enquiry_page.text
         assert 'Provisional total: €130.00' in enquiry_page.text
 
+        # TEST DATA ONLY: partial reopen recovery. One original Element remains
+        # available while the other becomes unavailable after explicit release.
+        released=client.post(f'/operations/enquiries/{enquiry_id}/release',data={'csrf':csrf},follow_redirects=False)
+        assert released.status_code==303
+        with db.connect() as c:
+            c.execute("INSERT INTO element_closures(company_id,element_id,start_date,end_date,reason,created_at,updated_at) VALUES (?,?,?,?,?,?,?)",(cid,element2_id,'2036-08-15','2036-08-18','TEST DATA ONLY recovery conflict',now.isoformat(timespec='seconds'),now.isoformat(timespec='seconds')))
+            element3_id=int(c.execute("INSERT INTO setup_elements(company_id,name,element_type,pricing_method,base_price,active) VALUES (?,?,?,?,?,1)",(cid,'Bridge Pitch C','Bridge Camping','Per night',0)).lastrowid)
+            c.execute('INSERT INTO setup_element_rates(company_id,year,element_id,season_id,rate) VALUES (?,?,?,?,?)',(cid,2036,element3_id,season_id,35.0))
+            c.execute('INSERT INTO setup_occupancy(company_id,year,element_id,max_total) VALUES (?,?,?,?)',(cid,2036,element3_id,6))
+            c.execute('INSERT INTO setup_person_limits(company_id,year,element_id,person_type_id,max_count,min_count) VALUES (?,?,?,?,?,?)',(cid,2036,element3_id,chosen_person,6,0))
+            c.execute('INSERT INTO setup_person_prices(company_id,year,element_id,person_type_id,rate) VALUES (?,?,?,?,?)',(cid,2036,element3_id,chosen_person,0.0))
+        reopened=client.post(f'/operations/enquiries/{enquiry_id}/reopen',data={'csrf':csrf},follow_redirects=False)
+        assert reopened.status_code==303
+        with db.connect() as c:
+            states=c.execute('SELECT id,element_id,recovery_state FROM enquiry_elements WHERE enquiry_id=? AND company_id=? ORDER BY sort_order,id',(enquiry_id,cid)).fetchall()
+            assert [str(x['recovery_state']) for x in states]==['held','needs_replacement']
+            missing_eeid=int(states[1]['id'])
+        assert availability_state(db,cid,element_id,'2036-08-10','2036-08-12')['state']=='ENQUIRY'
+        partial=client.get(f'/operations/enquiries/{enquiry_id}')
+        assert partial.status_code==200
+        assert 'AVAILABLE — HELD AGAIN' in partial.text
+        assert 'NOT AVAILABLE — REPLACEMENT REQUIRED' in partial.text
+        assert 'FIND REPLACEMENT' in partial.text
+        assert 'require replacement' in partial.text and 'disabled' in partial.text
+        calendar=client.get('/availability/calendar-v2',params={'recovery_enquiry':enquiry_id,'recovery_element':missing_eeid,'element_type':'Bridge Camping','arrival':'2036-08-15','departure':'2036-08-18'})
+        assert calendar.status_code==200
+        assert 'REPLACE UNAVAILABLE ELEMENT' in calendar.text and 'Bridge Pitch B' in calendar.text
+        assert 'USE REPLACEMENT' in calendar.text
+        replacement=client.post(f'/operations/enquiries/{enquiry_id}/elements/{missing_eeid}/replace',data={'csrf':csrf,'element_id':element3_id,'arrival_date':'2036-08-16','departure_date':'2036-08-19'})
+        assert replacement.status_code==200 and replacement.json()['ok'] is True and replacement.json()['remaining_replacements']==0
+        with db.connect() as c:
+            changed=c.execute('SELECT element_id,arrival_date,departure_date,recovery_state FROM enquiry_elements WHERE id=?',(missing_eeid,)).fetchone()
+            assert int(changed['element_id'])==element3_id and changed['arrival_date']=='2036-08-16' and changed['departure_date']=='2036-08-19' and changed['recovery_state']=='held'
+        assert availability_state(db,cid,element3_id,'2036-08-16','2036-08-19')['state']=='ENQUIRY'
+        recovered=client.get(f'/operations/enquiries/{enquiry_id}')
+        assert 'NOT AVAILABLE — REPLACEMENT REQUIRED' not in recovered.text
+        assert 'CONFIRM BOOKING' in recovered.text and '<button disabled>CONFIRM BOOKING</button>' not in recovered.text
+
     print('Direct Booking Web V1 Availability to Customer matching to Save Enquiry bridge test: passed')
 
 
