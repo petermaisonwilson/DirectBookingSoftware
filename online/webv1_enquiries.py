@@ -162,7 +162,16 @@ def register_enquiry_routes(app) -> None:
             return RedirectResponse('/operations/enquiries', 303)
         elements=rows(database,'SELECT * FROM enquiry_elements WHERE enquiry_id=? AND company_id=? ORDER BY sort_order,id',(enquiry_id,company_id))
         if not elements:
-            return RedirectResponse(f'/operations/enquiries/{enquiry_id}?convert_error=Availability+must+be+rechecked+before+this+Enquiry+can+be+reopened',303)
+            legacy=one(database,'SELECT element_id,element_type FROM enquiry_requests WHERE enquiry_id=? AND company_id=?',(enquiry_id,company_id))
+            if legacy is None or legacy['element_id'] is None or not enquiry['arrival_date'] or not enquiry['departure_date']:
+                return RedirectResponse(f'/operations/enquiries/{enquiry_id}?convert_error=Availability+must+be+rechecked+before+this+Enquiry+can+be+reopened',303)
+            state=availability_state(database,company_id,int(legacy['element_id']),str(enquiry['arrival_date']),str(enquiry['departure_date']),exclude_enquiry_id=enquiry_id)
+            if not state.get('available'):
+                return RedirectResponse(f'/operations/enquiries/{enquiry_id}?convert_error=Cannot+reopen:+the+original+Element+is+no+longer+available',303)
+            with database.connect() as c:
+                c.execute("UPDATE enquiries SET status='new',updated_at=? WHERE id=? AND company_id=?",(iso_now(),enquiry_id,company_id))
+            audit(database,context,company_id,'ENQUIRY_REOPENED','enquiry',enquiry_id,before={'status':'closed'},after={'status':'new','availability_rechecked':True,'legacy_single_element':True})
+            return RedirectResponse(f'/operations/enquiries/{enquiry_id}?saved=1',303)
         available_ids=[]; missing_ids=[]
         for element in elements:
             state=availability_state(database,company_id,int(element['element_id']),str(element['arrival_date']),str(element['departure_date']),exclude_enquiry_id=enquiry_id)
