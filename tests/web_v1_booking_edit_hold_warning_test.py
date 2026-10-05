@@ -108,10 +108,12 @@ def main() -> None:
 
         review = client.get('/availability/basket/review')
         assert review.status_code == 200 and 'Edit Test Pitch' in review.text and 'Edit Test Peg A' in review.text and 'Edit Test Cabin 1' in review.text
-        # Each relevant value appears once in the persistent strip and once in the
-        # Basket table. Fishing's deliberately stale Child/Motorhome values are hidden.
-        assert review.text.count('Edit Test Motorhome 1') == 4
-        assert review.text.count('2 Edit Test Child') == 4
+        # TEST DATA ONLY: Basket has one authoritative summary. Each relevant
+        # value therefore appears only in the persistent booking summary.
+        # Fishing's deliberately stale Child/Motorhome values remain hidden.
+        assert review.text.count('Edit Test Motorhome 1') == 2
+        assert review.text.count('2 Edit Test Child') == 2
+        assert 'Verify booking contents' not in review.text
 
         edit = client.get('/availability/start', params={'edit_hold': camping_hold})
         assert edit.status_code == 200 and 'Editing this basket item' in edit.text
