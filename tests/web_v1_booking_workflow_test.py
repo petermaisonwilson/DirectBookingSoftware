@@ -288,7 +288,8 @@ def main() -> None:
             life_customer=int(c.execute("INSERT INTO customer_records(company_id,first_name,last_name,email,phone,created_at,updated_at) VALUES (?,?,?,?,?,?,?)",(cid,'Lifecycle','Test','life@example.test','',now,now)).lastrowid)
             life_id=int(c.execute("INSERT INTO enquiries(company_id,customer_id,status,workflow_status_id,source,arrival_date,departure_date,party_size,notes,created_at,updated_at) VALUES (?,?,?,?,?,?,?,?,?,?,?)",(cid,life_customer,'new',held_id,'Test','2035-07-01','2035-07-04',2,'Lifecycle regression',now,now)).lastrowid)
             c.execute("INSERT INTO enquiry_requests(enquiry_id,company_id,element_type,element_id,provisional_total,pricing_snapshot_json,updated_at) VALUES (?,?,?,?,?,?,?)",(life_id,cid,'Lodge',element_id,300.0,json.dumps(snapshot),now))
-        assert availability_state(db,cid,element_id,'2035-07-01','2035-07-04')['state']=='ENQUIRY'
+        life_state=availability_state(db,cid,element_id,'2035-07-01','2035-07-04')
+        assert life_state['state']=='ENQUIRY', life_state
         assert client.post(f'/operations/enquiries/{life_id}/release',data={'csrf':csrf},follow_redirects=False).status_code==303
         assert availability_state(db,cid,element_id,'2035-07-01','2035-07-04')['available'] is True
         released_report = client.get('/operations/enquiries?holding=0')
