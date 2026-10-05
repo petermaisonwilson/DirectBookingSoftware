@@ -96,15 +96,19 @@ def register_calendar_v5_routes(app) -> None:
                 q += ('&' if q else '?') + 'element_type=' + quote_plus(selected_type)
             body += f'<div class="card requirement-summary">{name_html}{type_html}<strong>Your requirements:</strong> {summary_html} <a class="button secondary" style="margin-left:10px" href="/availability/start{q}">CHANGE REQUIREMENTS</a></div>'
 
-        body += f'''<div class="card"><form id="availability-form" method="get" action="/availability/calendar-v2">
-        <input type="hidden" id="edit-hold" name="edit_hold" value="{edit_hold or ''}"><input type="hidden" id="calendar-start" name="start" value="{visible_start.isoformat()}">
-        <div class="grid"><div><label>Add/Change Element</label><select id="element-type" name="element_type">{options}</select></div>
-        <div><label>Arrival</label><input id="arrival-date" type="date" name="arrival" value="{esc(arrival)}"></div>
-        <div><label>Departure</label><input id="departure-date" type="date" name="departure" value="{esc(departure)}"></div></div><p>
-        <button type="submit" formaction="/availability/start">ADD / CHANGE ELEMENT</button>
+        # Availability is a result/selection screen. Starting another Element
+        # always goes through Booking Requirements so inherited party data is
+        # checked against the new Element Type before anything can be selected.
+        add_query = f'?edit_hold={int(edit_hold)}' if edit_hold else ''
+        body += f'''<div class="card"><div id="availability-form">
+        <input type="hidden" id="edit-hold" value="{edit_hold or ''}">
+        <input type="hidden" id="element-type" value="{esc(selected_type)}">
+        <input type="hidden" id="arrival-date" value="{esc(arrival)}">
+        <input type="hidden" id="departure-date" value="{esc(departure)}">
+        <p><a class="button" href="/availability/start{add_query}">ADD / CHANGE ELEMENT</a>
         <a class="button secondary" href="/availability/calendar-v2?{preserve}&start={(visible_start-timedelta(days=14)).isoformat()}">← Previous 14 days</a>
         <a class="button secondary" href="/availability/calendar-v2?{preserve}&start={(visible_start+timedelta(days=14)).isoformat()}">Next 14 days →</a>
-        {'<a class="button secondary" href="/setup/booking-statuses">Booking Statuses</a>' if staff else ''}</p></form></div>'''
+        {'<a class="button secondary" href="/setup/booking-statuses">Booking Statuses</a>' if staff else ''}</p></div></div>'''
 
         if editing:
             edit_name = str(editing['lead_name'] or '').strip() or str(editing['element_name'])
@@ -279,8 +283,7 @@ def register_calendar_v5_routes(app) -> None:
         const dayAfter=iso=>{{const d=new Date(iso+'T12:00:00');d.setDate(d.getDate()+1);return d.toISOString().slice(0,10)}};
         function qsFor(a,d){{const q=new URLSearchParams();if(elementType.value)q.set('element_type',elementType.value);if(a)q.set('arrival',a);if(d)q.set('departure',d);if(editingHold)q.set('edit_hold',editingHold);if(recoveryEnquiry){{q.set('recovery_enquiry',recoveryEnquiry);q.set('recovery_element',recoveryElement)}}return q}}
         function submitDates(){{const a=arrivalInput.value,d=departureInput.value;if(!a||!d||d<=a)return;window.location='/availability/calendar-v2?'+qsFor(a,d)}}
-        elementType.addEventListener('change',()=>{{window.location='/availability/calendar-v2?'+qsFor(arrivalInput.value||anchorArr,departureInput.value||anchorDep)}});
-        arrivalInput.addEventListener('change',()=>{{if(!arrivalInput.value)return;const n=dayAfter(arrivalInput.value);departureInput.min=n;departureInput.value=n;submitDates()}}); departureInput.addEventListener('change',submitDates);
+
         function clearBars(){{document.querySelectorAll('.selection-action').forEach(x=>x.hidden=true)}}
         function showSelection(eid,a,d){{clearBars();const row=document.querySelector('.element-row[data-element="'+eid+'"]');if(!row||row.classList.contains('party-unsuitable'))return;const ds=[...document.querySelectorAll('#calendar-scroll .cal-date')].map(x=>x.dataset.date),s=ds.indexOf(a),e=ds.indexOf(d);if(s<0||e<=s)return;const b=row.querySelector('.selection-action');b.style.gridColumn=(s+2)+' / '+(e+2);b.style.gridRow='1';b.hidden=false;selectedElement=Number(eid)}}
         document.querySelectorAll('.date-pick').forEach(cell=>cell.addEventListener('click',()=>{{const chosen=cell.dataset.date,eid=Number(cell.dataset.element);if(!firstPick||selectedElement!==eid){{firstPick=chosen;selectedElement=eid;arrivalInput.value=chosen;departureInput.value='';clearBars();return}}if(chosen<=firstPick){{firstPick=chosen;arrivalInput.value=chosen;departureInput.value='';return}}arrivalInput.value=firstPick;departureInput.value=chosen;showSelection(eid,firstPick,chosen);firstPick=''}}));
