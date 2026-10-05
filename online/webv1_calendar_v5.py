@@ -23,7 +23,7 @@ def register_calendar_v5_routes(app) -> None:
     database = app.state.database
 
     @app.get('/availability/calendar-v2', response_class=HTMLResponse)
-    def calendar(request: Request, element_type: str = '', start: str = '', arrival: str = '', departure: str = '', edit_hold: int = 0):
+    def calendar(request: Request, element_type: str = '', start: str = '', arrival: str = '', departure: str = '', edit_hold: int = 0, recovery_enquiry: int = 0, recovery_element: int = 0):
         context, cid = _session_context(database, request)
         staff = str(context['role']) in {'operator', 'supervisor'}
         token = request.cookies.get(COOKIE_NAME, '')
@@ -62,6 +62,14 @@ def register_calendar_v5_routes(app) -> None:
             preserve += f'&edit_hold={edit_hold}'
 
         body = booking_progress_strip(database, context, cid, token) + '<h1>Availability Calendar</h1>'
+        recovery_row = one(database, '''SELECT ee.*,se.name AS element_name FROM enquiry_elements ee JOIN setup_elements se ON se.id=ee.element_id AND se.company_id=ee.company_id WHERE ee.id=? AND ee.enquiry_id=? AND ee.company_id=? AND COALESCE(ee.recovery_state,'held')='needs_replacement' ''', (recovery_element,recovery_enquiry,cid)) if recovery_enquiry and recovery_element else None
+        if recovery_enquiry and recovery_element and recovery_row is None:
+            return HTMLResponse(layout('Availability Calendar','<h1>Availability Calendar</h1><div class="error">That Enquiry Element no longer requires replacement.</div>',context),409)
+        if recovery_row:
+            selected_type=str(recovery_row['element_type'])
+            if not arrival: arrival=str(recovery_row['arrival_date']); arrival_day=_parse(arrival)
+            if not departure: departure=str(recovery_row['departure_date']); departure_day=_parse(departure)
+            body += f'<div class="card" style="border:2px solid #b42318"><strong>REPLACE UNAVAILABLE ELEMENT</strong><p>Enquiry #{recovery_enquiry}: <strong>{esc(recovery_row["element_name"])}</strong> is no longer available. The calendar is showing {esc(selected_type)} for the original dates. You may change the arrival/departure dates before choosing the replacement.</p></div>'
 
         if requirements_ready:
             summary = []
@@ -228,7 +236,7 @@ def register_calendar_v5_routes(app) -> None:
                 selection_end = (departure_day - visible_start).days + 2
                 selection_style = f' style="grid-column:{selection_start} / {selection_end};grid-row:1"'
                 selection_hidden = ''
-            selection = f'<button type="button" class="selection-action" data-element="{eid}" data-name="{esc(element["name"])}"{selection_style}{selection_hidden}>{"USE THIS ELEMENT" if edit_hold else "RESERVE"}</button>'
+            selection = f'<button type="button" class="selection-action" data-element="{eid}" data-name="{esc(element["name"])}"{selection_style}{selection_hidden}>{"USE REPLACEMENT" if recovery_enquiry else ("USE THIS ELEMENT" if edit_hold else "RESERVE")}</button>'
             row_classes = 'cal-row element-row'
             if party_unsuitable:
                 row_classes += ' party-unsuitable'
@@ -265,11 +273,11 @@ def register_calendar_v5_routes(app) -> None:
         .quick-element-info ul{{margin:6px 0 0;padding-left:18px}}
         </style>
         <script>
-        const csrf={json.dumps(str(context['csrf_token']))}; const editingHold={int(edit_hold or 0)}; const anchorArr={json.dumps(anchor_arrival)},anchorDep={json.dumps(anchor_departure)};
+        const csrf={json.dumps(str(context['csrf_token']))}; const editingHold={int(edit_hold or 0)}; const recoveryEnquiry={int(recovery_enquiry or 0)},recoveryElement={int(recovery_element or 0)}; const anchorArr={json.dumps(anchor_arrival)},anchorDep={json.dumps(anchor_departure)};
         const elementType=document.getElementById('element-type'),arrivalInput=document.getElementById('arrival-date'),departureInput=document.getElementById('departure-date'),scrollBox=document.getElementById('calendar-scroll');
         let selectedElement=0,firstPick='';
         const dayAfter=iso=>{{const d=new Date(iso+'T12:00:00');d.setDate(d.getDate()+1);return d.toISOString().slice(0,10)}};
-        function qsFor(a,d){{const q=new URLSearchParams();if(elementType.value)q.set('element_type',elementType.value);if(a)q.set('arrival',a);if(d)q.set('departure',d);if(editingHold)q.set('edit_hold',editingHold);return q}}
+        function qsFor(a,d){{const q=new URLSearchParams();if(elementType.value)q.set('element_type',elementType.value);if(a)q.set('arrival',a);if(d)q.set('departure',d);if(editingHold)q.set('edit_hold',editingHold);if(recoveryEnquiry){q.set('recovery_enquiry',recoveryEnquiry);q.set('recovery_element',recoveryElement)}return q}}
         function submitDates(){{const a=arrivalInput.value,d=departureInput.value;if(!a||!d||d<=a)return;window.location='/availability/calendar-v2?'+qsFor(a,d)}}
         elementType.addEventListener('change',()=>{{window.location='/availability/calendar-v2?'+qsFor(arrivalInput.value||anchorArr,departureInput.value||anchorDep)}});
         arrivalInput.addEventListener('change',()=>{{if(!arrivalInput.value)return;const n=dayAfter(arrivalInput.value);departureInput.min=n;departureInput.value=n;submitDates()}}); departureInput.addEventListener('change',submitDates);
@@ -277,7 +285,7 @@ def register_calendar_v5_routes(app) -> None:
         function showSelection(eid,a,d){{clearBars();const row=document.querySelector('.element-row[data-element="'+eid+'"]');if(!row||row.classList.contains('party-unsuitable'))return;const ds=[...document.querySelectorAll('#calendar-scroll .cal-date')].map(x=>x.dataset.date),s=ds.indexOf(a),e=ds.indexOf(d);if(s<0||e<=s)return;const b=row.querySelector('.selection-action');b.style.gridColumn=(s+2)+' / '+(e+2);b.style.gridRow='1';b.hidden=false;selectedElement=Number(eid)}}
         document.querySelectorAll('.date-pick').forEach(cell=>cell.addEventListener('click',()=>{{const chosen=cell.dataset.date,eid=Number(cell.dataset.element);if(!firstPick||selectedElement!==eid){{firstPick=chosen;selectedElement=eid;arrivalInput.value=chosen;departureInput.value='';clearBars();return}}if(chosen<=firstPick){{firstPick=chosen;arrivalInput.value=chosen;departureInput.value='';return}}arrivalInput.value=firstPick;departureInput.value=chosen;showSelection(eid,firstPick,chosen);firstPick=''}}));
         async function post(url,data={{}}){{const body=new URLSearchParams();body.set('csrf',csrf);Object.entries(data).forEach(([k,v])=>body.set(k,v));return fetch(url,{{method:'POST',headers:{{'Content-Type':'application/x-www-form-urlencoded;charset=UTF-8'}},body:body.toString()}})}}
-        document.querySelectorAll('.selection-action').forEach(btn=>btn.addEventListener('click',async()=>{{const a=arrivalInput.value,d=departureInput.value;if(!a||!d)return;const url=editingHold?'/availability/basket/update':'/availability/hold',data=editingHold?{{hold_id:editingHold,element_id:btn.dataset.element,arrival_date:a,departure_date:d}}:{{element_id:btn.dataset.element,arrival_date:a,departure_date:d}};const r=await post(url,data);let p={{}};try{{p=await r.json()}}catch(e){{}}if(!r.ok){{alert(p.error||'Unable to save that Element.');return}}if(editingHold){{window.location='/availability/basket/review';return}}const q=new URLSearchParams();q.set('element_type',elementType.value);q.set('arrival',a);q.set('departure',d);window.location='/availability/calendar-v2?'+q.toString()}}));
+        document.querySelectorAll('.selection-action').forEach(btn=>btn.addEventListener('click',async()=>{{const a=arrivalInput.value,d=departureInput.value;if(!a||!d)return;const url=recoveryEnquiry?('/operations/enquiries/'+recoveryEnquiry+'/elements/'+recoveryElement+'/replace'):(editingHold?'/availability/basket/update':'/availability/hold'),data=editingHold?{{hold_id:editingHold,element_id:btn.dataset.element,arrival_date:a,departure_date:d}}:{{element_id:btn.dataset.element,arrival_date:a,departure_date:d}};const r=await post(url,data);let p={{}};try{{p=await r.json()}}catch(e){{}}if(!r.ok){{alert(p.error||'Unable to save that Element.');return}}if(recoveryEnquiry){{window.location='/operations/enquiries/'+recoveryEnquiry+'?saved=1';return}}if(editingHold){{window.location='/availability/basket/review';return}}const q=new URLSearchParams();q.set('element_type',elementType.value);q.set('arrival',a);q.set('departure',d);window.location='/availability/calendar-v2?'+q.toString()}}));
         function featureHtml(features){{return '<ul>'+features.map(f=>'<li>'+(f.available?'✓ ':'✕ ')+f.name+'</li>').join('')+'</ul>'}}
         const info=document.getElementById('info-modal'); function showFullInfo(btn){{document.getElementById('info-title').textContent=btn.dataset.elementName;document.getElementById('info-features').innerHTML=featureHtml(JSON.parse(btn.dataset.features||'[]'));info.hidden=false}}
         document.querySelectorAll('.more-info').forEach(btn=>btn.addEventListener('click',()=>showFullInfo(btn))); document.getElementById('info-close').addEventListener('click',()=>info.hidden=true);
