@@ -57,6 +57,9 @@ def main() -> None:
             adult = int(c.execute("INSERT INTO setup_person_types(company_id,name,short_name,active,ask_age) VALUES (?,?,?,?,?)", (company, 'Current Adult', 'CA', 1, 0)).lastrowid)
             child = int(c.execute("INSERT INTO setup_person_types(company_id,name,short_name,active,ask_age) VALUES (?,?,?,?,?)", (company, 'Current Child U12', 'CC', 1, 1)).lastrowid)
             people = c.execute('SELECT id FROM setup_person_types WHERE company_id=? AND active=1', (company,)).fetchall()
+            # TEST DATA ONLY: Fishing Peg A permits one Adult, proving Setup caps
+            # control both entry and final Element selection.
+            c.execute('INSERT OR REPLACE INTO setup_person_limits(company_id,year,element_id,person_type_id,max_count) VALUES (?,?,?,?,?)', (company, 2035, peg, adult, 1))
             for element_id in (pitch_one, pitch_two):
                 for person in people:
                     pid = int(person['id'])
@@ -79,6 +82,19 @@ def main() -> None:
             assert int(c.execute('SELECT ask_before_availability FROM setup_addons WHERE id=?', (pets,)).fetchone()['ask_before_availability']) == 1
             for aid in (motorhome, caravan, pets):
                 c.execute('''INSERT OR REPLACE INTO setup_type_addons(company_id,year,element_type,addon_id,allowed,min_qty,max_qty,rate) VALUES (?,?,?,?,?,?,?,?)''', (company, 2035, 'Current Camping', aid, 1, 0, 1, 0.0))
+
+        # TEST DATA ONLY: once Fishing is chosen, the Adult input exposes
+        # the Setup maximum and the server refuses a value above it.
+        fishing_requirements = client.get('/availability/start', params={'element_type': 'Current Fishing'})
+        assert fishing_requirements.status_code == 200
+        assert f'data-person="{adult}"' in fishing_requirements.text
+        assert '"Current Fishing": {"2035": {"' + str(adult) + '": 1' in fishing_requirements.text
+        too_many_fishers = client.post('/availability/requirements-v3', data={
+            'csrf': csrf, 'lead_name': 'Fisher', 'element_type': 'Current Fishing',
+            'arrival': '2035-07-10', 'departure': '2035-07-13', f'person_{adult}': '2',
+        })
+        assert too_many_fishers.status_code == 400
+        assert 'Current Adult can be entered up to a maximum of 1 for Current Fishing.' in too_many_fishers.text
 
         # Smith family requirements and first held Element.
         saved = client.post('/availability/requirements-v3', data={
