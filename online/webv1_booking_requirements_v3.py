@@ -13,6 +13,7 @@ from .webv1_booking_requirements import (
     _requirements_page,
     _relevant_addon_ids_for_type,
     _relevant_person_ids_for_type,
+    _person_cap_map,
 )
 from .webv1_booking_requirements_refinements import _addon_caps, _working_context
 from .webv1_ordering import person_type_rows
@@ -75,12 +76,16 @@ def register_booking_requirements_v3(app) -> None:
 
         parsed_people = []
         total = 0
+        type_caps = _person_cap_map(database, cid).get(element_type, {}).get(str(year), {})
         for p in people_rows:
             pid = int(p['id'])
             try:
                 qty = max(0, int(data.get(f'person_{pid}', '0') or 0))
             except ValueError:
                 return HTMLResponse(_requirements_page(database, context, cid, token, f'Enter a valid number for {p["name"]}.', edit_hold=edit_hold, selected_element_type=element_type), 400)
+            cap = int(type_caps.get(str(pid), 99))
+            if qty > cap:
+                return HTMLResponse(_requirements_page(database, context, cid, token, f'{p["name"]} can be entered up to a maximum of {cap} for {element_type}.', edit_hold=edit_hold, selected_element_type=element_type), 400)
             total += qty
             ages = []
             if int(p['ask_age'] or 0):
