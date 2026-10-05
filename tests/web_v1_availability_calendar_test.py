@@ -210,6 +210,12 @@ def main() -> None:
 
         calendar_add = client.get('/availability/calendar-v2?element_type=Pitch&arrival=2035-06-10&departure=2035-06-13')
         assert calendar_add.status_code == 200 and 'ADD / CHANGE ELEMENT' in calendar_add.text and 'NEW BOOKING' not in calendar_add.text
+        # TEST DATA ONLY: Availability must not provide a second route that can
+        # change Element Type/dates without revisiting element-specific requirements.
+        assert '<select id="element-type"' not in calendar_add.text
+        assert '<label>Arrival</label>' not in calendar_add.text and '<label>Departure</label>' not in calendar_add.text
+        assert 'href="/availability/start"' in calendar_add.text
+        assert '← Previous 14 days' in calendar_add.text and 'Next 14 days →' in calendar_add.text and 'Booking Statuses' in calendar_add.text
 
         edited_review = client.get('/availability/basket/review')
         assert 'Smith' in edited_review.text and '2 Current Child U12 (ages 7, 10)' in edited_review.text and 'Current Pets 1' in edited_review.text
