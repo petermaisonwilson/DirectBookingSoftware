@@ -30,7 +30,7 @@ def _booking_conflict(connection, company_id: int, element_id: int, start: str, 
 
 
 def _enquiry_conflict(connection, company_id: int, element_id: int, start: str, end: str, exclude_enquiry_id: int | None = None):
-    sql = '''
+    multi = '''
         SELECT e.id,e.customer_id,e.status,ee.arrival_date,ee.departure_date,e.availability_expires_at,
                s.id AS workflow_status_id,s.name AS workflow_name,s.colour,s.blocks_availability,s.internal_state
         FROM enquiries e
@@ -45,10 +45,17 @@ def _enquiry_conflict(connection, company_id: int, element_id: int, start: str, 
     '''
     params: list[Any] = [company_id, element_id, end, start]
     if exclude_enquiry_id is not None:
-        sql += ' AND e.id<>?'; params.append(exclude_enquiry_id)
-    sql += ''' UNION ALL
+        multi += ' AND e.id<>?'; params.append(exclude_enquiry_id)
+    multi += ' ORDER BY ee.arrival_date LIMIT 1'
+    found=connection.execute(multi,params).fetchone()
+    if found is not None:
+        return found
+
+    # Legacy single-element enquiries remain supported until they are edited into
+    # the multi-element model.
+    legacy_sql = '''
         SELECT e.id,e.customer_id,e.status,e.arrival_date,e.departure_date,e.availability_expires_at,
-               s.id,s.name,s.colour,s.blocks_availability,s.internal_state
+               s.id AS workflow_status_id,s.name AS workflow_name,s.colour,s.blocks_availability,s.internal_state
         FROM enquiries e JOIN enquiry_requests er ON er.enquiry_id=e.id AND er.company_id=e.company_id
         LEFT JOIN booking_status_definitions s ON s.id=e.workflow_status_id AND s.company_id=e.company_id
         WHERE e.company_id=? AND er.element_id=?
@@ -56,12 +63,13 @@ def _enquiry_conflict(connection, company_id: int, element_id: int, start: str, 
           AND e.status NOT IN ('closed','converted')
           AND NOT EXISTS (SELECT 1 FROM bookings bx WHERE bx.company_id=e.company_id AND bx.enquiry_id=e.id)
           AND COALESCE(s.blocks_availability,1)=1
-          AND date(e.arrival_date)<date(?) AND date(e.departure_date)>date(?)'''
-    params += [company_id, element_id, end, start]
+          AND date(e.arrival_date)<date(?) AND date(e.departure_date)>date(?)
+    '''
+    legacy_params: list[Any]=[company_id,element_id,end,start]
     if exclude_enquiry_id is not None:
-        sql += ' AND e.id<>?'; params.append(exclude_enquiry_id)
-    sql += ' LIMIT 1'
-    return connection.execute(sql, params).fetchone()
+        legacy_sql += ' AND e.id<>?'; legacy_params.append(exclude_enquiry_id)
+    legacy_sql += ' ORDER BY e.arrival_date LIMIT 1'
+    return connection.execute(legacy_sql,legacy_params).fetchone()
 
 
 def availability_state(database, company_id: int, element_id: int, arrival: str, departure: str, *, session_token: str = '', exclude_booking_id: int | None = None, exclude_enquiry_id: int | None = None) -> dict[str, Any]:
