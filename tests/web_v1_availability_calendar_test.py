@@ -145,9 +145,9 @@ def main() -> None:
         # ADD Element remains blank, but the existing held Element is still visible.
         blank_add = client.get('/availability/calendar-v2', params={'start': '2035-07-06', 'arrival': '2035-07-10', 'departure': '2035-07-13'})
         assert blank_add.status_code == 200
-        assert '<option value="" selected>Select Element Type</option>' in blank_add.text
+        assert '<select id="element-type"' not in blank_add.text
+        assert 'ADD / CHANGE ELEMENT' in blank_add.text and 'href="/availability/start"' in blank_add.text
         assert 'Current Pitch 2' in blank_add.text and 'cal-cell own-held' in blank_add.text
-        assert 'Held Elements are shown below.' in blank_add.text
 
         duplicate = client.post('/availability/hold', data={'csrf': csrf, 'element_id': str(pitch_two), 'arrival_date': '2035-07-20', 'departure_date': '2035-07-22'})
         assert duplicate.status_code == 409
