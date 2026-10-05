@@ -156,7 +156,11 @@ def main() -> None:
             assert int(c.execute('SELECT COUNT(*) AS n FROM customer_records WHERE company_id=?', (cid,)).fetchone()['n']) == customer_count_before
 
         from online.webv1_status_availability import availability_state
-        # TEST DATA ONLY: even a legacy/stale expiry timestamp must not silently release a saved Enquiry.\n        # Once the temporary basket is converted, only explicit Release Enquiry frees inventory.\n        with db.connect() as c:\n            c.execute("UPDATE enquiries SET availability_expires_at='2000-01-01 00:00:00' WHERE id=? AND company_id=?", (enquiry_id,cid))\n        first_state=availability_state(db,cid,element_id,'2036-08-10','2036-08-12')
+        # TEST DATA ONLY: even a legacy/stale expiry timestamp must not silently release a saved Enquiry.
+        # Once the temporary basket is converted, only explicit Release Enquiry frees inventory.
+        with db.connect() as c:
+            c.execute("UPDATE enquiries SET availability_expires_at='2000-01-01 00:00:00' WHERE id=? AND company_id=?", (enquiry_id,cid))
+        first_state=availability_state(db,cid,element_id,'2036-08-10','2036-08-12')
         second_state=availability_state(db,cid,element2_id,'2036-08-15','2036-08-18')
         assert first_state['available'] is False and first_state['state']=='ENQUIRY' and int(first_state['enquiry_id'])==enquiry_id
         holding_report=client.get('/operations/enquiries?holding=1')
