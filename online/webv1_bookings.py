@@ -276,6 +276,8 @@ def register_booking_routes(app) -> None:
         context=context_for(database,request); cid=int(working_company(context))
         enquiry=one(database, 'SELECT e.*,c.first_name,c.last_name FROM enquiries e LEFT JOIN customer_records c ON c.id=e.customer_id AND c.company_id=e.company_id WHERE e.id=? AND e.company_id=?',(enquiry_id,cid))
         if enquiry is None: return RedirectResponse('/operations/enquiries',303)
+        if _unresolved_recovery_count(database,cid,enquiry_id):
+            return RedirectResponse(f'/operations/enquiries/{enquiry_id}?convert_error=Resolve+all+unavailable+Elements+before+confirming+this+Enquiry',303)
         elements=_enquiry_elements(database,cid,enquiry_id)
         if not elements:return RedirectResponse(f'/operations/enquiries/{enquiry_id}?convert_error=No+bookable+Elements+saved',303)
         methods=rows(database,'SELECT * FROM payment_method_definitions WHERE company_id=? AND active=1 ORDER BY display_order,name',(cid,))
@@ -485,10 +487,21 @@ def register_booking_routes(app) -> None:
         return RedirectResponse(f'/operations/bookings/{booking_id}?message=Payment+recorded', 303)
 
 
+def _unresolved_recovery_count(database,cid:int,enquiry_id:int)->int:
+    try:
+        row=one(database,"SELECT COUNT(*) AS n FROM enquiry_elements WHERE company_id=? AND enquiry_id=? AND COALESCE(recovery_state,'held')='needs_replacement'",(cid,enquiry_id))
+        return int(row['n'] or 0) if row else 0
+    except Exception:
+        return 0
+
+
 def enquiry_conversion_panel(database, context, enquiry_id: int) -> str:
     cid = int(working_company(context))
     existing = one(database, 'SELECT id,reference FROM bookings WHERE company_id=? AND enquiry_id=? ORDER BY id DESC LIMIT 1', (cid, enquiry_id))
     if existing:
         return f'<div class="card"><h2>Booking</h2><p>This Enquiry has been converted to <a href="/operations/bookings/{int(existing["id"])}"><strong>{esc(existing["reference"])}</strong></a>.</p></div>'
+    unresolved=_unresolved_recovery_count(database,cid,enquiry_id)
+    if unresolved:
+        return f'<div class="card" style="border:2px solid #b42318"><h2>Confirm Booking</h2><p><strong>{unresolved} Element(s) require replacement.</strong> Resolve the red unavailable Element(s) above before this Enquiry can be confirmed.</p><button disabled>CONFIRM BOOKING</button></div>'
     booking_html = f'''<div class="card"><h2>Confirm Booking</h2><p>Continue to Take Payment. The Booking is not created until payment is recorded or deliberately confirmed without payment.</p><form method="post" action="/operations/enquiries/{enquiry_id}/convert"><input type="hidden" name="csrf" value="{esc(context['csrf_token'])}"><p><button>CONFIRM BOOKING</button></p></form></div>'''
     return booking_html
