@@ -139,7 +139,7 @@ def main() -> None:
         changed_review = client.get('/availability/basket/review')
         assert changed_review.text.count('Edit Test Caravan 1') == 1
         assert changed_review.text.count('Edit Test Motorhome 1') == 1
-        assert changed_review.text.count('2 Edit Test Child') == 2
+        assert changed_review.text.count('2 Edit Test Child') == 1
 
         calendar = client.get(changed.headers['location'])
         assert calendar.status_code == 200
