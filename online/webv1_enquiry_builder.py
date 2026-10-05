@@ -82,18 +82,22 @@ def _saved_values(database, company_id: int, enquiry) -> dict[str, str]:
     for row in rows(database, people_sql, ((eeid if eeid else enquiry['id']), company_id)):
         values[f'person_{int(row["person_type_id"])}'] = str(int(row['quantity']))
     selected_days: set[int] = set()
-    scope = ' AND enquiry_element_id=?' if eeid else ''
-    params = (enquiry['id'], company_id, eeid) if eeid else (enquiry['id'], company_id)
-    for row in rows(database, f'SELECT addon_id,service_date,quantity FROM enquiry_addon_days WHERE enquiry_id=? AND company_id=?{scope}', params):
-        aid=int(row['addon_id']); selected_days.add(aid); values[f'addon_day_{aid}_{row["service_date"]}']=str(int(row['quantity']))
-    for row in rows(database, f'SELECT addon_id,person_type_id,quantity FROM enquiry_addon_people WHERE enquiry_id=? AND company_id=?{scope}', params):
-        values[f'addon_person_{int(row["addon_id"])}_{int(row["person_type_id"])}']=str(int(row['quantity']))
-    for row in rows(database, f'SELECT addon_id,person_type_id,service_date,quantity FROM enquiry_addon_person_days WHERE enquiry_id=? AND company_id=?{scope}', params):
-        aid=int(row['addon_id']); selected_days.add(aid); values[f'addon_day_person_{aid}_{int(row["person_type_id"])}_{row["service_date"]}']=str(int(row['quantity']))
-    for row in rows(database, f'SELECT addon_id,quantity FROM enquiry_addons WHERE enquiry_id=? AND company_id=?{scope}', params):
-        aid=int(row['addon_id']); values[f'addon_{aid}']=str(int(row['quantity'])); values[f'addon_when_{aid}']='selected_days' if aid in selected_days else 'every_day'; values[f'addon_selected_{aid}']='1'
-    for row in rows(database, f'SELECT addon_id FROM enquiry_selected_addons WHERE enquiry_id=? AND company_id=?{scope} ORDER BY sort_order,addon_id', params):
-        values[f'addon_selected_{int(row["addon_id"])}']='1'
+    if eeid:
+        # Element-specific enquiry storage is intentionally separate from the
+        # older enquiry-wide add-on tables.
+        for row in rows(database, 'SELECT addon_id,quantity FROM enquiry_element_addons WHERE enquiry_element_id=? AND company_id=?', (eeid, company_id)):
+            aid=int(row['addon_id']); values[f'addon_{aid}']=str(int(row['quantity'])); values[f'addon_selected_{aid}']='1'; values[f'addon_when_{aid}']='every_day'
+    else:
+        for row in rows(database, 'SELECT addon_id,service_date,quantity FROM enquiry_addon_days WHERE enquiry_id=? AND company_id=?', (enquiry['id'], company_id)):
+            aid=int(row['addon_id']); selected_days.add(aid); values[f'addon_day_{aid}_{row["service_date"]}']=str(int(row['quantity']))
+        for row in rows(database, 'SELECT addon_id,person_type_id,quantity FROM enquiry_addon_people WHERE enquiry_id=? AND company_id=?', (enquiry['id'], company_id)):
+            values[f'addon_person_{int(row["addon_id"])}_{int(row["person_type_id"])}']=str(int(row['quantity']))
+        for row in rows(database, 'SELECT addon_id,person_type_id,service_date,quantity FROM enquiry_addon_person_days WHERE enquiry_id=? AND company_id=?', (enquiry['id'], company_id)):
+            aid=int(row['addon_id']); selected_days.add(aid); values[f'addon_day_person_{aid}_{int(row["person_type_id"])}_{row["service_date"]}']=str(int(row['quantity']))
+        for row in rows(database, 'SELECT addon_id,quantity FROM enquiry_addons WHERE enquiry_id=? AND company_id=?', (enquiry['id'], company_id)):
+            aid=int(row['addon_id']); values[f'addon_{aid}']=str(int(row['quantity'])); values[f'addon_when_{aid}']='selected_days' if aid in selected_days else 'every_day'; values[f'addon_selected_{aid}']='1'
+        for row in rows(database, 'SELECT addon_id FROM enquiry_selected_addons WHERE enquiry_id=? AND company_id=? ORDER BY sort_order,addon_id', (enquiry['id'], company_id)):
+            values[f'addon_selected_{int(row["addon_id"])}']='1'
     return values
 
 def _validate_dates(values: dict[str, str]) -> tuple[date | None, date | None, str]:
