@@ -90,6 +90,11 @@ def main() -> None:
         assert review.status_code == 200
         assert 'Bridge Pitch A' in review.text
         assert 'CONTINUE TO CUSTOMER DETAILS' in review.text and 'ADD ANOTHER ELEMENT' in review.text
+        # TEST DATA ONLY: the persistent Booking in progress summary is the one
+        # basket summary; do not repeat the same Elements in a verification table.
+        assert review.text.count('Booking in progress') == 1
+        assert 'Verify booking contents' not in review.text
+        assert '<th>Name</th><th>Element</th><th>Arrival</th>' not in review.text
 
         details = client.get('/availability/basket/customer', params={'hold_id': hold_id})
         assert details.status_code == 200
