@@ -132,6 +132,12 @@ def main() -> None:
         assert saved.status_code == 303
         assert saved.headers['location'].startswith('/operations/enquiries/')
         enquiry_id = int(saved.headers['location'].split('/')[3].split('?')[0])
+        # TEST DATA ONLY: a newly-created Enquiry is holding space for the first
+        # time. "HELD AGAIN" is reserved for an Enquiry that has actually been reopened.
+        new_enquiry_page = client.get(f'/operations/enquiries/{enquiry_id}')
+        assert new_enquiry_page.status_code == 200
+        assert 'HOLDING SPACE' in new_enquiry_page.text
+        assert 'HELD AGAIN' not in new_enquiry_page.text
         with db.connect() as c:
             enquiry = c.execute('SELECT * FROM enquiries WHERE id=? AND company_id=?', (enquiry_id, cid)).fetchone()
             assert enquiry is not None
