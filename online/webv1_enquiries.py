@@ -118,7 +118,17 @@ def register_enquiry_routes(app) -> None:
                 if recovery == 'needs_replacement':
                     recovery_html = f'<div style="border:2px solid #b42318;background:#fff1f0;padding:10px;border-radius:7px"><strong style="color:#b42318">NOT AVAILABLE — REPLACEMENT REQUIRED</strong><br>The original Element is no longer available for these dates. <a class="button" href="/availability/calendar-v2?recovery_enquiry={enquiry_id}&recovery_element={eeid}&element_type={quote_plus(str(erow["element_type"] or ""))}&arrival={esc(erow["arrival_date"])}&departure={esc(erow["departure_date"])}">FIND REPLACEMENT</a></div>'
                 else:
-                    recovery_html = '<p><strong style="color:#267326">AVAILABLE — HELD AGAIN</strong></p>' if str(enquiry['status']) == 'new' else ''
+                    recovery_html = ''
+                    if str(enquiry['status']) == 'new':
+                        # "Held again" is a recovery state, not the normal state
+                        # of a newly-created Enquiry.  Only an Enquiry with an
+                        # actual reopen lifecycle event has reacquired its space.
+                        reopened = one(database, '''SELECT 1 FROM audit_log
+                            WHERE company_id=? AND entity_type='enquiry' AND entity_id=?
+                              AND action='ENQUIRY_REOPENED' LIMIT 1''',
+                            (company_id, str(enquiry_id)))
+                        hold_label = 'AVAILABLE — HELD AGAIN' if reopened else 'HOLDING SPACE'
+                        recovery_html = f'<p><strong style="color:#267326">{hold_label}</strong></p>'
                 element_cards.append(f'<h3>{esc(erow["element_name"] or "Element")}</h3>{recovery_html}<p><strong>Element Type:</strong> {esc(erow["element_type"] or "—")}<br><strong>Guest surname:</strong> {esc(erow["lead_name"] or "—")}<br><strong>Arrival:</strong> {_fmt_day(erow["arrival_date"])}<br><strong>Departure:</strong> {_fmt_day(erow["departure_date"])}<br><strong>People:</strong> {people_text}<br><strong>Add-ons:</strong> {addons_text}<br><strong>Element total:</strong> €{subtotal:.2f}</p>')
             request_html=f'<div class="card"><h2>Requested stay</h2>{"".join(element_cards)}<p><strong>Provisional total: €{grand_total:.2f}</strong></p><p><a class="button" href="/operations/enquiries/{enquiry_id}/edit">Edit / Recalculate Enquiry</a></p></div>'
         elif request_row is None:
