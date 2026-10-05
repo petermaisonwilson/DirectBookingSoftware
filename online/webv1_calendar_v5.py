@@ -277,7 +277,7 @@ def register_calendar_v5_routes(app) -> None:
         const elementType=document.getElementById('element-type'),arrivalInput=document.getElementById('arrival-date'),departureInput=document.getElementById('departure-date'),scrollBox=document.getElementById('calendar-scroll');
         let selectedElement=0,firstPick='';
         const dayAfter=iso=>{{const d=new Date(iso+'T12:00:00');d.setDate(d.getDate()+1);return d.toISOString().slice(0,10)}};
-        function qsFor(a,d){{const q=new URLSearchParams();if(elementType.value)q.set('element_type',elementType.value);if(a)q.set('arrival',a);if(d)q.set('departure',d);if(editingHold)q.set('edit_hold',editingHold);if(recoveryEnquiry){q.set('recovery_enquiry',recoveryEnquiry);q.set('recovery_element',recoveryElement)}return q}}
+        function qsFor(a,d){{const q=new URLSearchParams();if(elementType.value)q.set('element_type',elementType.value);if(a)q.set('arrival',a);if(d)q.set('departure',d);if(editingHold)q.set('edit_hold',editingHold);if(recoveryEnquiry){{q.set('recovery_enquiry',recoveryEnquiry);q.set('recovery_element',recoveryElement)}}return q}}
         function submitDates(){{const a=arrivalInput.value,d=departureInput.value;if(!a||!d||d<=a)return;window.location='/availability/calendar-v2?'+qsFor(a,d)}}
         elementType.addEventListener('change',()=>{{window.location='/availability/calendar-v2?'+qsFor(arrivalInput.value||anchorArr,departureInput.value||anchorDep)}});
         arrivalInput.addEventListener('change',()=>{{if(!arrivalInput.value)return;const n=dayAfter(arrivalInput.value);departureInput.min=n;departureInput.value=n;submitDates()}}); departureInput.addEventListener('change',submitDates);
