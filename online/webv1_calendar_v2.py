@@ -12,6 +12,7 @@ from .setup015_core import context_for, rows, working_company
 from .webv1_availability import operating_window
 from .webv1_status_availability import available_elements
 from .webv1_booking_status import default_status
+from .webv1_booking_requirements import _saved_requirements, _element_reasons
 
 CALENDAR_DAYS = 28
 MAX_CALENDAR_DAYS = 366
@@ -162,7 +163,21 @@ def register_calendar_v2_routes(app) -> None:
                     exact_message = 'Departure must be after arrival.'
                 else:
                     exact = available_elements(database, cid, selected_type, arrival, departure, session_token=token)
-                    if not exact:
+                    # An Element must be both free and suitable for this Element's own requirements.
+                    people, addons, ready, _, _ = _saved_requirements(database, cid, token)
+                    unsuitable = []
+                    if ready:
+                        suitable = []
+                        for item in exact:
+                            candidates = rows(database, 'SELECT * FROM setup_elements WHERE company_id=? AND id=?', (cid, int(item['id'])))
+                            element = candidates[0] if candidates else None
+                            reasons = _element_reasons(database, cid, a.year, element, people, addons) if element is not None else ['Element setup unavailable']
+                            if reasons:
+                                unsuitable.append({'name': item['name'], 'reasons': reasons})
+                            else:
+                                suitable.append(item)
+                        exact = suitable
+                    if not exact and not unsuitable:
                         exact_message = f'No {selected_type} Elements are available for {_fmt(arrival)} to {_fmt(departure)}.'
             except ValueError:
                 exact_message = 'Enter valid arrival and departure dates.'
@@ -267,6 +282,11 @@ def register_calendar_v2_routes(app) -> None:
                 for item in exact:
                     chips = ''.join(f'<span class="addon-chip {"yes" if a["available"] else "no"}">{"✓" if a["available"] else "✕"} {esc(a["name"])}</span>' for a in item['addons'])
                     body += f'<div class="availability-result"><div><h3>{esc(item["name"])}</h3><div class="addon-list">{chips}</div></div><button type="button" class="hold-button" data-element="{int(item["id"])}" data-name="{esc(item["name"])}">Select &amp; hold</button></div>'
+            if unsuitable:
+                for item in unsuitable:
+                    reason_text = '; '.join(str(x) for x in item['reasons'])
+                    edit_url = f'/availability/start?element_type={quote_plus(selected_type)}'
+                    body += f'<div class="availability-result party-unsuitable"><div><h3>{esc(item["name"])} — requirements need changing</h3><div class="error">{esc(reason_text)}</div></div><a class="button secondary" href="{edit_url}">Edit Requirements</a></div>'
             body += '</div>'
 
         body += f'''<div class="card"><h2>Held Elements</h2><div id="hold-list" class="muted">No Elements currently held.</div></div>
