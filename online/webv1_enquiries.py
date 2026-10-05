@@ -62,13 +62,15 @@ def register_enquiry_routes(app) -> None:
         if departure_to: where.append('e.departure_date<=?'); params.append(departure_to)
         holding_clause = """e.status NOT IN ('closed','converted')
             AND NOT EXISTS (SELECT 1 FROM bookings bx WHERE bx.company_id=e.company_id AND bx.enquiry_id=e.id)
-            AND COALESCE((SELECT esh.blocks_availability FROM booking_status_definitions esh WHERE esh.id=e.workflow_status_id AND esh.company_id=e.company_id AND esh.active=1),1)=1"""
+            AND COALESCE((SELECT esh.blocks_availability FROM booking_status_definitions esh WHERE esh.id=e.workflow_status_id AND esh.company_id=e.company_id AND esh.active=1),1)=1
+            AND (EXISTS (SELECT 1 FROM enquiry_elements eh WHERE eh.company_id=e.company_id AND eh.enquiry_id=e.id AND COALESCE(eh.recovery_state,'held')='held')
+                 OR NOT EXISTS (SELECT 1 FROM enquiry_elements ex WHERE ex.company_id=e.company_id AND ex.enquiry_id=e.id))"""
         if holding.strip()=='1':
             where.append('(' + holding_clause + ')')
         elif holding.strip()=='0':
             where.append("e.status='closed'")
         enquiries = rows(database, f'''SELECT e.*,c.first_name,c.last_name,c.email,c.phone,er.element_type,er.element_id,er.provisional_total,se.name AS element_name,
-            CASE WHEN e.status NOT IN ('closed','converted') AND NOT EXISTS (SELECT 1 FROM bookings bx2 WHERE bx2.company_id=e.company_id AND bx2.enquiry_id=e.id) AND COALESCE(es.blocks_availability,1)=1 THEN 1 ELSE 0 END AS holding_space
+            CASE WHEN e.status NOT IN ('closed','converted') AND NOT EXISTS (SELECT 1 FROM bookings bx2 WHERE bx2.company_id=e.company_id AND bx2.enquiry_id=e.id) AND COALESCE(es.blocks_availability,1)=1 AND (EXISTS (SELECT 1 FROM enquiry_elements eh2 WHERE eh2.company_id=e.company_id AND eh2.enquiry_id=e.id AND COALESCE(eh2.recovery_state,'held')='held') OR NOT EXISTS (SELECT 1 FROM enquiry_elements ex2 WHERE ex2.company_id=e.company_id AND ex2.enquiry_id=e.id)) THEN 1 ELSE 0 END AS holding_space
             FROM enquiries e LEFT JOIN customer_records c ON c.id=e.customer_id AND c.company_id=e.company_id
             LEFT JOIN enquiry_requests er ON er.enquiry_id=e.id AND er.company_id=e.company_id
             LEFT JOIN setup_elements se ON se.id=er.element_id AND se.company_id=e.company_id
