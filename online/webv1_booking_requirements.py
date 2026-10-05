@@ -142,6 +142,18 @@ def _relevant_addon_ids_for_type(database, cid: int, element_type: str, year: in
     return result
 
 
+def _person_cap_map(database, cid: int) -> dict[str, dict[str, dict[str, int]]]:
+    result: dict[str, dict[str, dict[str, int]]] = {}
+    for yr in rows(database, 'SELECT year FROM setup_years WHERE company_id=? ORDER BY year', (cid,)):
+        year = int(yr['year'])
+        for element in rows(database, 'SELECT id,element_type FROM setup_elements WHERE company_id=? AND active=1', (cid,)):
+            bucket = result.setdefault(str(element['element_type']), {}).setdefault(str(year), {})
+            for limit in rows(database, 'SELECT person_type_id,max_count FROM setup_person_limits WHERE company_id=? AND year=? AND element_id=?', (cid, year, int(element['id']))):
+                key = str(int(limit['person_type_id']))
+                bucket[key] = max(int(bucket.get(key, 0)), int(limit['max_count'] or 0))
+    return result
+
+
 def _person_type_map(database, cid: int) -> dict[str, list[int]]:
     mapping: dict[str, list[int]] = {}
     years = [int(r['year']) for r in rows(database, 'SELECT year FROM setup_years WHERE company_id=?', (cid,))]
@@ -188,6 +200,7 @@ def _requirements_page(database, context, cid, token, message='', edit_hold: int
     <form method="post" action="/availability/requirements">{edit_hidden}<input type="hidden" name="csrf" value="{esc(context['csrf_token'])}">
     <div class="card"><h2>Who's coming and when?</h2><div class="grid"><div><label>{surname_label}</label>{surname_help}<input name="lead_name" placeholder="SURNAME" required value="{esc(saved_lead_name)}"></div><div><label>Choose Element Type</label><select id="requirements-element-type" name="element_type" required>{type_options}</select></div><div><label>Arrival</label><input id="requirements-arrival" type="date" name="arrival" required value="{esc(saved_arrival)}"></div><div><label>Departure</label><input id="requirements-departure" type="date" name="departure" required value="{esc(saved_departure)}"></div>'''
     person_map = _person_type_map(database, cid)
+    person_caps = _person_cap_map(database, cid)
     for p in people_rows:
         pid = int(p['id']); saved = saved_people.get(pid, {'quantity': 0, 'ages': []}); qty = int(saved['quantity'])
         body += f'<div class="requirement-person" data-person="{pid}"><label>{esc(p["name"])}</label><input class="person-qty" data-person="{pid}" data-ask-age="{1 if int(p["ask_age"] or 0) else 0}" type="number" min="0" max="99" name="person_{pid}" value="{qty}">'
@@ -202,7 +215,8 @@ def _requirements_page(database, context, cid, token, message='', edit_hold: int
             body += f'<div><label>{esc(a["name"])}</label><input type="number" min="0" max="99" name="addon_{aid}" value="{qty}"><small class="muted">0 = not required</small></div>'
         body += '</div></div>'
     map_json = json.dumps(person_map, ensure_ascii=False).replace('</', '<\\/')
-    body += f'''<p><button type="submit">SEARCH AVAILABILITY</button></p></form><script>(()=>{{const arr=document.getElementById('requirements-arrival'),dep=document.getElementById('requirements-departure'),type=document.getElementById('requirements-element-type'),personMap={map_json};const next=(iso)=>{{const d=new Date(iso+'T12:00:00');d.setDate(d.getDate()+1);return d.toISOString().slice(0,10)}};if(arr&&dep)arr.addEventListener('change',()=>{{if(!arr.value)return;const n=next(arr.value);dep.min=n;dep.value=n;}});function draw(input){{if(input.dataset.askAge!=='1')return;const box=document.getElementById('ages-'+input.dataset.person);if(!box)return;const qty=Math.max(0,Number(input.value||0));let existing=[];try{{existing=JSON.parse(box.dataset.existing||'[]')}}catch(e){{}}const current=[...box.querySelectorAll('input')].map(x=>x.value);box.innerHTML='';for(let i=0;i<qty;i++){{const label=document.createElement('label');label.textContent='Age at arrival — '+(i+1);const age=document.createElement('input');age.type='number';age.min='0';age.max='120';age.required=true;age.name='age_'+input.dataset.person+'_'+(i+1);age.value=current[i]??existing[i]??'';box.append(label,age);}}box.dataset.existing='[]';}}function refreshPeople(){{const chosen=type?type.value:'',allowed=new Set((personMap[chosen]||[]).map(String));document.querySelectorAll('.requirement-person').forEach(w=>{{const show=!!chosen&&allowed.has(w.dataset.person);w.style.display=show?'block':'none';w.querySelectorAll('input').forEach(i=>i.disabled=!show);}});const note=document.getElementById('requirements-type-note');if(note)note.style.display=chosen?'none':'block';}}document.querySelectorAll('.person-qty').forEach(i=>{{draw(i);i.addEventListener('input',()=>draw(i));}});if(type)type.addEventListener('change',refreshPeople);refreshPeople();}})();</script>'''
+    cap_json = json.dumps(person_caps, ensure_ascii=False).replace('</', '<\\/')
+    body += f'''<p><button type="submit">SEARCH AVAILABILITY</button></p></form><script>(()=>{{const arr=document.getElementById('requirements-arrival'),dep=document.getElementById('requirements-departure'),type=document.getElementById('requirements-element-type'),personMap={map_json},personCaps={cap_json};const next=(iso)=>{{const d=new Date(iso+'T12:00:00');d.setDate(d.getDate()+1);return d.toISOString().slice(0,10)}};if(arr&&dep)arr.addEventListener('change',()=>{{if(!arr.value)return;const n=next(arr.value);dep.min=n;dep.value=n;refreshPeople();}});function draw(input){{if(input.dataset.askAge!=='1')return;const box=document.getElementById('ages-'+input.dataset.person);if(!box)return;const qty=Math.max(0,Number(input.value||0));let existing=[];try{{existing=JSON.parse(box.dataset.existing||'[]')}}catch(e){{}}const current=[...box.querySelectorAll('input')].map(x=>x.value);box.innerHTML='';for(let i=0;i<qty;i++){{const label=document.createElement('label');label.textContent='Age at arrival — '+(i+1);const age=document.createElement('input');age.type='number';age.min='0';age.max='120';age.required=true;age.name='age_'+input.dataset.person+'_'+(i+1);age.value=current[i]??existing[i]??'';box.append(label,age);}}box.dataset.existing='[]';}}function refreshPeople(){{const chosen=type?type.value:'',allowed=new Set((personMap[chosen]||[]).map(String)),year=(arr&&arr.value?arr.value.slice(0,4):''),caps=((personCaps[chosen]||{{}})[year]||{{}});document.querySelectorAll('.requirement-person').forEach(w=>{{const show=!!chosen&&allowed.has(w.dataset.person),input=w.querySelector('.person-qty');w.style.display=show?'block':'none';w.querySelectorAll('input').forEach(i=>i.disabled=!show);if(input&&show){{const cap=Number(caps[w.dataset.person]??99);input.max=String(cap);if(Number(input.value||0)>cap)input.setCustomValidity('Maximum '+cap+' for '+chosen+'. Please reduce this quantity.');else input.setCustomValidity('');}}}});const note=document.getElementById('requirements-type-note');if(note)note.style.display=chosen?'none':'block';}}document.querySelectorAll('.person-qty').forEach(i=>{{draw(i);i.addEventListener('input',()=>{{const cap=Number(i.max||99);if(Number(i.value||0)>cap)i.value=String(cap);i.setCustomValidity('');draw(i);}});}});if(type)type.addEventListener('change',refreshPeople);refreshPeople();}})();</script>'''
     return layout('Booking requirements', body, context, monitor_holds=(basket_count > 0))
 
 
