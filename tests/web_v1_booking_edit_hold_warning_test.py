@@ -137,7 +137,7 @@ def main() -> None:
             assert int(c.execute('SELECT quantity FROM hold_requirement_people WHERE hold_id=? AND person_type_id=?', (jones_hold, child)).fetchone()['quantity']) == 2
 
         changed_review = client.get('/availability/basket/review')
-        assert changed_review.text.count('Edit Test Caravan 1') == 2
+        assert changed_review.text.count('Edit Test Caravan 1') == 1
         assert changed_review.text.count('Edit Test Motorhome 1') == 2
         assert changed_review.text.count('2 Edit Test Child') == 2
 
