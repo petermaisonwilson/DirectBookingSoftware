@@ -12,6 +12,7 @@ from .setup015_calculator import _addon_rule, _element_rate_for_date, _price_add
 from .setup015_core import audit, context_for, one, require_csrf, rows, valid_whole, working_company
 from .webv1_addon_person import addon_person_mode, addon_person_payload, addon_person_rates
 from .webv1_addon_when import stay_dates, when_options, when_payload
+from .webv1_status_availability import availability_state
 
 
 def _customer_name(row) -> str:
@@ -59,25 +60,41 @@ def _setup_payload(database, company_id: int):
 
 def _saved_values(database, company_id: int, enquiry) -> dict[str, str]:
     values = {'arrival_date': str(enquiry['arrival_date'] or ''), 'departure_date': str(enquiry['departure_date'] or ''), 'party_size': '' if enquiry['party_size'] is None else str(int(enquiry['party_size'])), 'source': str(enquiry['source'] or ''), 'notes': str(enquiry['notes'] or ''), 'element_type': '', 'element_id': ''}
-    request_row = one(database, 'SELECT * FROM enquiry_requests WHERE enquiry_id=? AND company_id=?', (enquiry['id'], company_id))
-    if request_row:
-        values['element_type'] = str(request_row['element_type'] or '')
-        values['element_id'] = '' if request_row['element_id'] is None else str(int(request_row['element_id']))
-    for row in rows(database, 'SELECT person_type_id,quantity FROM enquiry_people WHERE enquiry_id=? AND company_id=?', (enquiry['id'], company_id)):
+    # Current Enquiries are element-specific.  Read the authoritative first
+    # Enquiry Element (and its own people/add-ons) rather than the legacy
+    # enquiry-wide compatibility rows.  This prevents a held Enquiry opening
+    # with zero people or apparently missing Add-ons.
+    element_row = one(database, 'SELECT * FROM enquiry_elements WHERE enquiry_id=? AND company_id=? ORDER BY sort_order,id LIMIT 1', (enquiry['id'], company_id))
+    eeid = None
+    if element_row:
+        eeid = int(element_row['id'])
+        values['arrival_date'] = str(element_row['arrival_date'] or values['arrival_date'])
+        values['departure_date'] = str(element_row['departure_date'] or values['departure_date'])
+        values['party_size'] = '' if element_row['party_size'] is None else str(int(element_row['party_size']))
+        values['element_type'] = str(element_row['element_type'] or '')
+        values['element_id'] = '' if element_row['element_id'] is None else str(int(element_row['element_id']))
+    else:
+        request_row = one(database, 'SELECT * FROM enquiry_requests WHERE enquiry_id=? AND company_id=?', (enquiry['id'], company_id))
+        if request_row:
+            values['element_type'] = str(request_row['element_type'] or '')
+            values['element_id'] = '' if request_row['element_id'] is None else str(int(request_row['element_id']))
+    people_sql = 'SELECT person_type_id,quantity FROM enquiry_element_people WHERE enquiry_element_id=? AND company_id=?' if eeid else 'SELECT person_type_id,quantity FROM enquiry_people WHERE enquiry_id=? AND company_id=?'
+    for row in rows(database, people_sql, ((eeid if eeid else enquiry['id']), company_id)):
         values[f'person_{int(row["person_type_id"])}'] = str(int(row['quantity']))
     selected_days: set[int] = set()
-    for row in rows(database, 'SELECT addon_id,service_date,quantity FROM enquiry_addon_days WHERE enquiry_id=? AND company_id=?', (enquiry['id'], company_id)):
-        aid = int(row['addon_id']); selected_days.add(aid); values[f'addon_day_{aid}_{row["service_date"]}'] = str(int(row['quantity']))
-    for row in rows(database, 'SELECT addon_id,person_type_id,quantity FROM enquiry_addon_people WHERE enquiry_id=? AND company_id=?', (enquiry['id'], company_id)):
-        values[f'addon_person_{int(row["addon_id"])}_{int(row["person_type_id"])}'] = str(int(row['quantity']))
-    for row in rows(database, 'SELECT addon_id,person_type_id,service_date,quantity FROM enquiry_addon_person_days WHERE enquiry_id=? AND company_id=?', (enquiry['id'], company_id)):
-        aid = int(row['addon_id']); selected_days.add(aid); values[f'addon_day_person_{aid}_{int(row["person_type_id"])}_{row["service_date"]}'] = str(int(row['quantity']))
-    for row in rows(database, 'SELECT addon_id,quantity FROM enquiry_addons WHERE enquiry_id=? AND company_id=?', (enquiry['id'], company_id)):
-        aid = int(row['addon_id']); values[f'addon_{aid}'] = str(int(row['quantity'])); values[f'addon_when_{aid}'] = 'selected_days' if aid in selected_days else 'every_day'; values[f'addon_selected_{aid}'] = '1'
-    for row in rows(database, 'SELECT addon_id FROM enquiry_selected_addons WHERE enquiry_id=? AND company_id=? ORDER BY sort_order,addon_id', (enquiry['id'], company_id)):
-        values[f'addon_selected_{int(row["addon_id"])}'] = '1'
+    scope = ' AND enquiry_element_id=?' if eeid else ''
+    params = (enquiry['id'], company_id, eeid) if eeid else (enquiry['id'], company_id)
+    for row in rows(database, f'SELECT addon_id,service_date,quantity FROM enquiry_addon_days WHERE enquiry_id=? AND company_id=?{scope}', params):
+        aid=int(row['addon_id']); selected_days.add(aid); values[f'addon_day_{aid}_{row["service_date"]}']=str(int(row['quantity']))
+    for row in rows(database, f'SELECT addon_id,person_type_id,quantity FROM enquiry_addon_people WHERE enquiry_id=? AND company_id=?{scope}', params):
+        values[f'addon_person_{int(row["addon_id"])}_{int(row["person_type_id"])}']=str(int(row['quantity']))
+    for row in rows(database, f'SELECT addon_id,person_type_id,service_date,quantity FROM enquiry_addon_person_days WHERE enquiry_id=? AND company_id=?{scope}', params):
+        aid=int(row['addon_id']); selected_days.add(aid); values[f'addon_day_person_{aid}_{int(row["person_type_id"])}_{row["service_date"]}']=str(int(row['quantity']))
+    for row in rows(database, f'SELECT addon_id,quantity FROM enquiry_addons WHERE enquiry_id=? AND company_id=?{scope}', params):
+        aid=int(row['addon_id']); values[f'addon_{aid}']=str(int(row['quantity'])); values[f'addon_when_{aid}']='selected_days' if aid in selected_days else 'every_day'; values[f'addon_selected_{aid}']='1'
+    for row in rows(database, f'SELECT addon_id FROM enquiry_selected_addons WHERE enquiry_id=? AND company_id=?{scope} ORDER BY sort_order,addon_id', params):
+        values[f'addon_selected_{int(row["addon_id"])}']='1'
     return values
-
 
 def _validate_dates(values: dict[str, str]) -> tuple[date | None, date | None, str]:
     arrival = values.get('arrival_date', '').strip(); departure = values.get('departure_date', '').strip()
@@ -227,7 +244,8 @@ def _form_page(database, context, customer, values: dict[str,str], *, enquiry_id
     element_options='<option value="">-- no specific Element yet --</option>'+''.join(f'<option value="{int(e["id"])}" data-type="{esc(e["element_type"])}" {"selected" if int(e["id"])==selected_element_id else ""}>{esc(e["name"])}</option>' for e in elements)
     error_html=f'<div class="error">{esc(message)}</div>' if message else ''; title=f'Edit Enquiry #{enquiry_id}' if enquiry_id else 'New Enquiry'; back=f'/operations/enquiries/{enquiry_id}' if enquiry_id else f'/operations/customers/{int(customer["id"])}'; action=f'/operations/enquiries/{enquiry_id}/edit' if enquiry_id else f'/operations/customers/{int(customer["id"])}/enquiries/new'
     def style(key): return 'border:2px solid #c62828;' if key in errors else ''
-    body=f'''<h1>{esc(title)}</h1><p><a href="{back}">← Back</a></p>{error_html}<form method="post" action="{action}" id="integrated-enquiry-form"><input type="hidden" name="csrf" value="{esc(context['csrf_token'])}">
+    edit_notice = '<div class="ok"><strong>Current space remains held while you edit.</strong> Nothing changes until you save. If the proposed Element or dates are unavailable, the existing hold is kept.</div>' if enquiry_id else ''
+    body=f'''<h1>{esc(title)}</h1><p><a href="{back}">← Back</a></p>{edit_notice}{error_html}<form method="post" action="{action}" id="integrated-enquiry-form"><input type="hidden" name="csrf" value="{esc(context['csrf_token'])}">
 <div class="card"><h2>Customer &amp; stay</h2><p><strong>Customer:</strong> {esc(_customer_name(customer))}</p><div class="grid"><div><label>Arrival date</label><input id="arrival_date" style="{style('arrival_date')}" type="date" name="arrival_date" value="{esc(values.get('arrival_date',''))}"></div><div><label>Departure date</label><input id="departure_date" style="{style('departure_date')}" type="date" name="departure_date" value="{esc(values.get('departure_date',''))}"></div><div><label>Party size (if breakdown not known yet)</label><input style="{style('party_size')}" type="number" min="1" name="party_size" value="{esc(values.get('party_size',''))}"></div><div><label>Source</label><input name="source" placeholder="Phone, website, walk-in..." value="{esc(values.get('source',''))}"></div></div></div>
 <div class="card"><h2>Element</h2><div class="grid"><div><label>Element Type</label><select id="element_type" name="element_type">{type_options}</select></div><div><label>Specific Element (optional)</label><select id="element_id" name="element_id">{element_options}</select></div></div></div>
 <div class="card"><h2>People</h2><div class="grid">'''
@@ -245,7 +263,7 @@ def _form_page(database, context, customer, values: dict[str,str], *, enquiry_id
         else: qty_html=f'<input class="addon-input" data-addon-id="{aid}" style="{style(key)}" type="number" min="0" name="{key}" value="{esc(values.get(key,"0"))}">'
         body+=f'''<div class="addon-detail card" data-addon-id="{aid}" style="display:{'block' if selected else 'none'};margin:0 0 12px 0"><input class="addon-selected-hidden" type="hidden" name="addon_selected_{aid}" value="{'1' if selected else '0'}"><div style="display:flex;justify-content:space-between;gap:12px"><div><h3 style="margin:0">{esc(addon['name'])}</h3><span class="muted">{'Priced by Person Type' if addon_modes.get(str(aid))=='person_type' else esc(addon['pricing_method'])}</span></div><button type="button" class="secondary addon-remove" data-addon-id="{aid}">Remove</button></div><p id="addon-rule-{aid}" class="muted">Choose dates and a specific Element.</p><div class="grid"><div class="addon-main-qty" data-addon-id="{aid}"><label>Quantity</label>{qty_html}</div><div><label>When?</label><select class="addon-when" data-addon-id="{aid}" name="addon_when_{aid}">{option_html}</select></div></div><div id="addon-days-{aid}" style="margin-top:10px"></div></div>'''
     body+='''</div><aside class="card" style="margin:0;position:sticky;top:12px"><h3 style="margin-top:0">Available Add-ons</h3><div id="addon-picker"></div></aside></div><p><a href="/setup/addons/when">Configure Add-on Timings &amp; Person Pricing in Setup</a></p></div>'''
-    body+=f'''<div class="card"><h2>Notes</h2><textarea name="notes" rows="5" style="width:100%;padding:9px;border:1px solid #aeb8c4;border-radius:6px">{esc(values.get('notes',''))}</textarea></div><div class="card"><h2>Provisional price</h2><p><button type="submit" name="action" value="calculate">Calculate provisional price</button> <button type="submit" name="action" value="save">Save Enquiry</button></p></div>'''
+    body+=f'''<div class="card"><h2>Notes</h2><textarea name="notes" rows="5" style="width:100%;padding:9px;border:1px solid #aeb8c4;border-radius:6px">{esc(values.get('notes',''))}</textarea></div><div class="card"><h2>Provisional price</h2><p><button type="submit" name="action" value="calculate">CHECK CHANGES &amp; PRICE</button> <button type="submit" name="action" value="save">SAVE CHANGES</button></p></div>'''
     if result:
         line_rows=''.join(f'<tr><td>{esc(line["item"])}</td><td>{esc(line["rule"])}</td><td>€{float(line["amount"]):.2f}</td></tr>' for line in result['lines']); body+=f'<div class="card"><h2>Calculated provisional total: €{float(result["total"]):.2f}</h2><table><thead><tr><th>Item</th><th>Rule used</th><th>Amount</th></tr></thead><tbody>{line_rows}</tbody></table><p><button type="submit" name="action" value="save">Save Enquiry with this price</button></p></div>'
     body+='</form>'
@@ -366,6 +384,14 @@ def register_enquiry_builder_routes(app)->None:
             calculation,calc_errors,calc_message=_calculate(database,cid,values)
             if calc_message:return HTMLResponse(_form_page(database,context,customer,values,enquiry_id=enquiry_id,errors=calc_errors,message=calc_message),400)
         if action=='calculate':return HTMLResponse(_form_page(database,context,customer,values,enquiry_id=enquiry_id,result=calculation),200)
+        # Never surrender the existing Enquiry hold just because Edit was opened.
+        # Before committing a changed Element/date combination, prove the proposed
+        # replacement is available while excluding this Enquiry's own current hold.
+        if calculation and _int_or_zero(basic['element_id']):
+            state=availability_state(database,cid,_int_or_zero(basic['element_id']),basic['arrival_date'],basic['departure_date'],exclude_enquiry_id=enquiry_id)
+            if not state.get('available'):
+                msg='Changes not saved. Your existing held space is unchanged. '+str(state.get('reason') or 'The proposed Element or dates are not available.')
+                return HTMLResponse(_form_page(database,context,customer,values,enquiry_id=enquiry_id,message=msg),409)
         _save(database,context,cid,int(enquiry['customer_id']),basic|values,calculation,enquiry_id=enquiry_id); return RedirectResponse(f'/operations/enquiries/{enquiry_id}?saved=1',303)
     @app.get('/operations/enquiries/{enquiry_id}/build',response_class=HTMLResponse)
     def old(enquiry_id:int,request:Request,element_type:str='',element:str=''):
