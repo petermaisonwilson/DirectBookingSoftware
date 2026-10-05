@@ -154,6 +154,7 @@ def register_calendar_v2_routes(app) -> None:
 
         token = request.cookies.get(COOKIE_NAME, '')
         exact = []
+        unsuitable = []
         exact_message = ''
         if selected_type and arrival and departure:
             try:
