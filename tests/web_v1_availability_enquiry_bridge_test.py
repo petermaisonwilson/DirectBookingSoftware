@@ -145,6 +145,10 @@ def main() -> None:
         assert 'Current space remains held while you edit.' in edit_page.text
         assert 'SAVE CHANGES' in edit_page.text
         assert 'CHECK CHANGES &amp; PRICE' in edit_page.text
+        # TEST DATA ONLY: edit choices are reversible UI toggles so an operator
+        # can close an accidentally opened section without changing the Enquiry.
+        assert "if(openChoice===target){closeAll();return;}" in edit_page.text
+        assert "function closeAll()" in edit_page.text
         with db.connect() as c:
             enquiry = c.execute('SELECT * FROM enquiries WHERE id=? AND company_id=?', (enquiry_id, cid)).fetchone()
             assert enquiry is not None
