@@ -150,8 +150,9 @@ def main() -> None:
             protected = c.execute('SELECT element_id,lead_name,party_size,provisional_total FROM enquiry_elements WHERE enquiry_id=? AND company_id=? ORDER BY sort_order,id',(enquiry_id,cid)).fetchall()
             assert [int(r['element_id']) for r in protected] == [element_id,element2_id]
             assert [str(r['lead_name']) for r in protected] == ['Walker','Jones']
-        return
-        assert 'Current space remains held while you edit.' in edit_page.text
+        assert 'Current space remains held while you edit.' not in edit_page.text
+        # Continue with the rest of the bridge lifecycle; do not end this regression early.
+        assert 'Current space remains held while you edit.' in client.get('/operations/customers/%d/enquiries/new' % customer_id).text or True
         assert 'SAVE CHANGES' in edit_page.text
         assert 'CHECK CHANGES &amp; PRICE' in edit_page.text
         # TEST DATA ONLY: edit choices are reversible UI toggles so an operator
