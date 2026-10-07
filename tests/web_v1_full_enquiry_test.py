@@ -131,6 +131,35 @@ def main() -> None:
             original = c.execute('SELECT arrival_date,departure_date FROM enquiry_elements WHERE enquiry_id=? AND company_id=?',(enquiry_id,forest)).fetchone()
             assert str(original['arrival_date']) == '2026-09-10' and str(original['departure_date']) == '2026-09-12'
 
+        # TEST DATA ONLY: an available change is saved to the authoritative
+        # Element, recalculates price, and continues to hold the new dates.
+        available = client.post(f'/operations/enquiries/{enquiry_id}/edit', data=payload | {
+            'csrf': csrf, 'action': 'save', 'arrival_date': '2026-09-20',
+            'departure_date': '2026-09-23', f'person_{adult_id}': '1',
+            f'person_{child_id}': '1'
+        }, follow_redirects=False)
+        assert available.status_code == 303
+        assert available.headers['location'] == f'/operations/enquiries/{enquiry_id}?saved=1'
+        with db.connect() as c:
+            changed_element = c.execute('SELECT element_id,arrival_date,departure_date,party_size,provisional_total,recovery_state FROM enquiry_elements WHERE enquiry_id=? AND company_id=?',(enquiry_id,forest)).fetchone()
+            assert int(changed_element['element_id']) == element_id
+            assert str(changed_element['arrival_date']) == '2026-09-20'
+            assert str(changed_element['departure_date']) == '2026-09-23'
+            assert int(changed_element['party_size']) == 2
+            assert float(changed_element['provisional_total']) == 101.0
+            assert str(changed_element['recovery_state'] or 'held') == 'held'
+            changed_people = c.execute('SELECT person_type_id,quantity FROM enquiry_element_people WHERE enquiry_element_id=(SELECT id FROM enquiry_elements WHERE enquiry_id=? AND company_id=? LIMIT 1) AND company_id=? ORDER BY person_type_id',(enquiry_id,forest,forest)).fetchall()
+            assert {int(x['person_type_id']):int(x['quantity']) for x in changed_people} == {adult_id:1,child_id:1}
+        from online.webv1_status_availability import availability_state
+        new_hold = availability_state(db,forest,element_id,'2026-09-20','2026-09-23')
+        old_hold = availability_state(db,forest,element_id,'2026-09-10','2026-09-12')
+        assert new_hold['available'] is False and new_hold['state'] == 'ENQUIRY' and int(new_hold['enquiry_id']) == enquiry_id
+        assert old_hold['available'] is True
+        changed_detail = client.get(f'/operations/enquiries/{enquiry_id}')
+        assert changed_detail.status_code == 200
+        assert 'HOLDING SPACE' in changed_detail.text
+        assert '€101.00' in changed_detail.text
+
         # The old staged URL now safely redirects to the integrated editor. A blank element never causes FastAPI integer parsing errors.
         old = client.get(f'/operations/enquiries/{enquiry_id}/build?element_type=Camping%20Pitch&element=', follow_redirects=False)
         assert old.status_code == 303
