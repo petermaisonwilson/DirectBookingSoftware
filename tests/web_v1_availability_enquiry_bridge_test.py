@@ -149,6 +149,22 @@ def main() -> None:
         # can close an accidentally opened section without changing the Enquiry.
         assert "if(openChoice===target){closeAll();return;}" in edit_page.text
         assert "function closeAll()" in edit_page.text
+        # TEST DATA ONLY: saving a changed held Enquiry must update the
+        # authoritative per-element requirements, not only compatibility rows.
+        csrf_edit = _csrf(edit_page.text)
+        changed = client.post(f'/operations/enquiries/{enquiry_id}/edit', data={
+            'csrf': csrf_edit, 'action': 'save', 'arrival_date': '2036-08-10',
+            'departure_date': '2036-08-18', 'party_size': '1', 'source': 'Availability',
+            'notes': '', 'element_type': 'Bridge Camping', 'element_id': str(element_id),
+            f'person_{chosen_person}': '1'
+        }, follow_redirects=False)
+        assert changed.status_code == 303
+        reopened_edit = client.get(f'/operations/enquiries/{enquiry_id}/edit')
+        assert f'name="person_{chosen_person}" value="1"' in reopened_edit.text
+        with db.connect() as c:
+            first_ee = c.execute('SELECT id FROM enquiry_elements WHERE enquiry_id=? AND company_id=? ORDER BY sort_order,id LIMIT 1',(enquiry_id,cid)).fetchone()
+            saved_person = c.execute('SELECT quantity FROM enquiry_element_people WHERE enquiry_element_id=? AND company_id=? AND person_type_id=?',(int(first_ee['id']),cid,chosen_person)).fetchone()
+            assert saved_person is not None and int(saved_person['quantity']) == 1
         with db.connect() as c:
             enquiry = c.execute('SELECT * FROM enquiries WHERE id=? AND company_id=?', (enquiry_id, cid)).fetchone()
             assert enquiry is not None
