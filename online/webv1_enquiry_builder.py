@@ -379,7 +379,19 @@ def _save(database, context, company_id:int, customer_id:int, values:dict[str,st
                 for d,pp in bydate.items():
                     for pid,qty in pp.items():
                         if qty:c.execute('INSERT INTO enquiry_element_addon_person_days(enquiry_element_id,company_id,addon_id,person_type_id,service_date,quantity) VALUES (?,?,?,?,?,?)',(eeid,company_id,aid,pid,d,qty))
-    audit(database,context,company_id,'ENQUIRY_CREATED' if created else 'ENQUIRY_UPDATED','enquiry',enquiry_id,after={'customer_id':customer_id,'element_type':selected_type,'element_id':element_id,'provisional_total':provisional_total}); return int(enquiry_id)
+    if created:
+        audit(database,context,company_id,'ENQUIRY_CREATED','enquiry',enquiry_id,after={'customer_id':customer_id,'element_type':selected_type,'element_id':element_id,'provisional_total':provisional_total})
+    else:
+        # Record the operational change in human-meaningful terms.  The audit
+        # still stores structured before/after data, but dates, Element, people
+        # and price are explicit so History can say what actually changed.
+        before_element = one(database,'SELECT element_type,element_id,arrival_date,departure_date,party_size,provisional_total FROM enquiry_elements WHERE enquiry_id=? AND company_id=? ORDER BY sort_order,id LIMIT 1',(enquiry_id,company_id))
+        # At this point the authoritative row has already been saved, so use
+        # the caller-supplied pre-save snapshot when present.
+        before_data = values.get('__audit_before') if isinstance(values.get('__audit_before'),dict) else None
+        after_data={'customer_id':customer_id,'element_type':selected_type,'element_id':element_id,'arrival_date':values.get('arrival_date') or None,'departure_date':values.get('departure_date') or None,'party_size':party_size,'people':calculation.get('people_counts',{}) if calculation else {},'addons':calculation.get('addon_counts',{}) if calculation else {},'provisional_total':provisional_total}
+        audit(database,context,company_id,'ENQUIRY_UPDATED','enquiry',enquiry_id,before=before_data,after=after_data)
+    return int(enquiry_id)
 
 
 def register_enquiry_builder_routes(app)->None:
@@ -441,7 +453,15 @@ def register_enquiry_builder_routes(app)->None:
             if not state.get('available'):
                 msg='Changes not saved. Your existing held space is unchanged. '+str(state.get('reason') or 'The proposed Element or dates are not available.')
                 return HTMLResponse(_form_page(database,context,customer,values,enquiry_id=enquiry_id,message=msg),409)
-        _save(database,context,cid,int(enquiry['customer_id']),basic|values,calculation,enquiry_id=enquiry_id); return RedirectResponse(f'/operations/enquiries/{enquiry_id}?saved=1',303)
+        before_element=one(database,'SELECT element_type,element_id,arrival_date,departure_date,party_size,provisional_total FROM enquiry_elements WHERE enquiry_id=? AND company_id=? ORDER BY sort_order,id LIMIT 1',(enquiry_id,cid))
+        before_people=rows(database,'SELECT person_type_id,quantity FROM enquiry_element_people WHERE enquiry_element_id=(SELECT id FROM enquiry_elements WHERE enquiry_id=? AND company_id=? ORDER BY sort_order,id LIMIT 1) AND company_id=? ORDER BY person_type_id',(enquiry_id,cid,cid))
+        before_addons=rows(database,'SELECT addon_id,quantity FROM enquiry_element_addons WHERE enquiry_element_id=(SELECT id FROM enquiry_elements WHERE enquiry_id=? AND company_id=? ORDER BY sort_order,id LIMIT 1) AND company_id=? ORDER BY addon_id',(enquiry_id,cid,cid))
+        audit_before=None
+        if before_element is not None:
+            audit_before={'element_type':str(before_element['element_type'] or ''),'element_id':before_element['element_id'],'arrival_date':before_element['arrival_date'],'departure_date':before_element['departure_date'],'party_size':before_element['party_size'],'people':{int(x['person_type_id']):int(x['quantity']) for x in before_people},'addons':{int(x['addon_id']):int(x['quantity']) for x in before_addons},'provisional_total':before_element['provisional_total']}
+        save_values=basic|values
+        if audit_before is not None: save_values['__audit_before']=audit_before
+        _save(database,context,cid,int(enquiry['customer_id']),save_values,calculation,enquiry_id=enquiry_id); return RedirectResponse(f'/operations/enquiries/{enquiry_id}?saved=1',303)
     @app.get('/operations/enquiries/{enquiry_id}/build',response_class=HTMLResponse)
     def old(enquiry_id:int,request:Request,element_type:str='',element:str=''):
         context=context_for(database,request); cid=working_company(context)
