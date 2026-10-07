@@ -151,7 +151,7 @@ def main() -> None:
         assert "function closeAll()" in edit_page.text
         # TEST DATA ONLY: saving a changed held Enquiry must update the
         # authoritative per-element requirements, not only compatibility rows.
-        csrf_edit = _csrf(edit_page.text)
+        csrf_edit = csrf
         changed = client.post(f'/operations/enquiries/{enquiry_id}/edit', data={
             'csrf': csrf_edit, 'action': 'save', 'arrival_date': '2036-08-10',
             'departure_date': '2036-08-18', 'party_size': '1', 'source': 'Availability',
