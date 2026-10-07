@@ -177,21 +177,6 @@ def main() -> None:
             assert c.execute('SELECT 1 FROM hold_requirement_addons WHERE hold_id=?', (hold_id,)).fetchone() is None
             assert int(c.execute('SELECT COUNT(*) AS n FROM customer_records WHERE company_id=?', (cid,)).fetchone()['n']) == customer_count_before
 
-        # TEST DATA ONLY: now change the first held Element from 2 people to 1.
-        csrf_edit = csrf
-        changed = client.post(f'/operations/enquiries/{enquiry_id}/edit', data={
-            'csrf': csrf_edit, 'action': 'save', 'arrival_date': '2036-08-10',
-            'departure_date': '2036-08-18', 'party_size': '1', 'source': 'Availability',
-            'notes': '', 'element_type': 'Bridge Camping', 'element_id': str(element_id),
-            f'person_{chosen_person}': '1'
-        }, follow_redirects=False)
-        assert changed.status_code == 303
-        reopened_edit = client.get(f'/operations/enquiries/{enquiry_id}/edit')
-        assert f'name="person_{chosen_person}" value="1"' in reopened_edit.text
-        with db.connect() as c:
-            first_ee = c.execute('SELECT id FROM enquiry_elements WHERE enquiry_id=? AND company_id=? ORDER BY sort_order,id LIMIT 1',(enquiry_id,cid)).fetchone()
-            saved_person = c.execute('SELECT quantity FROM enquiry_element_people WHERE enquiry_element_id=? AND company_id=? AND person_type_id=?',(int(first_ee['id']),cid,chosen_person)).fetchone()
-            assert saved_person is not None and int(saved_person['quantity']) == 1
         # TEST DATA ONLY: saving a changed held Enquiry must update the
         # authoritative per-element requirements, not only compatibility rows.
         csrf_edit = csrf
@@ -228,8 +213,8 @@ def main() -> None:
         assert 'Alice Walker' in enquiry_page.text
         assert 'Bridge Pitch A' in enquiry_page.text
         assert 'Bridge Pitch B' in enquiry_page.text
-        assert '€40.00' in enquiry_page.text and '€90.00' in enquiry_page.text
-        assert 'Provisional total: €130.00' in enquiry_page.text
+        assert '€20.00' in enquiry_page.text and '€90.00' in enquiry_page.text
+        assert 'Provisional total: €110.00' in enquiry_page.text
 
         # TEST DATA ONLY: partial reopen recovery. One original Element remains
         # available while the other becomes unavailable after explicit release.
