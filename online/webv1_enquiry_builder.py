@@ -356,6 +356,26 @@ def _save(database, context, company_id:int, customer_id:int, values:dict[str,st
             for table in ('enquiry_people','enquiry_addons','enquiry_addon_days','enquiry_addon_people','enquiry_addon_person_days','enquiry_selected_addons'):
                 cols={str(r['name']) for r in c.execute(f'PRAGMA table_info({table})').fetchall()}
                 if 'enquiry_element_id' in cols:c.execute(f'UPDATE {table} SET enquiry_element_id=? WHERE enquiry_id=? AND company_id=? AND enquiry_element_id IS NULL',(eeid,enquiry_id,company_id))
+            # Keep the authoritative per-element requirement tables in sync.
+            # The legacy enquiry-wide rows remain compatibility data only.
+            for table in ('enquiry_element_people','enquiry_element_addons','enquiry_element_addon_days','enquiry_element_addon_people','enquiry_element_addon_person_days','enquiry_element_selected_addons'):
+                c.execute(f'DELETE FROM {table} WHERE enquiry_element_id=? AND company_id=?',(eeid,company_id))
+            for pid,qty in calculation['people_counts'].items():
+                if qty:c.execute('INSERT INTO enquiry_element_people(enquiry_element_id,company_id,person_type_id,quantity) VALUES (?,?,?,?)',(eeid,company_id,pid,qty))
+            for order,aid in enumerate(calculation['selected_addons'],1):
+                c.execute('INSERT INTO enquiry_element_selected_addons(enquiry_element_id,company_id,addon_id,sort_order) VALUES (?,?,?,?)',(eeid,company_id,aid,order))
+            for aid,qty in calculation['addon_counts'].items():
+                if qty:c.execute('INSERT INTO enquiry_element_addons(enquiry_element_id,company_id,addon_id,quantity) VALUES (?,?,?,?)',(eeid,company_id,aid,qty))
+            for aid,daily in calculation['addon_days'].items():
+                for d,qty in daily.items():
+                    if qty:c.execute('INSERT INTO enquiry_element_addon_days(enquiry_element_id,company_id,addon_id,service_date,quantity) VALUES (?,?,?,?,?)',(eeid,company_id,aid,d,qty))
+            for aid,pp in calculation['addon_people'].items():
+                for pid,qty in pp.items():
+                    if qty:c.execute('INSERT INTO enquiry_element_addon_people(enquiry_element_id,company_id,addon_id,person_type_id,quantity) VALUES (?,?,?,?,?)',(eeid,company_id,aid,pid,qty))
+            for aid,bydate in calculation['addon_person_days'].items():
+                for d,pp in bydate.items():
+                    for pid,qty in pp.items():
+                        if qty:c.execute('INSERT INTO enquiry_element_addon_person_days(enquiry_element_id,company_id,addon_id,person_type_id,service_date,quantity) VALUES (?,?,?,?,?,?)',(eeid,company_id,aid,pid,d,qty))
     audit(database,context,company_id,'ENQUIRY_CREATED' if created else 'ENQUIRY_UPDATED','enquiry',enquiry_id,after={'customer_id':customer_id,'element_type':selected_type,'element_id':element_id,'provisional_total':provisional_total}); return int(enquiry_id)
 
 
