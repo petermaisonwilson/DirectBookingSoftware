@@ -423,6 +423,9 @@ def register_enquiry_builder_routes(app)->None:
             booking=one(database,'SELECT id,reference FROM bookings WHERE company_id=? AND enquiry_id=? ORDER BY id DESC LIMIT 1',(cid,enquiry_id))
             destination=f'/operations/bookings/{int(booking["id"])}' if booking is not None else f'/operations/enquiries/{enquiry_id}'
             return RedirectResponse(destination,303)
+        element_count=int(one(database,'SELECT COUNT(*) AS n FROM enquiry_elements WHERE enquiry_id=? AND company_id=?',(enquiry_id,cid))['n'])
+        if element_count > 1:
+            return HTMLResponse(layout(f'Edit Enquiry #{enquiry_id}',f'<h1>Edit Enquiry #{enquiry_id}</h1><p><a href="/operations/enquiries/{enquiry_id}">← Back</a></p><div class="error"><strong>This Enquiry contains {element_count} Elements.</strong><br>DBS has not changed anything. Return to the Enquiry and choose the Element you want to change.</div>',context),409)
         customer=_customer(database,cid,int(enquiry['customer_id'])); data=await form_data(request); require_csrf(context,data); values=dict(data); basic=_basic_values(data); _,_,date_error=_validate_dates(basic)
         if date_error:return HTMLResponse(_form_page(database,context,customer,values,enquiry_id=enquiry_id,errors={'arrival_date','departure_date'},message=date_error),400)
         calculation=None; action=data.get('action','save')
