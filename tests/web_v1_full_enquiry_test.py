@@ -105,6 +105,31 @@ def main() -> None:
         edit = client.get(f'/operations/enquiries/{enquiry_id}/edit')
         assert edit.status_code == 200
         assert 'Edit Enquiry' in edit.text and 'Pitch A' in edit.text and 'Needs electric pitch' in edit.text
+        assert 'To close an open change section, click the same change button again.' in edit.text
+
+        # TEST DATA ONLY: checking a proposed change recalculates but never mutates
+        # the existing held Enquiry.
+        checked = client.post(f'/operations/enquiries/{enquiry_id}/edit', data=payload | {
+            'csrf': csrf, 'action': 'calculate', 'departure_date': '2026-09-13'
+        })
+        assert checked.status_code == 200
+        assert 'Calculated provisional total:' in checked.text
+        with db.connect() as c:
+            before_unavailable = c.execute('SELECT element_id,arrival_date,departure_date,party_size,provisional_total FROM enquiry_elements WHERE enquiry_id=? AND company_id=?',(enquiry_id,forest)).fetchone()
+            blocker_customer = int(c.execute("INSERT INTO customer_records(company_id,first_name,last_name,email,phone,created_at,updated_at) VALUES (?,?,?,?,?,?,?)",(forest,'Blocker','Guest','blocker@example.test','0600000000',now,now)).lastrowid)
+            blocker = int(c.execute("INSERT INTO enquiries(company_id,customer_id,status,source,arrival_date,departure_date,party_size,created_at,updated_at) VALUES (?,?,?,?,?,?,?,?,?)",(forest,blocker_customer,'new','TEST DATA ONLY','2026-09-15','2026-09-17',1,now,now)).lastrowid)
+            c.execute("INSERT INTO enquiry_elements(enquiry_id,company_id,element_type,element_id,arrival_date,departure_date,lead_name,party_size,provisional_total,pricing_snapshot_json,sort_order,recovery_state,created_at,updated_at) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?)",(blocker,forest,'Camping Pitch',element_id,'2026-09-15','2026-09-17','Guest',1,50.0,'{}',1,'held',now,now))
+
+        unavailable = client.post(f'/operations/enquiries/{enquiry_id}/edit', data=payload | {
+            'csrf': csrf, 'action': 'save', 'arrival_date': '2026-09-15', 'departure_date': '2026-09-17'
+        }, follow_redirects=False)
+        assert unavailable.status_code == 409
+        assert 'Changes not saved. Your existing held space is unchanged.' in unavailable.text
+        with db.connect() as c:
+            after_unavailable = c.execute('SELECT element_id,arrival_date,departure_date,party_size,provisional_total FROM enquiry_elements WHERE enquiry_id=? AND company_id=?',(enquiry_id,forest)).fetchone()
+            assert tuple(after_unavailable) == tuple(before_unavailable)
+            original = c.execute('SELECT arrival_date,departure_date FROM enquiry_elements WHERE enquiry_id=? AND company_id=?',(enquiry_id,forest)).fetchone()
+            assert str(original['arrival_date']) == '2026-09-10' and str(original['departure_date']) == '2026-09-12'
 
         # The old staged URL now safely redirects to the integrated editor. A blank element never causes FastAPI integer parsing errors.
         old = client.get(f'/operations/enquiries/{enquiry_id}/build?element_type=Camping%20Pitch&element=', follow_redirects=False)
