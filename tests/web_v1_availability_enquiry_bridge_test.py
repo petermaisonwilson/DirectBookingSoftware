@@ -153,6 +153,19 @@ def main() -> None:
         assert 'Current space remains held while you edit.' not in edit_page.text
         assert 'SAVE CHANGES' not in edit_page.text
         assert 'CHECK CHANGES &amp; PRICE' not in edit_page.text
+        # TEST DATA ONLY: the protection is enforced server-side too; a direct
+        # POST cannot bypass the guarded multi-Element editor.
+        blocked_post = client.post(f'/operations/enquiries/{enquiry_id}/edit', data={
+            'csrf': csrf, 'action': 'save', 'arrival_date': '2036-09-01',
+            'departure_date': '2036-09-03', 'party_size': '1', 'source': 'Availability',
+            'notes': '', 'element_type': 'Bridge Camping', 'element_id': str(element_id),
+            f'person_{chosen_person}': '1'
+        }, follow_redirects=False)
+        assert blocked_post.status_code == 409
+        assert 'DBS has not changed anything.' in blocked_post.text
+        with db.connect() as c:
+            still_protected = c.execute('SELECT element_id,arrival_date,departure_date,party_size FROM enquiry_elements WHERE enquiry_id=? AND company_id=? ORDER BY sort_order,id',(enquiry_id,cid)).fetchall()
+            assert [(int(x['element_id']),str(x['arrival_date']),str(x['departure_date']),int(x['party_size'])) for x in still_protected] == [(element_id,'2036-08-10','2036-08-12',2),(element2_id,'2036-08-15','2036-08-18',3)]
         with db.connect() as c:
             enquiry = c.execute('SELECT * FROM enquiries WHERE id=? AND company_id=?', (enquiry_id, cid)).fetchone()
             assert enquiry is not None
