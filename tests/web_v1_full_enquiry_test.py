@@ -146,7 +146,8 @@ def main() -> None:
             assert str(changed_element['arrival_date']) == '2026-09-20'
             assert str(changed_element['departure_date']) == '2026-09-23'
             assert int(changed_element['party_size']) == 2
-            assert float(changed_element['provisional_total']) == 101.0
+            # 3 nights: element €75 + Adult €15 + Child €6 + fixed EHU €3 = €99.
+            assert float(changed_element['provisional_total']) == 99.0
             assert str(changed_element['recovery_state'] or 'held') == 'held'
             changed_people = c.execute('SELECT person_type_id,quantity FROM enquiry_element_people WHERE enquiry_element_id=(SELECT id FROM enquiry_elements WHERE enquiry_id=? AND company_id=? LIMIT 1) AND company_id=? ORDER BY person_type_id',(enquiry_id,forest,forest)).fetchall()
             assert {int(x['person_type_id']):int(x['quantity']) for x in changed_people} == {adult_id:1,child_id:1}
@@ -158,7 +159,7 @@ def main() -> None:
         changed_detail = client.get(f'/operations/enquiries/{enquiry_id}')
         assert changed_detail.status_code == 200
         assert 'HOLDING SPACE' in changed_detail.text
-        assert '€101.00' in changed_detail.text
+        assert '€99.00' in changed_detail.text
 
         # The old staged URL now safely redirects to the integrated editor. A blank element never causes FastAPI integer parsing errors.
         old = client.get(f'/operations/enquiries/{enquiry_id}/build?element_type=Camping%20Pitch&element=', follow_redirects=False)
