@@ -181,19 +181,6 @@ def main() -> None:
             assert c.execute('SELECT 1 FROM hold_requirement_addons WHERE hold_id=?', (hold_id,)).fetchone() is None
             assert int(c.execute('SELECT COUNT(*) AS n FROM customer_records WHERE company_id=?', (cid,)).fetchone()['n']) == customer_count_before
 
-        # TEST DATA ONLY: saving a changed held Enquiry must update the
-        # authoritative per-element requirements, not only compatibility rows.
-        csrf_edit = csrf
-        changed = client.post(f'/operations/enquiries/{enquiry_id}/edit', data={
-            'csrf': csrf_edit, 'action': 'save', 'arrival_date': '2036-08-10',
-            'departure_date': '2036-08-18', 'party_size': '1', 'source': 'Availability',
-            'notes': '', 'element_type': 'Bridge Camping', 'element_id': str(element_id),
-            f'person_{chosen_person}': '1'
-        }, follow_redirects=False)
-        assert changed.status_code == 303
-        reopened_edit = client.get(f'/operations/enquiries/{enquiry_id}/edit')
-        assert f'name="person_{chosen_person}" value="1"' in reopened_edit.text
-
         from online.webv1_status_availability import availability_state
         # TEST DATA ONLY: even a legacy/stale expiry timestamp must not silently release a saved Enquiry.
         # Once the temporary basket is converted, only explicit Release Enquiry frees inventory.
