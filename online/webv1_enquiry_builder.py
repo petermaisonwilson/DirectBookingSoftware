@@ -251,6 +251,9 @@ def _form_page(database, context, customer, values: dict[str,str], *, enquiry_id
     edit_notice = '<div class="ok"><strong>Current space remains held while you edit.</strong> Nothing changes until you save. If the proposed Element or dates are unavailable, the existing hold is kept.</div>' if enquiry_id else ''
     current_summary = ''
     if enquiry_id:
+        enquiry_element_count = int(one(database, 'SELECT COUNT(*) AS n FROM enquiry_elements WHERE enquiry_id=? AND company_id=?', (enquiry_id, company_id))['n'])
+        if enquiry_element_count > 1:
+            return layout(title, f'''<h1>{esc(title)}</h1><p><a href="{back}">← Back</a></p><div class="error"><strong>This Enquiry contains {enquiry_element_count} Elements.</strong><br>This editor changes one held Element at a time, so DBS will not open a single-Element editor that could accidentally overwrite part of a multi-Element Enquiry. Return to the Enquiry and choose the Element you want to change.</div>''', context)
         element_name = next((str(e['name']) for e in elements if int(e['id']) == selected_element_id), 'Element not yet selected')
         people_bits = []
         for p in people:
