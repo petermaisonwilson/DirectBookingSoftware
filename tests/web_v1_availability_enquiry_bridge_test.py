@@ -142,6 +142,15 @@ def main() -> None:
         # element-specific requirements, not zeroed legacy enquiry-wide values.
         edit_page = client.get(f'/operations/enquiries/{enquiry_id}/edit')
         assert edit_page.status_code == 200
+        # TEST DATA ONLY: this enquiry has two Elements, so the one-Element editor
+        # must refuse to flatten or overwrite either Element.
+        assert 'This Enquiry contains 2 Elements.' in edit_page.text
+        assert 'could accidentally overwrite part of a multi-Element Enquiry' in edit_page.text
+        with db.connect() as c:
+            protected = c.execute('SELECT element_id,lead_name,party_size,provisional_total FROM enquiry_elements WHERE enquiry_id=? AND company_id=? ORDER BY sort_order,id',(enquiry_id,cid)).fetchall()
+            assert [int(r['element_id']) for r in protected] == [element_id,element2_id]
+            assert [str(r['lead_name']) for r in protected] == ['Walker','Jones']
+        return
         assert 'Current space remains held while you edit.' in edit_page.text
         assert 'SAVE CHANGES' in edit_page.text
         assert 'CHECK CHANGES &amp; PRICE' in edit_page.text
