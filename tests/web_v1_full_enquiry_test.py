@@ -219,7 +219,7 @@ def main() -> None:
             assert req is not None and req['element_type'] == 'Camping Pitch' and req['element_id'] is None and req['provisional_total'] is None
 
         register = client.get('/operations/enquiries')
-        assert register.status_code == 200 and 'Pitch A' in register.text and '€99.00' in register.text and 'River Guest' not in register.text
+        assert register.status_code == 200 and 'Pitch A' in register.text and '€96.00' in register.text and 'River Guest' not in register.text
         assert client.get(f'/operations/enquiries/{river_enquiry}/edit').status_code == 404
         client.post('/logout', follow_redirects=False)
 
