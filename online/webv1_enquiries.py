@@ -44,40 +44,63 @@ def _enquiry_action(row, context) -> str:
     return f'''<form method="post" action="/operations/enquiries/{enquiry_id}/release" style="display:inline" onsubmit="return confirm('Release this enquiry? The enquiry and its history will be retained, but its reserved availability will be released.')"><input type="hidden" name="csrf" value="{csrf}"><button class="secondary">RELEASE ENQUIRY</button></form>'''
 
 def _edit_history(database, company_id: int, enquiry_id: int) -> str:
-    """Render meaningful enquiry changes from the append-only audit trail."""
-    events = rows(database, """SELECT a.created_at,a.before_json,a.after_json,a.actor_role,
+    """Client-facing change history; technical audit stays append-only."""
+    from datetime import datetime, timezone
+    from zoneinfo import ZoneInfo
+
+    events=rows(database, """SELECT a.created_at,a.before_json,a.after_json,a.actor_role,
         u.email AS actor_email FROM audit_log a
         LEFT JOIN users u ON u.id=a.actor_user_id
         WHERE a.company_id=? AND a.entity_type='enquiry' AND a.entity_id=?
-          AND a.action='ENQUIRY_UPDATED'
-        ORDER BY a.id DESC""", (company_id,str(enquiry_id)))
-    if not events:
-        return ''
-    labels={'element_id':'Element','arrival_date':'Arrival','departure_date':'Departure',
-            'party_size':'People total','people':'People quantities','addons':'Add-ons',
-            'provisional_total':'Provisional price'}
-    def fmt(key, value):
-        if value is None: return '—'
-        if key=='provisional_total': return f'€{float(value):.2f}'
-        if key in ('arrival_date','departure_date'): return _fmt_day(value)
-        if isinstance(value,dict): return ', '.join(f'{esc(k)} × {esc(v)}' for k,v in sorted(value.items())) or 'None'
-        return esc(value)
+          AND a.action='ENQUIRY_UPDATED' ORDER BY a.id DESC""", (company_id,str(enquiry_id)))
+    if not events: return ''
+    person_names={str(r['id']):str(r['name']) for r in rows(database,
+        'SELECT id,name FROM setup_person_types WHERE company_id=?',(company_id,))}
+    addon_names={str(r['id']):str(r['name']) for r in rows(database,
+        'SELECT id,name FROM setup_addons WHERE company_id=?',(company_id,))}
+    element_names={str(r['id']):str(r['name']) for r in rows(database,
+        'SELECT id,name FROM setup_elements WHERE company_id=?',(company_id,))}
+    def date_text(value): return esc(_fmt_day(value))
+    def money(value): return f'€{float(value):.2f}'
+    def count_changes(label, before, after, names):
+        changes=[]
+        for key in sorted(set(before)|set(after),key=str):
+            old=int(before.get(key,0)); new=int(after.get(key,0))
+            if old!=new:
+                name=esc(names.get(str(key),'Item '+str(key)))
+                changes.append(f'{name} changed from {old} to {new}')
+        return changes
     entries=[]
     for event in events:
         try:
             before=json.loads(event['before_json'] or '{}')
             after=json.loads(event['after_json'] or '{}')
-        except (ValueError,TypeError):
-            continue
+        except (ValueError,TypeError): continue
+        if not before: continue
         changes=[]
-        for key,label in labels.items():
-            if key in before and key in after and before[key]!=after[key]:
-                changes.append(f'<li><strong>{label}:</strong> {fmt(key,before[key])} → {fmt(key,after[key])}</li>')
+        for key,label in [('arrival_date','Arrival'),('departure_date','Departure')]:
+            if before.get(key)!=after.get(key):
+                changes.append(f'{label} changed from {date_text(before.get(key))} to {date_text(after.get(key))}')
+        if str(before.get('element_id'))!=str(after.get('element_id')):
+            old=esc(element_names.get(str(before.get('element_id')),'Previous Element'))
+            new=esc(element_names.get(str(after.get('element_id')),'New Element'))
+            changes.append(f'Element changed from {old} to {new}')
+        for key,names in [('people',person_names),('addons',addon_names)]:
+            old=before.get(key) or {}; new=after.get(key) or {}
+            if isinstance(old,dict) and isinstance(new,dict):
+                changes.extend(count_changes(key,old,new,names))
+        if before.get('provisional_total')!=after.get('provisional_total'):
+            changes.append(f'Enquiry value changed from {money(before.get("provisional_total") or 0)} to {money(after.get("provisional_total") or 0)}')
         if not changes: continue
         actor=esc(event['actor_email'] or event['actor_role'] or 'Staff')
-        stamp=esc(event['created_at'] or '')
-        entries.append(f'<div><strong>{stamp} UTC — {actor}</strong><ul>{"".join(changes)}</ul></div>')
-    return '<div class="card"><h2>Enquiry change history</h2>'+''.join(entries)+'</div>' if entries else ''
+        try:
+            dt=datetime.fromisoformat(str(event['created_at']).replace('Z','+00:00'))
+            if dt.tzinfo is None: dt=dt.replace(tzinfo=timezone.utc)
+            stamp=dt.astimezone(ZoneInfo('Europe/Paris')).strftime('%d/%m/%Y %H:%M')
+        except (ValueError,TypeError): stamp=esc(event['created_at'] or '')
+        items=''.join(f'<li>{change}</li>' for change in changes)
+        entries.append(f'<div><strong>{stamp} — {actor} — Enquiry amended</strong><ul>{items}</ul></div>')
+    return '<div class="card"><h2>Enquiry history</h2>'+''.join(entries)+'</div>' if entries else ''
 
 
 def register_enquiry_routes(app) -> None:
