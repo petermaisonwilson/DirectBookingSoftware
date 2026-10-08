@@ -391,7 +391,11 @@ def _save(database, context, company_id:int, customer_id:int, values:dict[str,st
         # the caller-supplied pre-save snapshot when present.
         before_data = values.get('__audit_before') if isinstance(values.get('__audit_before'),dict) else None
         after_data={'customer_id':customer_id,'element_type':selected_type,'element_id':element_id,'arrival_date':values.get('arrival_date') or None,'departure_date':values.get('departure_date') or None,'party_size':party_size,'people':{str(x['person_type_id']):int(x['quantity']) for x in rows(database,'SELECT person_type_id,quantity FROM enquiry_element_people WHERE enquiry_element_id=(SELECT id FROM enquiry_elements WHERE enquiry_id=? AND company_id=? ORDER BY sort_order,id LIMIT 1) AND company_id=?',(enquiry_id,company_id,company_id))},'addons':{str(x['addon_id']):int(x['quantity']) for x in rows(database,'SELECT addon_id,quantity FROM enquiry_element_addons WHERE enquiry_element_id=(SELECT id FROM enquiry_elements WHERE enquiry_id=? AND company_id=? ORDER BY sort_order,id LIMIT 1) AND company_id=?',(enquiry_id,company_id,company_id))},'provisional_total':provisional_total}
-        audit(database,context,company_id,'ENQUIRY_UPDATED','enquiry',enquiry_id,before=before_data,after=after_data)
+        if locked_connection is None:
+            audit(database,context,company_id,'ENQUIRY_UPDATED','enquiry',enquiry_id,before=before_data,after=after_data)
+        else:
+            locked_connection.execute('''INSERT INTO audit_log(company_id,actor_user_id,actor_role,acting_company_id,action,entity_type,entity_id,before_json,after_json,created_at) VALUES (?,?,?,?,?,?,?,?,?,?)''',
+                (company_id,context['user_id'],context['role'],context['acting_company_id'],'ENQUIRY_UPDATED','enquiry',str(enquiry_id),json.dumps(before_data,sort_keys=True) if before_data is not None else None,json.dumps(after_data,sort_keys=True),iso_now()))
     return int(enquiry_id)
 
 
