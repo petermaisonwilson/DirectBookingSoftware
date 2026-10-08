@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+import sqlite3
 import sys
 import tempfile
 from pathlib import Path
@@ -11,6 +12,7 @@ from fastapi.testclient import TestClient
 
 from online.app import COOKIE_NAME, create_app
 from online.webv1 import register_web_v1
+from online import webv1_enquiry_builder as enquiry_builder
 
 
 def login(client: TestClient, email: str, password: str) -> None:
@@ -182,11 +184,34 @@ def main() -> None:
 
         # TEST DATA ONLY: removing an add-on updates the held enquiry,
         # its financial total, and the client-readable change history.
-        without_electric = client.post(f'/operations/enquiries/{enquiry_id}/edit', data=payload | {
+        # TEST DATA ONLY: confirm the final inventory check occurs while
+        # another SQLite writer is excluded by the amendment transaction.
+        original_availability = enquiry_builder.availability_state
+        lock_observed = []
+        def checking_availability(*args, **kwargs):
+            result = original_availability(*args, **kwargs)
+            other = sqlite3.connect(db.path, timeout=0.02)
+            try:
+                try:
+                    other.execute('BEGIN IMMEDIATE')
+                    other.rollback()
+                    lock_observed.append(False)
+                except sqlite3.OperationalError as exc:
+                    assert 'locked' in str(exc).lower()
+                    lock_observed.append(True)
+            finally:
+                other.close()
+            return result
+        enquiry_builder.availability_state = checking_availability
+        try:
+            without_electric = client.post(f'/operations/enquiries/{enquiry_id}/edit', data=payload | {
             'csrf': csrf, 'action': 'save', 'arrival_date': '2026-09-20',
             'departure_date': '2026-09-23', f'person_{adult_id}': '1',
             f'person_{child_id}': '1', f'addon_{addon_id}': '0'
-        }, follow_redirects=False)
+            }, follow_redirects=False)
+        finally:
+            enquiry_builder.availability_state = original_availability
+        assert lock_observed and lock_observed[-1] is True
         assert without_electric.status_code == 303
         with db.connect() as c:
             latest=c.execute("SELECT before_json,after_json FROM audit_log WHERE company_id=? AND entity_type='enquiry' AND entity_id=? AND action='ENQUIRY_UPDATED' ORDER BY id DESC LIMIT 1",(forest,str(enquiry_id))).fetchone()
