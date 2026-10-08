@@ -166,6 +166,19 @@ def main() -> None:
         assert 'Arrival changed from 10/09/2026 to 20/09/2026' in changed_detail.text
         assert 'Departure changed from 12/09/2026 to 23/09/2026' in changed_detail.text
         assert 'Enquiry value changed from €77.00 to €99.00' in changed_detail.text
+        assert 'Adult changed from 2 to 1' in changed_detail.text
+        assert 'person_type_id' not in changed_detail.text
+        assert 'addon_id' not in changed_detail.text
+        with db.connect() as c:
+            audit_entry = c.execute("SELECT before_json,after_json FROM audit_log WHERE company_id=? AND entity_type='enquiry' AND entity_id=? AND action='ENQUIRY_UPDATED' ORDER BY id DESC LIMIT 1",(forest,str(enquiry_id))).fetchone()
+            assert audit_entry is not None
+            audit_before=json.loads(audit_entry['before_json'])
+            audit_after=json.loads(audit_entry['after_json'])
+            assert audit_before['people'][str(adult_id)] == 2
+            assert audit_after['people'][str(adult_id)] == 1
+            assert audit_before['addons'][str(addon_id)] == 1
+            assert audit_after['addons'][str(addon_id)] == 1
+        assert 'Electric Hook-up changed' not in changed_detail.text
         assert 'person_type_id' not in changed_detail.text
         assert 'provisional_total' not in changed_detail.text
 
