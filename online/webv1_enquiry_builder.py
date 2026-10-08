@@ -386,7 +386,6 @@ def _save(database, context, company_id:int, customer_id:int, values:dict[str,st
         # Record the operational change in human-meaningful terms.  The audit
         # still stores structured before/after data, but dates, Element, people
         # and price are explicit so History can say what actually changed.
-        before_element = one(database,'SELECT element_type,element_id,arrival_date,departure_date,party_size,provisional_total FROM enquiry_elements WHERE enquiry_id=? AND company_id=? ORDER BY sort_order,id LIMIT 1',(enquiry_id,company_id))
         # At this point the authoritative row has already been saved, so use
         # the caller-supplied pre-save snapshot when present.
         before_data = values.get('__audit_before') if isinstance(values.get('__audit_before'),dict) else None
