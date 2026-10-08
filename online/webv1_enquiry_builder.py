@@ -349,8 +349,9 @@ def _save(database, context, company_id:int, customer_id:int, values:dict[str,st
                 for d,pp in bydate.items():
                     for pid,qty in pp.items():
                         if qty:c.execute('INSERT INTO enquiry_addon_person_days(enquiry_id,company_id,addon_id,person_type_id,service_date,quantity) VALUES (?,?,?,?,?,?)',(enquiry_id,company_id,aid,pid,d,qty))
-    if selected_type and element_id and calculation:
-        with database.connect() as c:
+        # Commit enquiry-wide and authoritative per-Element requirements together.
+        # A failure in either representation must roll back the entire save.
+        if selected_type and element_id and calculation:
             existing=c.execute('SELECT id FROM enquiry_elements WHERE enquiry_id=? AND company_id=? ORDER BY sort_order,id LIMIT 1',(enquiry_id,company_id)).fetchone()
             if existing is None:
                 eeid=int(c.execute('''INSERT INTO enquiry_elements(enquiry_id,company_id,element_type,element_id,arrival_date,departure_date,lead_name,party_size,provisional_total,pricing_snapshot_json,sort_order,created_at,updated_at) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?)''',(enquiry_id,company_id,selected_type,element_id,values.get('arrival_date') or '',values.get('departure_date') or '','',party_size,provisional_total,snapshot_json,1,now,now)).lastrowid)
