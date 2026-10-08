@@ -179,6 +179,26 @@ def main() -> None:
             assert audit_before['addons'][str(addon_id)] == 1
             assert audit_after['addons'][str(addon_id)] == 1
         assert 'Electric Hook-up changed' not in changed_detail.text
+
+        # TEST DATA ONLY: removing an add-on updates the held enquiry,
+        # its financial total, and the client-readable change history.
+        without_electric = client.post(f'/operations/enquiries/{enquiry_id}/edit', data=payload | {
+            'csrf': csrf, 'action': 'save', 'arrival_date': '2026-09-20',
+            'departure_date': '2026-09-23', f'person_{adult_id}': '1',
+            f'person_{child_id}': '1', f'addon_{addon_id}': '0'
+        }, follow_redirects=False)
+        assert without_electric.status_code == 303
+        with db.connect() as c:
+            latest=c.execute("SELECT before_json,after_json FROM audit_log WHERE company_id=? AND entity_type='enquiry' AND entity_id=? AND action='ENQUIRY_UPDATED' ORDER BY id DESC LIMIT 1",(forest,str(enquiry_id))).fetchone()
+            assert latest is not None
+            assert json.loads(latest['before_json'])['addons'][str(addon_id)] == 1
+            assert int(json.loads(latest['after_json'])['addons'].get(str(addon_id),0)) == 0
+            updated=c.execute('SELECT provisional_total FROM enquiry_elements WHERE enquiry_id=? AND company_id=?',(enquiry_id,forest)).fetchone()
+            assert float(updated['provisional_total']) == 96.0
+        without_electric_detail=client.get(f'/operations/enquiries/{enquiry_id}')
+        assert without_electric_detail.status_code == 200
+        assert 'Electric Hook-up changed from 1 to 0' in without_electric_detail.text
+        assert 'Enquiry value changed from €99.00 to €96.00' in without_electric_detail.text
         assert 'person_type_id' not in changed_detail.text
         assert 'provisional_total' not in changed_detail.text
 
