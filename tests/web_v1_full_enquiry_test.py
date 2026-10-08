@@ -160,6 +160,14 @@ def main() -> None:
         assert changed_detail.status_code == 200
         assert 'HOLDING SPACE' in changed_detail.text
         assert '€99.00' in changed_detail.text
+        # TEST DATA ONLY: the client sees meaningful edits, not raw audit fields.
+        assert 'Enquiry history' in changed_detail.text
+        assert 'Enquiry amended' in changed_detail.text
+        assert 'Arrival changed from 10/09/2026 to 20/09/2026' in changed_detail.text
+        assert 'Departure changed from 12/09/2026 to 23/09/2026' in changed_detail.text
+        assert 'Enquiry value changed from €77.00 to €99.00' in changed_detail.text
+        assert 'person_type_id' not in changed_detail.text
+        assert 'provisional_total' not in changed_detail.text
 
         # The old staged URL now safely redirects to the integrated editor. A blank element never causes FastAPI integer parsing errors.
         old = client.get(f'/operations/enquiries/{enquiry_id}/build?element_type=Camping%20Pitch&element=', follow_redirects=False)
