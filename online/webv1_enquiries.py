@@ -43,6 +43,43 @@ def _enquiry_action(row, context) -> str:
     if not int(row['holding_space'] or 0): return '—'
     return f'''<form method="post" action="/operations/enquiries/{enquiry_id}/release" style="display:inline" onsubmit="return confirm('Release this enquiry? The enquiry and its history will be retained, but its reserved availability will be released.')"><input type="hidden" name="csrf" value="{csrf}"><button class="secondary">RELEASE ENQUIRY</button></form>'''
 
+def _edit_history(database, company_id: int, enquiry_id: int) -> str:
+    """Render meaningful enquiry changes from the append-only audit trail."""
+    events = rows(database, """SELECT a.created_at,a.before_json,a.after_json,a.actor_role,
+        u.email AS actor_email FROM audit_log a
+        LEFT JOIN users u ON u.id=a.actor_user_id
+        WHERE a.company_id=? AND a.entity_type='enquiry' AND a.entity_id=?
+          AND a.action='ENQUIRY_UPDATED'
+        ORDER BY a.id DESC""", (company_id,str(enquiry_id)))
+    if not events:
+        return ''
+    labels={'element_id':'Element','arrival_date':'Arrival','departure_date':'Departure',
+            'party_size':'People total','people':'People quantities','addons':'Add-ons',
+            'provisional_total':'Provisional price'}
+    def fmt(key, value):
+        if value is None: return '—'
+        if key=='provisional_total': return f'€{float(value):.2f}'
+        if key in ('arrival_date','departure_date'): return _fmt_day(value)
+        if isinstance(value,dict): return ', '.join(f'{esc(k)} × {esc(v)}' for k,v in sorted(value.items())) or 'None'
+        return esc(value)
+    entries=[]
+    for event in events:
+        try:
+            before=json.loads(event['before_json'] or '{}')
+            after=json.loads(event['after_json'] or '{}')
+        except (ValueError,TypeError):
+            continue
+        changes=[]
+        for key,label in labels.items():
+            if key in before and key in after and before[key]!=after[key]:
+                changes.append(f'<li><strong>{label}:</strong> {fmt(key,before[key])} → {fmt(key,after[key])}</li>')
+        if not changes: continue
+        actor=esc(event['actor_email'] or event['actor_role'] or 'Staff')
+        stamp=esc(event['created_at'] or '')
+        entries.append(f'<div><strong>{stamp} UTC — {actor}</strong><ul>{"".join(changes)}</ul></div>')
+    return '<div class="card"><h2>Enquiry change history</h2>'+''.join(entries)+'</div>' if entries else ''
+
+
 def register_enquiry_routes(app) -> None:
     database = app.state.database
     # Build 302 v3 databases are also opened directly by the portable launcher
@@ -145,7 +182,7 @@ def register_enquiry_routes(app) -> None:
                 breakdown = f'<h3>Provisional price breakdown</h3><table><thead><tr><th>Item</th><th>Rule used</th><th>Amount</th></tr></thead><tbody>{line_rows}</tbody></table>'
             request_html = f'''<div class="card"><h2>Requested stay</h2><p><strong>Element Type:</strong> {esc(request_row['element_type'] or '—')}<br><strong>Specific Element:</strong> {esc(request_row['element_name'] or 'Not selected')}<br><strong>People:</strong> {people_text}<br><strong>Add-ons:</strong> {addons_text}<br><strong>Provisional total:</strong> {total_text}</p>{breakdown}<p><a class="button" href="/operations/enquiries/{enquiry_id}/edit">Edit / Recalculate Enquiry</a></p></div>'''
         conversion = enquiry_conversion_panel(database, context, enquiry_id)
-        body = f'''<h1>Enquiry #{int(enquiry['id'])}</h1><p><a href="/operations/enquiries">← Enquiry Search</a></p>{notice}<div class="grid"><div class="card"><h2>Customer</h2><p><strong>{customer_link}</strong></p><p>Email: {esc(enquiry['email'] or '—')}<br>Telephone: {esc(enquiry['phone'] or '—')}</p></div><div class="card"><h2>Enquiry</h2><p><strong>Status:</strong> {esc(_status_label(enquiry['status']))}<br><strong>Arrival:</strong> {_fmt_day(enquiry['arrival_date'])}<br><strong>Departure:</strong> {_fmt_day(enquiry['departure_date'])}<br><strong>Party size:</strong> {esc(enquiry['party_size'] if enquiry['party_size'] is not None else '—')}<br><strong>Source:</strong> {esc(enquiry['source'] or '—')}</p></div></div><div class="card"><h2>Notes</h2><p>{esc(enquiry['notes'] or '—')}</p></div>{request_html}{conversion}'''
+        body = f'''<h1>Enquiry #{int(enquiry['id'])}</h1><p><a href="/operations/enquiries">← Enquiry Search</a></p>{notice}<div class="grid"><div class="card"><h2>Customer</h2><p><strong>{customer_link}</strong></p><p>Email: {esc(enquiry['email'] or '—')}<br>Telephone: {esc(enquiry['phone'] or '—')}</p></div><div class="card"><h2>Enquiry</h2><p><strong>Status:</strong> {esc(_status_label(enquiry['status']))}<br><strong>Arrival:</strong> {_fmt_day(enquiry['arrival_date'])}<br><strong>Departure:</strong> {_fmt_day(enquiry['departure_date'])}<br><strong>Party size:</strong> {esc(enquiry['party_size'] if enquiry['party_size'] is not None else '—')}<br><strong>Source:</strong> {esc(enquiry['source'] or '—')}</p></div></div><div class="card"><h2>Notes</h2><p>{esc(enquiry['notes'] or '—')}</p></div>{request_html}{conversion}{_edit_history(database,company_id,enquiry_id)}'''
         return layout(f'Enquiry #{int(enquiry["id"])}', body, context)
 
     @app.post('/operations/enquiries/{enquiry_id}/release')
