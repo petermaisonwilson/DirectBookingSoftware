@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+from contextlib import nullcontext
 from datetime import date, timedelta
 
 from fastapi import Request
@@ -321,13 +322,13 @@ document.querySelectorAll('.addon-remove').forEach(b=>b.addEventListener('click'
 def _basic_values(data: dict[str,str]) -> dict[str,str]: return {k:data.get(k,'').strip() for k in ('arrival_date','departure_date','party_size','source','notes','element_type','element_id')}
 
 
-def _save(database, context, company_id:int, customer_id:int, values:dict[str,str], calculation, enquiry_id:int|None=None)->int:
+def _save(database, context, company_id:int, customer_id:int, values:dict[str,str], calculation, enquiry_id:int|None=None, *, locked_connection=None)->int:
     now=iso_now(); selected_type=values.get('element_type','').strip(); element_id=_int_or_zero(values.get('element_id')) or None
     if calculation:
         party_size=int(calculation['people_total']); provisional_total=float(calculation['total']); snapshot_json=json.dumps({'element_type':calculation['element_type'],'element_id':calculation['element_id'],'element_name':calculation['element_name'],'year':calculation['year'],'nights':calculation['nights'],'people_total':calculation['people_total'],'addon_when':calculation['addon_when'],'addon_days':calculation['addon_days'],'addon_people':calculation['addon_people'],'addon_person_days':calculation['addon_person_days'],'selected_addons':calculation['selected_addons'],'lines':calculation['lines'],'base_amount':calculation.get('base_amount',calculation['total']),'discount_amount':calculation.get('discount_amount',0),'discount_rule':calculation.get('discount_rule'),'total':calculation['total']},separators=(',',':'))
     else: party_size=_int_or_zero(values.get('party_size')) or None; provisional_total=None; snapshot_json='{}'
     created=enquiry_id is None
-    with database.connect() as c:
+    with (nullcontext(locked_connection) if locked_connection is not None else database.connect()) as c:
         if created: enquiry_id=int(c.execute('''INSERT INTO enquiries(company_id,customer_id,status,source,arrival_date,departure_date,party_size,notes,created_at,updated_at) VALUES (?,?,?,?,?,?,?,?,?,?)''',(company_id,customer_id,'new',values.get('source',''),values.get('arrival_date') or None,values.get('departure_date') or None,party_size,values.get('notes',''),now,now)).lastrowid)
         else: c.execute('UPDATE enquiries SET source=?,arrival_date=?,departure_date=?,party_size=?,notes=?,updated_at=? WHERE id=? AND company_id=?',(values.get('source',''),values.get('arrival_date') or None,values.get('departure_date') or None,party_size,values.get('notes',''),now,enquiry_id,company_id))
         for table in ('enquiry_people','enquiry_addons','enquiry_addon_days','enquiry_addon_people','enquiry_addon_person_days','enquiry_selected_addons'): c.execute(f'DELETE FROM {table} WHERE enquiry_id=? AND company_id=?',(enquiry_id,company_id))
@@ -461,7 +462,17 @@ def register_enquiry_builder_routes(app)->None:
             audit_before={'element_type':str(before_element['element_type'] or ''),'element_id':before_element['element_id'],'arrival_date':before_element['arrival_date'],'departure_date':before_element['departure_date'],'party_size':before_element['party_size'],'people':{int(x['person_type_id']):int(x['quantity']) for x in before_people},'addons':{int(x['addon_id']):int(x['quantity']) for x in before_addons},'provisional_total':before_element['provisional_total']}
         save_values=basic|values
         if audit_before is not None: save_values['__audit_before']=audit_before
-        _save(database,context,cid,int(enquiry['customer_id']),save_values,calculation,enquiry_id=enquiry_id); return RedirectResponse(f'/operations/enquiries/{enquiry_id}?saved=1',303)
+        # Serialize the final inventory check and amendment commit. A competing
+        # SQLite writer cannot allocate the same Element between these operations.
+        with database.connect() as locked:
+            locked.execute('BEGIN IMMEDIATE')
+            if calculation and _int_or_zero(basic['element_id']):
+                final_state=availability_state(database,cid,_int_or_zero(basic['element_id']),basic['arrival_date'],basic['departure_date'],exclude_enquiry_id=enquiry_id)
+                if not final_state.get('available'):
+                    msg='Changes not saved. Your existing held space is unchanged. '+str(final_state.get('reason') or 'The proposed Element or dates are not available.')
+                    return HTMLResponse(_form_page(database,context,customer,values,enquiry_id=enquiry_id,message=msg),409)
+            _save(database,context,cid,int(enquiry['customer_id']),save_values,calculation,enquiry_id=enquiry_id,locked_connection=locked)
+        return RedirectResponse(f'/operations/enquiries/{enquiry_id}?saved=1',303)
     @app.get('/operations/enquiries/{enquiry_id}/build',response_class=HTMLResponse)
     def old(enquiry_id:int,request:Request,element_type:str='',element:str=''):
         context=context_for(database,request); cid=working_company(context)
