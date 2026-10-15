@@ -148,7 +148,7 @@ def register_calendar_routes(app) -> None:
         next_start = (visible_start + timedelta(days=14)).isoformat()
         preserve = f'element_type={quote_plus(selected_type)}&arrival={quote_plus(selected_arrival)}&departure={quote_plus(selected_departure)}'
 
-        body = f'''<h1>Availability Calendar</h1>
+        body = f'''<div class="master-calendar-page"></div><h1>Master Calendar</h1><p><a class="button" href="/availability/start">New Booking — Who's Coming When?</a></p>
         <div class="card"><form method="get" action="/availability/calendar" id="availability-form">
           <div class="grid">
             <div><label>Element Type</label><select name="element_type" id="calendar-type">{type_options}</select></div>
@@ -211,15 +211,15 @@ def register_calendar_routes(app) -> None:
         body += f'''<div class="card" id="hold-basket"><h2>Held Elements</h2><div id="hold-list" class="muted">No Elements currently held.</div></div>
         <div id="hold-modal" class="hold-modal" hidden><div class="hold-dialog"><h2>Still want to hold these Elements?</h2><p id="hold-modal-names"></p><p>If you do not click Yes within <strong><span id="hold-modal-seconds">60</span> seconds</strong>, everything will be released.</p><p><button type="button" id="hold-yes">Yes — keep holding</button> <button type="button" class="secondary" id="hold-release">Release now</button></p></div></div>
         <style>
-        .calendar-scroll{{overflow-x:auto;border:1px solid #d6dde5;border-radius:8px}}
-        .calendar-grid{{min-width:calc(170px + (var(--days) * 48px));background:white}}
-        .cal-row{{display:grid;grid-template-columns:170px repeat(var(--days),48px);position:relative;min-height:48px;border-bottom:1px solid #e1e6eb}}
+        .master-calendar-page{{display:none}}\n        main:has(.master-calendar-page){{max-width:96vw;width:96vw;margin:12px auto;padding:0 12px 24px;box-sizing:border-box}}\n        main:has(.master-calendar-page) .card{{margin:8px 0;padding:12px}}\n        .calendar-scroll{{overflow:auto;max-height:75vh;border:1px solid #d6dde5;border-radius:8px}}
+        .calendar-grid{{min-width:calc(180px + (var(--days) * 42px));background:white}}
+        .cal-row{{display:grid;grid-template-columns:180px repeat(var(--days),42px);position:relative;min-height:52px;border-bottom:1px solid #e1e6eb}}
         .cal-head{{min-height:52px;position:sticky;top:0;z-index:8;background:#f4f6f8}}
-        .cal-name{{grid-column:1;grid-row:1;padding:10px 8px;position:sticky;left:0;z-index:6;background:white;border-right:1px solid #d6dde5}}
+        .cal-name{{grid-column:1;grid-row:1;padding:8px 8px;position:sticky;left:0;z-index:6;background:white;border-right:1px solid #d6dde5}}
         .cal-head .cal-name{{background:#f4f6f8}}
         .cal-date{{padding:6px 2px;text-align:center;border-right:1px solid #e5e9ee;font-size:12px;grid-row:1}}
         .cal-date small{{display:block;color:#66717f}}
-        .cal-cell{{min-height:48px;border-right:1px solid #eef1f4;display:block;z-index:1;grid-row:1}}
+        .cal-cell{{min-height:52px;border-right:1px solid #eef1f4;display:block;z-index:1;grid-row:1}}
         .cal-cell.available{{background:white}}
         .cal-cell.out{{background:#eef1f4}}
         .cal-cell.closed{{background:#e4e7eb}}
