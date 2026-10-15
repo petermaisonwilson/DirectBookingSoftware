@@ -23,7 +23,7 @@ def register_calendar_v5_routes(app) -> None:
     database = app.state.database
 
     @app.get('/availability/calendar-v2', response_class=HTMLResponse)
-    def calendar(request: Request, element_type: str = '', start: str = '', arrival: str = '', departure: str = '', edit_hold: int = 0, recovery_enquiry: int = 0, recovery_element: int = 0):
+    def calendar(request: Request, element_type: str = '', start: str = '', arrival: str = '', departure: str = '', edit_hold: int = 0, recovery_enquiry: int = 0, recovery_element: int = 0, date_from: str = '', date_to: str = ''):
         context, cid = _session_context(database, request)
         staff = str(context['role']) in {'operator', 'supervisor'}
         token = request.cookies.get(COOKIE_NAME, '')
@@ -32,8 +32,19 @@ def register_calendar_v5_routes(app) -> None:
         anchor_departure = departure or (str(basket[0]['departure_date']) if basket else '')
 
         types = [str(r['name']) for r in rows(database, 'SELECT name FROM setup_element_types WHERE company_id=? AND active=1 ORDER BY name COLLATE NOCASE', (cid,))]
-        selected_type = element_type if element_type in types else ''
+        selected_type = element_type if element_type in types else (types[0] if staff and types and not (anchor_arrival and anchor_departure) else '')
         visible_start, display_days = _window(start, anchor_arrival, anchor_departure)
+        date_warning = ''
+        from_day, to_day = _parse(date_from), _parse(date_to)
+        if date_from or date_to:
+            if not from_day or not to_day or to_day < from_day:
+                date_warning = 'Please enter a valid From and To date.'
+            elif (to_day - from_day).days >= 30:
+                date_warning = 'Please select no more than 30 days, including both dates.'
+            else:
+                visible_start, display_days = from_day, (to_day - from_day).days + 1
+        elif not (anchor_arrival and anchor_departure):
+            display_days = 30
         visible_end = visible_start + timedelta(days=display_days)
         dates = [visible_start + timedelta(days=i) for i in range(display_days)]
         arrival_day, departure_day = _parse(arrival), _parse(departure)
@@ -61,7 +72,9 @@ def register_calendar_v5_routes(app) -> None:
         if edit_hold:
             preserve += f'&edit_hold={edit_hold}'
 
-        body = booking_progress_strip(database, context, cid, token) + '<h1>Availability Calendar</h1>'
+        body = booking_progress_strip(database, context, cid, token) + ('<div class="master-calendar-page"></div><h1>Master Calendar</h1>' if staff else '<h1>Availability Calendar</h1>')
+        if date_warning:
+            body += '<div class="error" role="alert">' + esc(date_warning) + '</div>'
         recovery_row = one(database, '''SELECT ee.*,se.name AS element_name FROM enquiry_elements ee JOIN setup_elements se ON se.id=ee.element_id AND se.company_id=ee.company_id WHERE ee.id=? AND ee.enquiry_id=? AND ee.company_id=? AND COALESCE(ee.recovery_state,'held')='needs_replacement' ''', (recovery_element,recovery_enquiry,cid)) if recovery_enquiry and recovery_element else None
         if recovery_enquiry and recovery_element and recovery_row is None:
             return HTMLResponse(layout('Availability Calendar','<h1>Availability Calendar</h1><div class="error">That Enquiry Element no longer requires replacement.</div>',context),409)
@@ -108,7 +121,8 @@ def register_calendar_v5_routes(app) -> None:
         <p><a class="button" href="/availability/start{add_query}">ADD / CHANGE ELEMENT</a>
         <a class="button secondary" href="/availability/calendar-v2?{preserve}&start={(visible_start-timedelta(days=14)).isoformat()}">← Previous 14 days</a>
         <a class="button secondary" href="/availability/calendar-v2?{preserve}&start={(visible_start+timedelta(days=14)).isoformat()}">Next 14 days →</a>
-        {'<a class="button secondary" href="/setup/booking-statuses">Booking Statuses</a>' if staff else ''}</p></div></div>'''
+        {'<a class="button secondary" href="/setup/booking-statuses">Booking Statuses</a>' if staff else ''}</p>
+        <form method="get" action="/availability/calendar-v2" class="calendar-date-search"><input type="hidden" name="element_type" value="{esc(selected_type)}"><label>From <input type="date" name="date_from" value="{visible_start.isoformat()}" required></label><label>To <input type="date" name="date_to" value="{(visible_start+timedelta(days=display_days-1)).isoformat()}" required></label><button type="submit">Show dates</button><span>Maximum 30 days</span></form></div></div>'''
 
         if editing:
             edit_name = str(editing['lead_name'] or '').strip() or str(editing['element_name'])
@@ -258,10 +272,13 @@ def register_calendar_v5_routes(app) -> None:
         body += f'''<div id="quick-element-info" class="quick-element-info" hidden></div>
         <div id="info-modal" class="hold-modal" hidden><div class="hold-dialog"><button id="info-close" type="button" class="secondary close-info">Close</button><h2 id="info-title"></h2><p class="muted">Element information</p><div id="info-features"></div></div></div>
         <style>
+        main:has(.master-calendar-page){{max-width:98vw;width:98vw;margin:12px auto;padding:0 12px 24px;box-sizing:border-box}}
+        .master-calendar-page{{display:none}}
+        .calendar-date-search{{display:flex;align-items:end;gap:12px;flex-wrap:wrap;margin-top:12px}} .calendar-date-search label{{display:flex;flex-direction:column;gap:4px}} .calendar-date-search input{{padding:7px}}
         .calendar-scroll{{overflow:auto;max-height:75vh;border:1px solid #d6dde5;border-radius:8px;position:relative;scrollbar-gutter:stable both-edges}}
         .calendar-grid{{min-width:calc(156px + (var(--days) * 38px));background:white;position:relative}}
-        .cal-row{{display:grid;grid-template-columns:156px repeat(var(--days),38px);grid-template-rows:36px;width:calc(156px + (var(--days) * 38px));min-width:calc(156px + (var(--days) * 38px));position:relative;height:36px;border-bottom:2px solid #fff;box-sizing:border-box;overflow:visible}}
-        .element-row .cal-cell{{height:34px;box-sizing:border-box}} #calendar-scroll .element-row>.cal-name{{position:sticky!important;left:0!important;grid-column:1!important;z-index:50!important;height:34px;background:#fff!important}}
+        .cal-row{{display:grid;grid-template-columns:156px repeat(var(--days),38px);grid-template-rows:54px;width:calc(156px + (var(--days) * 38px));min-width:calc(156px + (var(--days) * 38px));position:relative;height:54px;border-bottom:2px solid #fff;box-sizing:border-box;overflow:visible}}
+        .element-row .cal-cell{{height:52px;box-sizing:border-box}} #calendar-scroll .element-row>.cal-name{{position:sticky!important;left:0!important;grid-column:1!important;z-index:50!important;height:52px;background:#fff!important}}
         .element-row.party-unsuitable{{grid-template-rows:68px;height:68px}} .element-row.party-unsuitable .cal-cell{{height:66px}} .element-row.party-unsuitable .cal-name{{height:66px!important}}
         .cal-head{{background:#f4f6f8;position:sticky;top:0;z-index:60}} .cal-name{{padding:7px;position:sticky;left:0;z-index:50;width:190px;box-sizing:border-box;background:white;border-right:2px solid #c5cdd6}}
         .element-info-title{{display:block;border:0;background:none;color:#1f2937;padding:0;margin:0;text-align:left;font:inherit;cursor:help}} .cal-name .more-info{{border:0;background:none;color:#365f86;padding:2px 0;font-size:12px;text-decoration:underline}}
