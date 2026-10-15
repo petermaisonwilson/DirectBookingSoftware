@@ -258,10 +258,10 @@ def register_calendar_v5_routes(app) -> None:
         body += f'''<div id="quick-element-info" class="quick-element-info" hidden></div>
         <div id="info-modal" class="hold-modal" hidden><div class="hold-dialog"><button id="info-close" type="button" class="secondary close-info">Close</button><h2 id="info-title"></h2><p class="muted">Element information</p><div id="info-features"></div></div></div>
         <style>
-        .calendar-scroll{{overflow:auto;max-height:520px;border:1px solid #d6dde5;border-radius:8px;position:relative;scrollbar-gutter:stable both-edges}}
-        .calendar-grid{{min-width:calc(190px + (var(--days) * 48px));background:white;position:relative}}
-        .cal-row{{display:grid;grid-template-columns:190px repeat(var(--days),48px);grid-template-rows:52px;width:calc(190px + (var(--days) * 48px));min-width:calc(190px + (var(--days) * 48px));position:relative;height:52px;border-bottom:2px solid #fff;box-sizing:border-box;overflow:visible}}
-        .element-row .cal-cell{{height:50px;box-sizing:border-box}} #calendar-scroll .element-row>.cal-name{{position:sticky!important;left:0!important;grid-column:1!important;z-index:50!important;height:50px;background:#fff!important}}
+        .calendar-scroll{{overflow:auto;max-height:75vh;border:1px solid #d6dde5;border-radius:8px;position:relative;scrollbar-gutter:stable both-edges}}
+        .calendar-grid{{min-width:calc(156px + (var(--days) * 38px));background:white;position:relative}}
+        .cal-row{{display:grid;grid-template-columns:156px repeat(var(--days),38px);grid-template-rows:36px;width:calc(156px + (var(--days) * 38px));min-width:calc(156px + (var(--days) * 38px));position:relative;height:36px;border-bottom:2px solid #fff;box-sizing:border-box;overflow:visible}}
+        .element-row .cal-cell{{height:34px;box-sizing:border-box}} #calendar-scroll .element-row>.cal-name{{position:sticky!important;left:0!important;grid-column:1!important;z-index:50!important;height:34px;background:#fff!important}}
         .element-row.party-unsuitable{{grid-template-rows:68px;height:68px}} .element-row.party-unsuitable .cal-cell{{height:66px}} .element-row.party-unsuitable .cal-name{{height:66px!important}}
         .cal-head{{background:#f4f6f8;position:sticky;top:0;z-index:60}} .cal-name{{padding:7px;position:sticky;left:0;z-index:50;width:190px;box-sizing:border-box;background:white;border-right:2px solid #c5cdd6}}
         .element-info-title{{display:block;border:0;background:none;color:#1f2937;padding:0;margin:0;text-align:left;font:inherit;cursor:help}} .cal-name .more-info{{border:0;background:none;color:#365f86;padding:2px 0;font-size:12px;text-decoration:underline}}
