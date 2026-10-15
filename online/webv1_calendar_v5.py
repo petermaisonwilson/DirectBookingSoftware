@@ -72,7 +72,7 @@ def register_calendar_v5_routes(app) -> None:
         if edit_hold:
             preserve += f'&edit_hold={edit_hold}'
 
-        body = booking_progress_strip(database, context, cid, token) + ('<div class="master-calendar-page"></div><h1>Master Calendar</h1>' if staff else '<h1>Availability Calendar</h1>')
+        body = (('<div class="master-calendar-page"></div><h1>Master Calendar</h1>') if staff and not (arrival or departure or edit_hold or recovery_enquiry) else booking_progress_strip(database, context, cid, token) + '<h1>Availability Calendar</h1>')
         if date_warning:
             body += '<div class="error" role="alert">' + esc(date_warning) + '</div>'
         recovery_row = one(database, '''SELECT ee.*,se.name AS element_name FROM enquiry_elements ee JOIN setup_elements se ON se.id=ee.element_id AND se.company_id=ee.company_id WHERE ee.id=? AND ee.enquiry_id=? AND ee.company_id=? AND COALESCE(ee.recovery_state,'held')='needs_replacement' ''', (recovery_element,recovery_enquiry,cid)) if recovery_enquiry and recovery_element else None
