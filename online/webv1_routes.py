@@ -21,7 +21,7 @@ def register_web_v1_routes(app) -> None:
         company = database.company(company_id)
         counts = lifecycle_counts(database, company_id)
         cards = [
-            ('availability', '<h2>Availability Calendar</h2><p>See free, booked, closed and temporarily held Elements by date.</p><p><a class="button" href="/availability/calendar">Open Availability Calendar</a> <a class="button secondary" href="/company/hold-settings">Hold timing</a></p>'),
+            ('availability', '<h2>Master Calendar</h2><p>View bookings, enquiries and available Elements. Start new bookings separately.</p><p><a class="button" href="/availability/calendar">Open Master Calendar</a> <a class="button secondary" href="/company/hold-settings">Hold timing</a></p>'),
             ('customers', f'<h2>Customers</h2><p><strong>{counts["customer_records"]}</strong> customer record(s)</p><p><a class="button" href="/operations/customers">Open Client Register</a></p>'),
             ('enquiries', f'<h2>Enquiries</h2><p><strong>{counts["enquiries"]}</strong> enquiry record(s)</p><p><a class="button" href="/operations/enquiries">Open Enquiry Search</a></p><p><a class="button secondary" href="/operations/customers">Find Customer / New Enquiry</a></p>'),
             ('offers', f'<h2>Offers</h2><p><strong>{counts["offers"]}</strong> offer record(s)</p><p>Draft, sent, accepted, declined and expired offers with frozen price snapshots.</p>'),
