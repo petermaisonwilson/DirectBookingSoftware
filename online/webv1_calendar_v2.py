@@ -373,5 +373,5 @@ def register_calendar_v2_routes(app) -> None:
         <div class="card"><h2>Elements</h2><table><thead><tr><th>Element</th><th>Arrival</th><th>Departure</th><th>Total</th></tr></thead><tbody>'''
         for e in elements:
             body += f'<tr><td>{esc(e["element_name"])}</td><td>{_fmt(e["arrival_date"])}</td><td>{_fmt(e["departure_date"])}</td><td>€{float(e["total_amount"]):.2f}</td></tr>'
-        body += '</tbody></table><p><a class="button secondary" href="/availability/calendar-v2">Back to Availability Calendar</a></p></div>'
+        body += '</tbody></table><p><a class="button secondary" href="/availability/calendar-v2">Return to Master Calendar</a></p></div>'
         return HTMLResponse(layout(f'Booking {b["reference"]}', body, context))
