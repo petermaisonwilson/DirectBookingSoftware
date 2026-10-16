@@ -217,6 +217,13 @@ def _conversion_enquiry(database,context,cid,enquiry_id,workflow_status_id):
     if status is None or not int(status['active']) or str(status['internal_state']) not in {'RESERVED','CONFIRMED','ON_SITE'}:raise ValueError('Choose a valid Booking Status.')
     elements=_enquiry_elements(database,cid,enquiry_id)
     if not elements:raise ValueError('Choose at least one specific Element and stay dates before converting this Enquiry.')
+    # One enquiry must never allocate the same physical Element twice for
+    # overlapping nights, even though each row excludes its own enquiry when
+    # checking external inventory conflicts.
+    for index, first in enumerate(elements):
+        for second in elements[index + 1:]:
+            if int(first['element_id']) == int(second['element_id']) and str(first['arrival_date']) < str(second['departure_date']) and str(second['arrival_date']) < str(first['departure_date']):
+                raise ValueError('The same Element is allocated to overlapping dates within this Enquiry. Correct the Enquiry before confirming.')
     token=str(context['token']) if 'token' in context.keys() else ''
     for ee in elements:
         if ee['provisional_total'] is None:raise ValueError('Calculate and save every Element price before converting this Enquiry.')
