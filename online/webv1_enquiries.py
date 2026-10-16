@@ -53,6 +53,9 @@ def _edit_history(database, company_id: int, enquiry_id: int) -> str:
         LEFT JOIN users u ON u.id=a.actor_user_id
         WHERE a.company_id=? AND a.entity_type='enquiry' AND a.entity_id=?
           ORDER BY a.id DESC""", (company_id,str(enquiry_id)))
+    # Every enquiry has a creation timestamp even if an older workflow did not
+    # write a corresponding audit event. Never attribute it to an unknown user.
+    created = one(database, 'SELECT created_at FROM enquiries WHERE id=? AND company_id=?', (enquiry_id,company_id))
     person_names={str(r['id']):str(r['name']) for r in rows(database,
         'SELECT id,name FROM setup_person_types WHERE company_id=?',(company_id,))}
     addon_names={str(r['id']):str(r['name']) for r in rows(database,
@@ -101,6 +104,14 @@ def _edit_history(database, company_id: int, enquiry_id: int) -> str:
         except (ValueError,TypeError): stamp=esc(event['created_at'] or '')
         items=''.join(f'<li>{change}</li>' for change in changes)
         entries.append(f'<div><strong>{stamp} — {actor} — {esc(label)}</strong>{f"<ul>{items}</ul>" if items else ""}</div>')
+    if created and created['created_at'] and not any(str(e['action'])=='ENQUIRY_CREATED' for e in events):
+        try:
+            dt=datetime.fromisoformat(str(created['created_at']).replace('Z','+00:00'))
+            if dt.tzinfo is None: dt=dt.replace(tzinfo=timezone.utc)
+            stamp=dt.astimezone(ZoneInfo('Europe/Paris')).strftime('%d/%m/%Y %H:%M')
+        except (ValueError,TypeError):
+            stamp=esc(str(created['created_at']))
+        entries.append(f'<div><strong>{stamp} — Enquiry created</strong> (original creator not recorded)</div>')
     return '<div class="card"><h2>Enquiry history</h2>'+(''.join(entries) if entries else '<p>No recorded actions yet. The original enquiry details are shown above.</p>')+'</div>'
 
 
