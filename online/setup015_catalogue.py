@@ -19,7 +19,7 @@ from .setup015_core import (
     working_company,
     years,
 )
-from .webv1_ordering import person_type_rows, setup_sortable_table_bits, sortable_menu_html
+from .webv1_ordering import person_type_rows, setup_rows, setup_sortable_table_bits, sortable_menu_html
 
 
 def setup_nav() -> str:
@@ -90,6 +90,7 @@ def _elements_page(database, context, submitted=None, errors=None, message='', e
     submitted = submitted or {}
     errors = errors or set()
     element_rows = rows(database, 'SELECT * FROM setup_elements WHERE company_id=? ORDER BY element_type,name', (cid,))
+    element_rows = setup_rows(database, cid, 'elements', element_rows)
     current = next((r for r in element_rows if int(r['id']) == int(edit or 0)), None)
     active_types = list(rows(database, 'SELECT * FROM setup_element_types WHERE company_id=? AND active=1 ORDER BY name', (cid,)))
     selected_type = submitted.get('element_type', current['element_type'] if current else '')
@@ -104,9 +105,10 @@ def _elements_page(database, context, submitted=None, errors=None, message='', e
     if not active_types:
         body += '<div class="error"><strong>Create an Element Type first.</strong><br>Elements can only be assigned to a Client-defined Element Type.</div>'
     body += f'''<div class="card"><h2>{"Edit" if current else "Add"} Element</h2><form method="post" action="/setup/elements"><input type="hidden" name="csrf" value="{esc(context["csrf_token"])}"><input type="hidden" name="id" value="{esc(current["id"] if current else "")}"><div class="grid"><div><label>Name</label><input style="{field_style("name" in errors)}" name="name" value="{esc(name)}"></div><div><label>Element Type</label><select style="{field_style("element_type" in errors)}" name="element_type">{type_options}</select></div><div><label>Pricing method</label><select style="{field_style("pricing_method" in errors)}" name="pricing_method">{method_options}</select></div><div><label>Base price</label><input style="{field_style("base_price" in errors)}" name="base_price" value="{esc(base_price)}"></div></div><p><button {"disabled" if not active_types else ""}>Save Element</button></p></form></div>'''
-    body += '<div class="card"><table><thead><tr><th>Name</th><th>Element Type</th><th>Pricing</th><th>Base price</th><th></th></tr></thead><tbody>'
-    body += ''.join(f'<tr><td>{esc(r["name"])}</td><td>{esc(r["element_type"])}</td><td>{esc(r["pricing_method"])}</td><td>€{float(r["base_price"]):.2f}</td><td><a href="/setup/elements?edit={r["id"]}">Edit</a></td></tr>' for r in element_rows) or '<tr><td colspan="5">No Elements yet.</td></tr>'
-    body += '</tbody></table></div>'
+    order_heading, order_script = setup_sortable_table_bits(context, 'elements')
+    body += f'<div class="card"><p class="muted">Drag Elements within their Element Type to change their display order. Saved for this company.</p><table><thead><tr>{order_heading}<th>Name</th><th>Element Type</th><th>Pricing</th><th>Base price</th><th></th></tr></thead><tbody id="setup-sort-elements">'
+    body += ''.join(f'<tr data-item-id="{int(r["id"])}"><td><span class="row-sort-handle" title="Drag to reorder">☰ Drag</span></td><td>{esc(r["name"])}</td><td>{esc(r["element_type"])}</td><td>{esc(r["pricing_method"])}</td><td>€{float(r["base_price"]):.2f}</td><td><a href="/setup/elements?edit={r["id"]}">Edit</a></td></tr>' for r in element_rows) or '<tr><td colspan="6">No Elements yet.</td></tr>'
+    body += '</tbody></table></div>' + order_script
     return layout('Elements', body, context)
 
 
