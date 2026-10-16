@@ -33,7 +33,13 @@ def register_calendar_v5_routes(app) -> None:
         anchor_departure = departure or (str(basket[0]['departure_date']) if basket else '')
 
         types = [str(r['name']) for r in rows(database, 'SELECT name FROM setup_element_types WHERE company_id=? AND active=1 ORDER BY name COLLATE NOCASE', (cid,))]
-        selected_type = element_type if element_type in types else ('' if staff and not (anchor_arrival and anchor_departure) else '')
+        selected_type = element_type if element_type in types else ''
+        # Multiple type selection is restricted to the staff master calendar.
+        # An absent selection means ALL, preserving existing bookmarked URLs.
+        requested_types = request.query_params.getlist('types')
+        selected_types = [t for t in types if t in requested_types] if staff and requested_types else []
+        filter_types = selected_types if staff and requested_types else ([selected_type] if selected_type else [])
+
         visible_start, display_days = _window(start, anchor_arrival, anchor_departure)
         date_warning = ''
         from_day, to_day = _parse(date_from), _parse(date_to)
@@ -69,7 +75,11 @@ def register_calendar_v5_routes(app) -> None:
         options = '<option value="">ALL Element Types</option>' + ''.join(
             f'<option value="{esc(t)}" {"selected" if t == selected_type else ""}>{esc(t)}</option>' for t in types
         )
+        type_checks = ''.join(f'<label style="display:inline-flex;flex-direction:row;align-items:center;gap:5px"><input type="checkbox" name="types" value="{esc(t)}" {"checked" if (t in selected_types or not requested_types) else ""}>{esc(t)}</label>' for t in types)
+        type_picker = (f'<fieldset style="display:flex;flex-wrap:wrap;gap:12px"><legend>Element Types</legend>{type_checks}<button type="button" onclick="this.closest(\'fieldset\').querySelectorAll(\'input[type=checkbox]\').forEach(x=>x.checked=true)">Select All</button><button type="button" onclick="this.closest(\'fieldset\').querySelectorAll(\'input[type=checkbox]\').forEach(x=>x.checked=false)">Clear All</button></fieldset>' if staff and not (basket or edit_hold or recovery_enquiry) else f'<label>Elements <select name="element_type">{options}</select></label>')
         preserve = f'element_type={quote_plus(selected_type)}&arrival={quote_plus(arrival)}&departure={quote_plus(departure)}'
+        if staff and requested_types:
+            preserve += ''.join('&types=' + quote_plus(t) for t in selected_types)
         if edit_hold:
             preserve += f'&edit_hold={edit_hold}'
 
@@ -123,7 +133,7 @@ def register_calendar_v5_routes(app) -> None:
         <a class="button secondary" href="/availability/calendar-v2?{preserve}&start={(visible_start-timedelta(days=14)).isoformat()}">← Previous 14 days</a>
         <a class="button secondary" href="/availability/calendar-v2?{preserve}&start={(visible_start+timedelta(days=14)).isoformat()}">Next 14 days →</a>
         {'<a class="button secondary" href="/setup/booking-statuses">Booking Statuses</a>' if staff else ''}</p>
-        <form method="get" action="/availability/calendar-v2" class="calendar-date-search"><label>Elements <select name="element_type">{options}</select></label><label>From <input type="date" name="date_from" value="{visible_start.isoformat()}" required></label><label>To <input type="date" name="date_to" value="{(visible_start+timedelta(days=display_days-1)).isoformat()}" required></label><button type="submit">Show dates</button><span>Maximum 60 days</span></form></div></div>'''
+        <form method="get" action="/availability/calendar-v2" class="calendar-date-search">{type_picker}<label>From <input type="date" name="date_from" value="{visible_start.isoformat()}" required></label><label>To <input type="date" name="date_to" value="{(visible_start+timedelta(days=display_days-1)).isoformat()}" required></label><button type="submit">Show dates</button><span>Maximum 60 days</span></form></div></div>'''
 
         if editing:
             edit_name = str(editing['lead_name'] or '').strip() or str(editing['element_name'])
@@ -146,7 +156,11 @@ def register_calendar_v5_routes(app) -> None:
         cal_header = _header(dates, arrival_day, departure_day)
         cal_rows = ''
         if selected_type or staff:
-            elements = rows(database, 'SELECT * FROM setup_elements WHERE company_id=? AND active=1 AND element_type=? ORDER BY name COLLATE NOCASE', (cid, selected_type)) if selected_type else rows(database, 'SELECT * FROM setup_elements WHERE company_id=? AND active=1 ORDER BY element_type,name COLLATE NOCASE', (cid,))
+            if filter_types:
+                marks = ','.join('?' for _ in filter_types)
+                elements = rows(database, f'SELECT * FROM setup_elements WHERE company_id=? AND active=1 AND element_type IN ({marks}) ORDER BY element_type,name COLLATE NOCASE', (cid, *filter_types))
+            else:
+                elements = rows(database, 'SELECT * FROM setup_elements WHERE company_id=? AND active=1 ORDER BY element_type,name COLLATE NOCASE', (cid,))
         elif basket:
             basket_ids = list(dict.fromkeys(int(r['element_id']) for r in basket))
             marks = ','.join('?' for _ in basket_ids)
