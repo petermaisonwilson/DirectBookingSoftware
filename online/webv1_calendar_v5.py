@@ -197,9 +197,34 @@ def register_calendar_v5_routes(app) -> None:
                 and not locked_in_basket and not party_unsuitable
             )
 
+            # Read-only staff calendar: occupied days already come from the four
+            # authoritative inventory queries above. Avoid repeating expensive
+            # pricing/setup and conflict lookups for these cells. Reservation
+            # selection still uses availability_state unchanged.
+            fast_staff_view = staff and not (basket or arrival or departure or edit_hold or recovery_enquiry)
+            occupied_days = {}
+            if fast_staff_view:
+                for kind, inventory in (('BOOKED', bookings), ('ENQUIRY', enquiries), ('CLOSED', closures), ('HELD', holds)):
+                    for record in inventory:
+                        if kind == 'BOOKED' and (str(record['status']) == 'cancelled' or (record['blocks_availability'] is not None and not int(record['blocks_availability']))):
+                            continue
+                        first = _parse(str(record['start_date'] if kind == 'CLOSED' else record['arrival_date']))
+                        last = _parse(str(record['end_date'] if kind == 'CLOSED' else record['departure_date']))
+                        if first is None or last is None:
+                            continue
+                        day_cursor = max(first, visible_start)
+                        while day_cursor < min(last, visible_end):
+                            if kind == 'HELD' and str(record['session_token']) == token:
+                                occupied_days.setdefault(day_cursor, {'state': 'HELD_BY_YOU'})
+                            else:
+                                occupied_days.setdefault(day_cursor, {'state': kind, 'colour': str(record['colour'] or '') if kind in ('BOOKED', 'ENQUIRY') else '', 'workflow_name': str(record['workflow_name'] or '') if kind in ('BOOKED', 'ENQUIRY') else ''})
+                            day_cursor += timedelta(days=1)
+
             for i, day in enumerate(dates):
                 next_day = day + timedelta(days=1)
-                state = availability_state(database, cid, eid, day.isoformat(), next_day.isoformat(), session_token=token)
+                state = occupied_days.get(day) if fast_staff_view else None
+                if state is None:
+                    state = availability_state(database, cid, eid, day.isoformat(), next_day.isoformat(), session_token=token)
                 code = str(state['state'])
                 own_editing_day = bool(
                     editing and eid == int(editing['element_id'])
