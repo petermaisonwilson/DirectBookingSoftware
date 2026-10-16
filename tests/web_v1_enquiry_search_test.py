@@ -91,23 +91,26 @@ def main() -> None:
         assert 'Bob Smith' not in by_phone.text
 
         assert '>Qualified</option>' not in all_enquiries.text
-        holding_filter = client.get('/operations/enquiries?holding=1')
+        holding_filter = client.get('/operations/enquiries?status=holding')
         assert holding_filter.status_code == 200 and 'Alice Walker' in holding_filter.text and 'Bob Smith' not in holding_filter.text and 'Holding Space' in holding_filter.text
-        released_filter = client.get('/operations/enquiries?holding=0')
+        released_filter = client.get('/operations/enquiries?status=released')
         assert released_filter.status_code == 200
         assert 'Bob Smith' in released_filter.text and 'Alice Walker' not in released_filter.text and 'Released' in released_filter.text
 
-        by_source = client.get('/operations/enquiries?source=web')
-        assert 'Bob Smith' in by_source.text
-        assert 'Alice Walker' not in by_source.text
+        by_received = client.get('/operations/enquiries?enquiry_from=2026-08-22&enquiry_to=2026-08-22')
+        assert 'Alice Walker' in by_received.text and 'Bob Smith' in by_received.text
+        assert 'Print Report' in by_received.text
+        assert 'name="enquiry_from"' in by_received.text
+        assert 'name="holding"' not in by_received.text
+        assert 'name="departure_from"' not in by_received.text
 
         by_arrival = client.get('/operations/enquiries?arrival_from=2026-09-01&arrival_to=2026-09-30')
         assert 'Alice Walker' in by_arrival.text
         assert 'Bob Smith' not in by_arrival.text
 
-        by_departure = client.get('/operations/enquiries?departure_from=2026-10-01&departure_to=2026-10-31')
-        assert 'Bob Smith' in by_departure.text
-        assert 'Alice Walker' not in by_departure.text
+        by_received_excluded = client.get('/operations/enquiries?enquiry_from=2026-08-23')
+        assert 'Alice Walker' not in by_received_excluded.text
+        assert 'Bob Smith' not in by_received_excluded.text
 
         detail = client.get(f'/operations/enquiries/{enquiry_alice}')
         assert detail.status_code == 200
