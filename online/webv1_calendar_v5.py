@@ -269,29 +269,44 @@ def register_calendar_v5_routes(app) -> None:
                 else:
                     cells += f'<span class="cal-cell closed{selected}" style="grid-column:{col};grid-row:1" data-date="{day.isoformat()}"></span>'
 
+            # Give overlapping records independent visual lanes. Without this,
+            # every bar is on grid-row:1 and the last bar hides the others.
             bars = ''
+            occupied_lanes = []
+            def add_calendar_bar(label, colour, cols, *, href='', css='status'):
+                nonlocal bars
+                if not cols:
+                    return
+                lane = next((i for i, segments in enumerate(occupied_lanes)
+                             if all(cols[1] <= segment[0] or cols[0] >= segment[1] for segment in segments)), None)
+                if lane is None:
+                    lane = len(occupied_lanes)
+                    occupied_lanes.append([])
+                occupied_lanes[lane].append(cols)
+                markup = _bar(label, colour, cols, href=href, css=css)
+                bars += markup.replace('grid-row:1;', f'grid-row:{lane + 1};', 1)
             for booking in bookings:
                 cols = _cols(booking['arrival_date'], booking['departure_date'], visible_start, visible_end)
                 if staff:
                     customer = (f"{booking['first_name']} {booking['last_name']}").strip() or 'Customer'
                     status_name = str(booking['workflow_name'] or 'Booked')
-                    bars += _bar(f'{customer} · {booking["reference"]} · {status_name}', str(booking['colour'] or '#F3C5C9'), cols, href=f'/operations/bookings/{int(booking["booking_id"])}')
+                    add_calendar_bar(f'{customer} · {booking["reference"]} · {status_name}', str(booking['colour'] or '#F3C5C9'), cols, href=f'/operations/bookings/{int(booking["booking_id"])}')
                 else:
-                    bars += _bar('Unavailable', '#F3C5C9', cols)
+                    add_calendar_bar('Unavailable', '#F3C5C9', cols)
             for enquiry in enquiries:
                 cols = _cols(enquiry['arrival_date'], enquiry['departure_date'], visible_start, visible_end)
                 if staff:
                     customer = (f"{enquiry['first_name']} {enquiry['last_name']}").strip() or 'Customer'
-                    bars += _bar(f'{customer} · Enquiry #{int(enquiry["enquiry_id"])} · {enquiry["workflow_name"] or held_name}', str(enquiry['colour'] or held_colour), cols, href=f'/operations/enquiries/{int(enquiry["enquiry_id"])}')
+                    add_calendar_bar(f'{customer} · Enquiry #{int(enquiry["enquiry_id"])} · {enquiry["workflow_name"] or held_name}', str(enquiry['colour'] or held_colour), cols, href=f'/operations/enquiries/{int(enquiry["enquiry_id"])}')
                 else:
-                    bars += _bar('Unavailable', '#F3C5C9', cols)
+                    add_calendar_bar('Unavailable', '#FFE39A', cols)
             for closure in closures:
-                bars += _bar(str(closure['reason'] or 'Closed') if staff else 'Unavailable', '#CFD4DA' if staff else '#F3C5C9', _cols(closure['start_date'], closure['end_date'], visible_start, visible_end), css='closed')
+                add_calendar_bar(str(closure['reason'] or 'Closed') if staff else 'Unavailable', '#CFD4DA' if staff else '#F3C5C9', _cols(closure['start_date'], closure['end_date'], visible_start, visible_end), css='closed')
             for hold in holds:
                 if str(hold['session_token']) == token:
                     continue
-                bars += _bar(held_name if staff else 'Unavailable', held_colour if staff else '#F3C5C9', _cols(hold['arrival_date'], hold['departure_date'], visible_start, visible_end), css='held')
-
+                add_calendar_bar(held_name if staff else 'Unavailable', held_colour if staff else '#F3C5C9', _cols(hold['arrival_date'], hold['departure_date'], visible_start, visible_end), css='held')
+            lane_count = max(1, len(occupied_lanes))
             if held_now_unsuitable:
                 reason_html = f'<small class="held-unsuitable-warning"><strong>CURRENTLY HELD — NOW UNSUITABLE</strong>: {esc(" · ".join(reasons))}</small>'
             elif party_unsuitable:
@@ -310,12 +325,14 @@ def register_calendar_v5_routes(app) -> None:
                 selection_style = f' style="grid-column:{selection_start} / {selection_end};grid-row:1"'
                 selection_hidden = ''
             selection = f'<button type="button" class="selection-action" data-element="{eid}" data-name="{esc(element["name"])}"{selection_style}{selection_hidden}>{"USE REPLACEMENT" if recovery_enquiry else ("USE THIS ELEMENT" if edit_hold else "RESERVE")}</button>'
+            row_height = max(54, lane_count * 36 + 12)
+            row_style = f' style="height:{row_height}px;grid-template-rows:repeat({lane_count}, {row_height / lane_count:.2f}px)"' if lane_count > 1 else ''
             row_classes = 'cal-row element-row'
             if party_unsuitable:
                 row_classes += ' party-unsuitable'
             if held_now_unsuitable:
                 row_classes += ' held-now-unsuitable'
-            cal_rows += f'<div class="{row_classes}" data-element="{eid}" data-name="{esc(element["name"])}" data-features="{feature_json}"><div class="cal-name" style="grid-column:1;grid-row:1">{name_html}</div>{cells}{bars}{selection}</div>{warning}'
+            cal_rows += f'<div class="{row_classes}"{row_style} data-element="{eid}" data-name="{esc(element["name"])}" data-features="{feature_json}"><div class="cal-name" style="grid-column:1;grid-row:1">{name_html}</div>{cells}{bars}{selection}</div>{warning}'
 
         if not cal_rows:
             cal_rows = '<div class="card"><p>No active Elements exist for this Element Type.</p></div>' if selected_type else '<div class="card"><p>Select an Element Type to see matching Elements.</p></div>'
@@ -333,7 +350,7 @@ def register_calendar_v5_routes(app) -> None:
         .calendar-scroll{{overflow:auto;max-height:75vh;border:1px solid #d6dde5;border-radius:8px;position:relative;scrollbar-gutter:stable both-edges}}
         .calendar-grid{{min-width:calc(156px + (var(--days) * 38px));background:white;position:relative}}
         .cal-row{{display:grid;grid-template-columns:156px repeat(var(--days),38px);grid-template-rows:54px;width:calc(156px + (var(--days) * 38px));min-width:calc(156px + (var(--days) * 38px));position:relative;height:54px;border-bottom:2px solid #fff;box-sizing:border-box;overflow:visible}}
-        .element-row .cal-cell{{height:52px;box-sizing:border-box}} #calendar-scroll .element-row>.cal-name{{position:sticky!important;left:0!important;grid-column:1!important;z-index:50!important;height:52px;background:#fff!important}}
+        .element-row .cal-cell{{height:100%;box-sizing:border-box;grid-row:1/-1!important}} .element-row:has(.cal-bar[style*="grid-row:2"]) .cal-name{{height:100%!important}} #calendar-scroll .element-row>.cal-name{{position:sticky!important;left:0!important;grid-column:1!important;z-index:50!important;height:52px;background:#fff!important}}
         .element-row.party-unsuitable{{grid-template-rows:68px;height:68px}} .element-row.party-unsuitable .cal-cell{{height:66px}} .element-row.party-unsuitable .cal-name{{height:66px!important}}
         .cal-head{{background:#f4f6f8;position:sticky;top:0;z-index:60}} .cal-name{{padding:7px;position:sticky;left:0;z-index:50;width:190px;box-sizing:border-box;background:white;border-right:2px solid #c5cdd6}}
         .element-info-title{{display:block;border:0;background:none;color:#1f2937;padding:0;margin:0;text-align:left;font:inherit;cursor:help}} .cal-name .more-info{{border:0;background:none;color:#365f86;padding:2px 0;font-size:12px;text-decoration:underline}}
