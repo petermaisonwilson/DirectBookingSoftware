@@ -85,6 +85,7 @@ def _records(database, cid: int, element_id: int, start: date, end: date):
           JOIN booking_status_definitions s ON s.id=e.workflow_status_id AND s.company_id=e.company_id
           WHERE e.company_id=? AND ee.element_id=? AND COALESCE(ee.recovery_state,'held')='held'
             AND e.status NOT IN ('closed','converted') AND s.blocks_availability=1
+            AND NOT EXISTS (SELECT 1 FROM bookings bx WHERE bx.company_id=e.company_id AND bx.enquiry_id=e.id)
             AND date(ee.arrival_date)<date(?) AND date(ee.departure_date)>date(?)
           UNION ALL
           SELECT e.id,e.arrival_date,e.departure_date,e.availability_expires_at,
@@ -96,6 +97,7 @@ def _records(database, cid: int, element_id: int, start: date, end: date):
           WHERE e.company_id=? AND er.element_id=?
             AND NOT EXISTS (SELECT 1 FROM enquiry_elements x WHERE x.company_id=e.company_id AND x.enquiry_id=e.id)
             AND e.status NOT IN ('closed','converted') AND s.blocks_availability=1
+            AND NOT EXISTS (SELECT 1 FROM bookings bx WHERE bx.company_id=e.company_id AND bx.enquiry_id=e.id)
             AND date(e.arrival_date)<date(?) AND date(e.departure_date)>date(?)
           ORDER BY 2
         ''', (cid, element_id, end.isoformat(), start.isoformat(), cid, element_id, end.isoformat(), start.isoformat())).fetchall()
