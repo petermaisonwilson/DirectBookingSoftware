@@ -175,19 +175,27 @@ def register_calendar_v5_routes(app) -> None:
             feature_json = esc(json.dumps(features, ensure_ascii=False))
             bookings, enquiries, closures, holds = _records(database, cid, eid, visible_start, visible_end)
             # Show genuine blocking inventory conflicts explicitly; never conceal either record.
+            # Show each conflicting record as an actionable link to the existing
+            # movable/resizable detail window. Keep records visible for inspection.
             blocking = []
             for booking in bookings:
                 if str(booking['status']) != 'cancelled' and (booking['blocks_availability'] is None or int(booking['blocks_availability'])):
-                    blocking.append((_parse(str(booking['arrival_date'])), _parse(str(booking['departure_date'])), f"Booking {booking['reference']}"))
+                    blocking.append((_parse(str(booking['arrival_date'])), _parse(str(booking['departure_date'])), f"Booking {booking['reference']}", f"/operations/bookings/{int(booking['booking_id'])}"))
             for enquiry in enquiries:
-                blocking.append((_parse(str(enquiry['arrival_date'])), _parse(str(enquiry['departure_date'])), f"Enquiry #{int(enquiry['enquiry_id'])}"))
-            conflicts = []
+                blocking.append((_parse(str(enquiry['arrival_date'])), _parse(str(enquiry['departure_date'])), f"Enquiry #{int(enquiry['enquiry_id'])}", f"/operations/enquiries/{int(enquiry['enquiry_id'])}"))
+            conflict_pairs = []
             for i, first in enumerate(blocking):
                 for second in blocking[i + 1:]:
                     if first[0] and first[1] and second[0] and second[1] and first[0] < second[1] and second[0] < first[1]:
-                        conflicts.append(f"{first[2]} / {second[2]}")
-            if staff and conflicts:
-                warning = f'<div class="inventory-conflict" role="alert"><strong>INVENTORY CONFLICT — {esc(element["name"])}</strong>: {esc("; ".join(conflicts))}. Investigate before accepting further reservations.</div>'
+                        conflict_pairs.append((first, second))
+            if staff and conflict_pairs:
+                conflict_lines = []
+                for first, second in conflict_pairs:
+                    links = []
+                    for item in (first, second):
+                        links.append(f'<a class="conflict-record-link" href="{esc(item[3])}">{esc(item[2])}</a>')
+                    conflict_lines.append(' conflicts with '.join(links))
+                warning = f'<div class="inventory-conflict" role="alert"><strong>INVENTORY CONFLICT — {esc(element["name"])}</strong><div>{"; ".join(conflict_lines)}</div><small>Open either record to edit it. Close the detail window to refresh this calendar and verify the resolution.</small></div>'
             else:
                 warning = ''
             locked_item = locked_holds.get(eid)
@@ -337,14 +345,14 @@ def register_calendar_v5_routes(app) -> None:
         .availability-head{{display:flex;justify-content:space-between;align-items:center;gap:14px;flex-wrap:wrap}} .availability-head h2{{margin:0}} .legend-row{{display:flex;gap:6px;flex-wrap:wrap;align-items:center}} .legend.mini{{padding:2px 6px;border-radius:4px;font-size:11px}} .available-key{{background:#dff2df}} .own-held{{background:#ffe39a}} .legend.closed{{background:#e1e4e8}}
         .cal-bar{{z-index:4;align-self:center;height:30px;margin:0 2px;border-radius:5px;overflow:hidden;white-space:nowrap;display:flex;align-items:center}} .cal-bar a,.cal-bar span{{display:block;padding:6px 8px;color:#26313d;text-decoration:none;width:100%;overflow:hidden;text-overflow:ellipsis}}
         .hold-modal{{position:fixed;inset:0;background:rgba(0,0,0,.35);z-index:100;display:flex;align-items:center;justify-content:center}} .hold-modal[hidden]{{display:none}} .hold-dialog{{background:white;padding:24px;border-radius:10px;max-width:620px;width:90%;max-height:80vh;overflow:auto}}
-        .inventory-conflict{{background:#fff1f0;color:#8c1c13;border:2px solid #b42318;padding:8px 12px;margin:3px 0 10px;font-size:13px}}
+        .inventory-conflict a{{font-weight:700;text-decoration:underline;color:#8c1c13;margin:0 4px}} .inventory-conflict small{{display:block;margin-top:6px}} .inventory-conflict{{background:#fff1f0;color:#8c1c13;border:2px solid #b42318;padding:8px 12px;margin:3px 0 10px;font-size:13px}}
         .booking-detail-overlay{{position:fixed;inset:0;background:rgba(0,0,0,.22);z-index:180;display:flex;align-items:center;justify-content:center}} .booking-detail-overlay[hidden]{{display:none}} .booking-detail-window{{background:white;width:min(1050px,94vw);height:min(780px,90vh);min-width:400px;min-height:260px;resize:both;overflow:hidden;display:flex;flex-direction:column;border:1px solid #748397;border-radius:9px;box-shadow:0 12px 45px #0004}} .booking-detail-handle{{display:flex;align-items:center;justify-content:space-between;gap:10px;background:#e9eef4;padding:8px 12px;cursor:move;user-select:none}} #booking-detail-frame{{flex:1;width:100%;border:0;background:white}}
         .quick-element-info{{position:fixed;z-index:120;background:white;border:1px solid #8293a4;border-radius:6px;padding:10px 12px;box-shadow:0 4px 14px rgba(0,0,0,.2);font-size:12px;pointer-events:none;max-width:320px}}
         .quick-element-info ul{{margin:6px 0 0;padding-left:18px}}
         </style>
         <script>
         const bookingModal=document.getElementById('booking-detail-modal'),bookingWindow=document.getElementById('booking-detail-window'),bookingFrame=document.getElementById('booking-detail-frame');
-        document.querySelectorAll('.cal-bar a[href^="/operations/bookings/"],.cal-bar a[href^="/operations/enquiries/"]').forEach(link=>link.addEventListener('click',event=>{{event.preventDefault();bookingFrame.src=link.href;bookingModal.hidden=false;}}));
+        document.querySelectorAll('.cal-bar a[href^="/operations/bookings/"],.cal-bar a[href^="/operations/enquiries/"],.inventory-conflict a.conflict-record-link').forEach(link=>link.addEventListener('click',event=>{{event.preventDefault();bookingFrame.src=link.href;bookingModal.hidden=false;}}));
         document.getElementById('booking-detail-close').addEventListener('click',()=>{{bookingModal.hidden=true;bookingFrame.removeAttribute('src');window.location.reload();}});
         let drag=null;document.getElementById('booking-detail-handle').addEventListener('pointerdown',event=>{{if(event.target.closest('button'))return;const rect=bookingWindow.getBoundingClientRect();bookingWindow.style.position='fixed';bookingWindow.style.left=rect.left+'px';bookingWindow.style.top=rect.top+'px';bookingWindow.style.margin='0';drag={{x:event.clientX,y:event.clientY,left:rect.left,top:rect.top}};event.currentTarget.setPointerCapture(event.pointerId);}});
         document.getElementById('booking-detail-handle').addEventListener('pointermove',event=>{{if(!drag)return;bookingWindow.style.left=Math.max(0,Math.min(window.innerWidth-100,drag.left+event.clientX-drag.x))+'px';bookingWindow.style.top=Math.max(0,Math.min(window.innerHeight-40,drag.top+event.clientY-drag.y))+'px';}});
