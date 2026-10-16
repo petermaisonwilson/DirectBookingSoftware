@@ -234,9 +234,27 @@ def _conversion_enquiry(database,context,cid,enquiry_id,workflow_status_id):
         if not snapshot:raise ValueError(str(ee['element_name'])+' does not contain a frozen price snapshot. Recalculate it first.')
     return enquiry,elements
 
+def _lock_and_verify_conversion(c, cid, enquiry_id, elements):
+    """Serialise booking conversions and recheck blocking inventory in the write transaction."""
+    from .webv1_status_availability import _booking_conflict, _enquiry_conflict
+    c.execute('BEGIN IMMEDIATE')
+    existing = c.execute('SELECT id FROM bookings WHERE company_id=? AND enquiry_id=? LIMIT 1', (cid, enquiry_id)).fetchone()
+    if existing:
+        raise ValueError('This Enquiry has already been converted into a Booking.')
+    for element in elements:
+        eid = int(element['element_id'])
+        arrival, departure = str(element['arrival_date']), str(element['departure_date'])
+        if _booking_conflict(c, cid, eid, arrival, departure):
+            raise ValueError('This Element has been booked by another reservation. Refresh the Enquiry.')
+        if _enquiry_conflict(c, cid, eid, arrival, departure, exclude_enquiry_id=enquiry_id):
+            raise ValueError('This Element is held by another Enquiry. Refresh the Enquiry.')
+
+
 def convert_enquiry(database,context,cid,enquiry_id,workflow_status_id):
     enquiry,elements=_conversion_enquiry(database,context,cid,enquiry_id,workflow_status_id)
-    with database.connect() as c:booking_id,reference,total=_write_booking(c,database,context,cid,enquiry,elements,workflow_status_id)
+    with database.connect() as c:
+        _lock_and_verify_conversion(c,cid,enquiry_id,elements)
+        booking_id,reference,total=_write_booking(c,database,context,cid,enquiry,elements,workflow_status_id)
     audit(database,context,cid,'ENQUIRY_CONVERTED_TO_BOOKING','enquiry',enquiry_id,after={'booking_id':booking_id,'reference':reference,'element_count':len(elements)});audit(database,context,cid,'BOOKING_CREATED','booking',booking_id,after={'reference':reference,'enquiry_id':enquiry_id,'workflow_status_id':workflow_status_id,'total_amount':total})
     return booking_id
 
@@ -246,6 +264,7 @@ def convert_enquiry_with_payment(database,context,cid,enquiry_id,workflow_status
     if amount < round(required,2):raise ValueError(f'Payment must be at least the required amount of {_money(required)}.')
     if amount > round(total,2):raise ValueError(f'Payment cannot exceed the booking total of {_money(total)}.')
     with database.connect() as c:
+        _lock_and_verify_conversion(c,cid,enquiry_id,elements)
         booking_id,bref,total=_write_booking(c,database,context,cid,enquiry,elements,workflow_status_id)
         payment_id=int(c.execute('INSERT INTO booking_payments(company_id,booking_id,amount,payment_date,method,reference,notes,created_by_user_id,created_at) VALUES (?,?,?,?,?,?,?,?,?)',(cid,booking_id,amount,payment_date,str(method['name']),reference,notes,context['user_id'],iso_now())).lastrowid)
     audit(database,context,cid,'ENQUIRY_CONVERTED_TO_BOOKING','enquiry',enquiry_id,after={'booking_id':booking_id,'reference':bref,'element_count':len(elements)});audit(database,context,cid,'BOOKING_CREATED','booking',booking_id,after={'reference':bref,'enquiry_id':enquiry_id,'workflow_status_id':workflow_status_id,'total_amount':total});audit(database,context,cid,'BOOKING_PAYMENT_RECORDED','booking',booking_id,after={'payment_id':payment_id,'amount':amount,'payment_date':payment_date,'method':str(method['name'])})
