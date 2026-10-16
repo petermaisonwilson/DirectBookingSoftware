@@ -116,39 +116,61 @@ def register_enquiry_routes(app) -> None:
             c.execute("CREATE INDEX IF NOT EXISTS idx_enquiry_elements_recovery ON enquiry_elements(company_id,enquiry_id,recovery_state)")
 
     @app.get('/operations/enquiries', response_class=HTMLResponse)
-    def enquiry_register(request: Request, q: str = '', status: str = '', source: str = '', arrival_from: str = '', arrival_to: str = '', departure_from: str = '', departure_to: str = '', holding: str = ''):
+    def enquiry_register(request: Request, q: str = '', status: str = '', arrival_from: str = '', arrival_to: str = '', enquiry_from: str = '', enquiry_to: str = ''):
         context = context_for(database, request); company_id = working_company(context)
-        search = q.strip(); status_filter = status.strip().lower(); source_filter = source.strip()
-        arrival_from = arrival_from.strip(); arrival_to = arrival_to.strip(); departure_from = departure_from.strip(); departure_to = departure_to.strip()
-        where = ['e.company_id=?']; params: list[object] = [company_id]
+        search=q.strip(); status_filter=status.strip().lower()
+        where=['e.company_id=?']; params=[company_id]
         if search:
-            term = f'%{search}%'; where.append('(c.first_name LIKE ? COLLATE NOCASE OR c.last_name LIKE ? COLLATE NOCASE OR c.email LIKE ? COLLATE NOCASE OR c.phone LIKE ? COLLATE NOCASE)'); params.extend([term, term, term, term])
-        if status_filter in STATUSES: where.append('e.status=?'); params.append(status_filter)
-        if source_filter: where.append('e.source LIKE ? COLLATE NOCASE'); params.append(f'%{source_filter}%')
-        if arrival_from: where.append('e.arrival_date>=?'); params.append(arrival_from)
-        if arrival_to: where.append('e.arrival_date<=?'); params.append(arrival_to)
-        if departure_from: where.append('e.departure_date>=?'); params.append(departure_from)
-        if departure_to: where.append('e.departure_date<=?'); params.append(departure_to)
-        holding_clause = """e.status NOT IN ('closed','converted')
+            term=f'%{search}%'
+            where.append("(c.first_name LIKE ? COLLATE NOCASE OR c.last_name LIKE ? COLLATE NOCASE OR c.email LIKE ? COLLATE NOCASE OR c.phone LIKE ? COLLATE NOCASE OR CAST(e.id AS TEXT) LIKE ?)")
+            params.extend([term]*5)
+        holding_clause="""e.status NOT IN ('closed','converted')
             AND NOT EXISTS (SELECT 1 FROM bookings bx WHERE bx.company_id=e.company_id AND bx.enquiry_id=e.id)
-            AND COALESCE((SELECT esh.blocks_availability FROM booking_status_definitions esh WHERE esh.id=e.workflow_status_id AND esh.company_id=e.company_id AND esh.active=1),1)=1
+            AND COALESCE((SELECT bs.blocks_availability FROM booking_status_definitions bs WHERE bs.id=e.workflow_status_id AND bs.company_id=e.company_id AND bs.active=1),1)=1
             AND (EXISTS (SELECT 1 FROM enquiry_elements eh WHERE eh.company_id=e.company_id AND eh.enquiry_id=e.id AND COALESCE(eh.recovery_state,'held')='held')
                  OR NOT EXISTS (SELECT 1 FROM enquiry_elements ex WHERE ex.company_id=e.company_id AND ex.enquiry_id=e.id))"""
-        if holding.strip()=='1':
-            where.append('(' + holding_clause + ')')
-        elif holding.strip()=='0':
-            where.append("e.status='closed'")
-        enquiries = rows(database, f'''SELECT e.*,c.first_name,c.last_name,c.email,c.phone,er.element_type,er.element_id,er.provisional_total,se.name AS element_name,
-            CASE WHEN e.status NOT IN ('closed','converted') AND NOT EXISTS (SELECT 1 FROM bookings bx2 WHERE bx2.company_id=e.company_id AND bx2.enquiry_id=e.id) AND COALESCE(es.blocks_availability,1)=1 AND (EXISTS (SELECT 1 FROM enquiry_elements eh2 WHERE eh2.company_id=e.company_id AND eh2.enquiry_id=e.id AND COALESCE(eh2.recovery_state,'held')='held') OR NOT EXISTS (SELECT 1 FROM enquiry_elements ex2 WHERE ex2.company_id=e.company_id AND ex2.enquiry_id=e.id)) THEN 1 ELSE 0 END AS holding_space
+        if status_filter=='holding': where.append('('+holding_clause+')')
+        elif status_filter=='confirmed': where.append("EXISTS (SELECT 1 FROM bookings bc WHERE bc.company_id=e.company_id AND bc.enquiry_id=e.id AND bc.status NOT IN ('cancelled','canceled'))")
+        elif status_filter=='released': where.append("e.status='closed'")
+        elif status_filter=='new': where.append("e.status='new'")
+        for field,raw,operator in [('e.arrival_date',arrival_from,'>='),('e.arrival_date',arrival_to,'<='),('substr(e.created_at,1,10)',enquiry_from,'>='),('substr(e.created_at,1,10)',enquiry_to,'<=')]:
+            if raw.strip():
+                where.append(f'{field}{operator}?'); params.append(raw.strip())
+        enquiries=rows(database,f"""SELECT e.*,c.first_name,c.last_name,c.email,c.phone,
+            (SELECT GROUP_CONCAT(name, ', ') FROM (SELECT COALESCE(se.name,ee.element_type,'Element') AS name FROM enquiry_elements ee LEFT JOIN setup_elements se ON se.id=ee.element_id AND se.company_id=ee.company_id WHERE ee.enquiry_id=e.id AND ee.company_id=e.company_id ORDER BY ee.sort_order,ee.id)) AS element_names,
+            (SELECT SUM(ee.provisional_total) FROM enquiry_elements ee WHERE ee.enquiry_id=e.id AND ee.company_id=e.company_id) AS elements_total,
+            (SELECT er.provisional_total FROM enquiry_requests er WHERE er.enquiry_id=e.id AND er.company_id=e.company_id) AS legacy_total,
+            (SELECT b.total_amount FROM bookings b WHERE b.company_id=e.company_id AND b.enquiry_id=e.id ORDER BY b.id DESC LIMIT 1) AS booking_total,
+            CASE WHEN {holding_clause} THEN 1 ELSE 0 END AS holding_space
             FROM enquiries e LEFT JOIN customer_records c ON c.id=e.customer_id AND c.company_id=e.company_id
-            LEFT JOIN enquiry_requests er ON er.enquiry_id=e.id AND er.company_id=e.company_id
-            LEFT JOIN setup_elements se ON se.id=er.element_id AND se.company_id=e.company_id
-            LEFT JOIN booking_status_definitions es ON es.id=e.workflow_status_id AND es.company_id=e.company_id
-            WHERE {' AND '.join(where)} ORDER BY e.id DESC''', tuple(params))
-        status_options = '<option value="">All statuses</option>' + ''.join(f'<option value="{v}" {"selected" if v == status_filter else ""}>{esc(v.title())}</option>' for v in STATUSES)
-        result_rows = ''.join(f'''<tr><td><a href="/operations/enquiries/{int(r['id'])}">#{int(r['id'])}</a></td><td>{esc(_customer_name(r))}</td><td>{esc(_status_label(r['status']))}</td><td>{_fmt_day(r['arrival_date'])}</td><td>{_fmt_day(r['departure_date'])}</td><td>{esc(r['element_type'] or '—')}</td><td>{esc(r['element_name'] or '—')}</td><td>{'€%.2f' % float(r['provisional_total']) if r['provisional_total'] is not None else '—'}</td><td>{esc(r['source'] or '—')}</td><td>{"Holding Space" if int(r["holding_space"] or 0) else ("Released" if str(r["status"])=="closed" else ("Converted" if str(r["status"])=="converted" else "Not Holding"))}</td><td>{_enquiry_action(r, context)}</td></tr>''' for r in enquiries) or '<tr><td colspan="11" class="muted">No matching enquiries.</td></tr>'
-        body = f'''<h1>Enquiries</h1><p><a href="/operations">← Operations</a></p><div class="card"><form method="get" action="/operations/enquiries"><div class="grid"><div><label>Customer search</label><input name="q" value="{esc(search)}" placeholder="Name, email or telephone"></div><div><label>Status</label><select name="status">{status_options}</select></div><div><label>Source</label><input name="source" value="{esc(source_filter)}"></div><div><label>Arrival from</label><input type="date" name="arrival_from" value="{esc(arrival_from)}"></div><div><label>Arrival to</label><input type="date" name="arrival_to" value="{esc(arrival_to)}"></div><div><label>Departure from</label><input type="date" name="departure_from" value="{esc(departure_from)}"></div><div><label>Departure to</label><input type="date" name="departure_to" value="{esc(departure_to)}"></div><div><label>Availability</label><select name="holding"><option value="">All</option><option value="1" {"selected" if holding=="1" else ""}>Holding Space</option><option value="0" {"selected" if holding=="0" else ""}>Released</option></select></div></div><p><button>Search Enquiries</button> <a class="button secondary" href="/operations/enquiries">Clear</a></p></form></div><div class="card"><p><strong>{len(enquiries)}</strong> matching enquiry/enquiries</p><table><thead><tr><th>No.</th><th>Customer</th><th>Status</th><th>Arrival</th><th>Departure</th><th>Element Type</th><th>Element</th><th>Provisional</th><th>Source</th><th>Availability</th><th>Action</th></tr></thead><tbody>{result_rows}</tbody></table></div>'''
-        return layout('Enquiries', body, context)
+            WHERE {' AND '.join(where)} ORDER BY e.id DESC""",tuple(params))
+        options=[('','All'),('new','New'),('holding','Holding Space'),('confirmed','Confirmed'),('released','Released')]
+        status_options=''.join(f'<option value="{v}" {"selected" if status_filter==v else ""}>{label}</option>' for v,label in options)
+        def report_status(r):
+            if r['booking_total'] is not None:return 'Confirmed'
+            if str(r['status'])=='closed':return 'Released'
+            if int(r['holding_space'] or 0):return 'Holding Space'
+            return _status_label(r['status'])
+        def amount(r):
+            v=r['booking_total'] if r['booking_total'] is not None else (r['elements_total'] if r['elements_total'] is not None else r['legacy_total'])
+            return float(v or 0)
+        total=sum(amount(r) for r in enquiries)
+        result_rows=''.join(f"""<tr><td><a href="/operations/enquiries/{int(r['id'])}">#{int(r['id'])}</a></td><td>{esc(_customer_name(r))}</td><td>{_fmt_day(str(r['created_at'] or '')[:10])}</td><td>{_fmt_day(r['arrival_date'])}</td><td>{_fmt_day(r['departure_date'])}</td><td>{esc(r['element_names'] or '—')}</td><td>€{amount(r):,.2f}</td><td>{esc(report_status(r))}</td><td class="screen-only">{_enquiry_action(r,context)}</td></tr>""" for r in enquiries) or '<tr><td colspan="9">No matching enquiries.</td></tr>'
+        def date_input(name,value,label):
+            return f'<div><label>{label}</label><input type="date" name="{name}" value="{esc(value)}"></div>'
+        body=f"""<style>@media print{{nav,header,.screen-only,form,.button,button{{display:none!important}} .card{{box-shadow:none!important;border:0!important}} table{{width:100%;font-size:10pt}} th,td{{padding:5px!important}} a{{color:inherit;text-decoration:none}} }}</style>
+        <h1>Enquiries</h1><p class="screen-only"><a href="/operations">← Operations</a></p>
+        <div class="card screen-only"><form method="get" action="/operations/enquiries"><div class="grid">
+        <div><label>Customer or enquiry reference</label><input name="q" value="{esc(search)}" placeholder="Name, reference, email or telephone"></div>
+        <div><label>Status</label><select name="status">{status_options}</select></div>
+        {date_input('arrival_from',arrival_from,'Arrival from')}{date_input('arrival_to',arrival_to,'Arrival to')}
+        {date_input('enquiry_from',enquiry_from,'Enquiry received from')}{date_input('enquiry_to',enquiry_to,'Enquiry received to')}
+        </div><p><button>Show Results</button> <a class="button secondary" href="/operations/enquiries">Clear</a></p></form></div>
+        <div class="card"><p><strong>{len(enquiries)}</strong> matching enquiries · <strong>€{total:,.2f}</strong> combined value</p>
+        <p>Status: {esc(dict(options).get(status_filter,'All'))} · Arrival: {esc(arrival_from or 'Any')} to {esc(arrival_to or 'Any')} · Received: {esc(enquiry_from or 'Any')} to {esc(enquiry_to or 'Any')}</p>
+        <p class="screen-only"><button type="button" onclick="window.print()">Print Report</button></p>
+        <table><thead><tr><th>No.</th><th>Customer</th><th>Received</th><th>Arrival</th><th>Departure</th><th>Elements</th><th>Value</th><th>Status</th><th class="screen-only">Action</th></tr></thead><tbody>{result_rows}</tbody></table></div>"""
+        return layout('Enquiries',body,context)
 
     @app.get('/operations/enquiries/{enquiry_id}', response_class=HTMLResponse)
     def enquiry_detail(enquiry_id: int, request: Request, saved: int = 0, convert_error: str = ''):
