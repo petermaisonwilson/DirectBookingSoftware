@@ -101,9 +101,23 @@ def apply_amendment(database, context, quote: dict) -> int:
         be=c.execute('SELECT * FROM booking_elements WHERE company_id=? AND booking_id=? AND id=?',(cid,booking_id,beid)).fetchone()
         booking=c.execute('SELECT * FROM bookings WHERE company_id=? AND id=?',(cid,booking_id)).fetchone()
         if be is None or booking is None: raise ValueError('Booking element does not exist.')
-        # Re-check availability inside the apply operation so a stale preview cannot overwrite a later booking.
-        state=availability_state(database,cid,int(be['element_id']),quote['new_arrival'],quote['new_departure'],exclude_booking_id=booking_id)
-        if not state['available']: raise ValueError('The amended dates are no longer available.')
+        # Lock before checking competing allocations: a quote is not a reservation.
+        # The checks and subsequent update must be one serialised write operation.
+        from .webv1_status_availability import _booking_conflict, _enquiry_conflict
+        from .webv1_availability import _closure_conflict
+        c.execute('BEGIN IMMEDIATE')
+        current = c.execute('SELECT arrival_date,departure_date FROM booking_elements WHERE id=? AND company_id=?', (beid,cid)).fetchone()
+        if current is None or str(current['arrival_date']) != str(quote['old_arrival']) or str(current['departure_date']) != str(quote['old_departure']):
+            raise ValueError('This Booking has changed since the amendment was calculated. Recalculate before saving.')
+        if _booking_conflict(c,cid,int(be['element_id']),quote['new_arrival'],quote['new_departure'],exclude_booking_id=booking_id):
+            raise ValueError('The amended dates overlap another Booking.')
+        if _enquiry_conflict(c,cid,int(be['element_id']),quote['new_arrival'],quote['new_departure']):
+            raise ValueError('The amended dates overlap an Enquiry holding this Element.')
+        if _closure_conflict(c,cid,int(be['element_id']),quote['new_arrival'],quote['new_departure']):
+            raise ValueError('The amended dates overlap an Element closure.')
+        for other in c.execute('SELECT arrival_date,departure_date FROM booking_elements WHERE company_id=? AND booking_id=? AND element_id=? AND id<>?', (cid,booking_id,int(be['element_id']),beid)):
+            if str(other['arrival_date']) < str(quote['new_departure']) and str(other['departure_date']) > str(quote['new_arrival']):
+                raise ValueError('The amended dates overlap another Element allocation in this Booking.')
         amendment_id=int(c.execute('''INSERT INTO booking_amendments
             (company_id,booking_id,booking_element_id,old_arrival_date,old_departure_date,new_arrival_date,new_departure_date,
              old_booking_total,new_booking_total,manual_discount,calculation_json,created_by_user_id,created_at)
