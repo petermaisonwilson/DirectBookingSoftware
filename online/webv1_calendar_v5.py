@@ -17,6 +17,7 @@ from .webv1_booking_status import default_status
 from .webv1_calendar_v2 import _bar, _cols, _records, _session_context
 from .webv1_calendar_v4 import _basket_rows, _header, _parse, _window
 from .webv1_status_availability import availability_state
+from .webv1_ordering import setup_rows
 
 
 def register_calendar_v5_routes(app) -> None:
@@ -152,6 +153,11 @@ def register_calendar_v5_routes(app) -> None:
             elements = rows(database, f'SELECT * FROM setup_elements WHERE company_id=? AND active=1 AND id IN ({marks}) ORDER BY element_type,name COLLATE NOCASE', (cid, *basket_ids))
         else:
             elements = []
+        if elements:
+            elements = setup_rows(database, cid, 'elements', elements)
+            if staff and not selected_type:
+                type_order = {name: index for index, name in enumerate(types)}
+                elements = sorted(elements, key=lambda element: type_order.get(str(element['element_type']), len(types)))
         feature_year = (_parse(arrival) or _parse(anchor_arrival) or visible_start).year
         locked_holds = {
             int(r['element_id']): r for r in basket
