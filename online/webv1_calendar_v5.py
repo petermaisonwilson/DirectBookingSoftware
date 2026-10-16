@@ -187,7 +187,9 @@ def register_calendar_v5_routes(app) -> None:
                     if first[0] and first[1] and second[0] and second[1] and first[0] < second[1] and second[0] < first[1]:
                         conflicts.append(f"{first[2]} / {second[2]}")
             if staff and conflicts:
-                cal_rows += f'<div class="card" style="grid-column:1/-1;border:2px solid #b42318;background:#fff1f0;color:#8c1c13"><strong>INVENTORY CONFLICT — {esc(element["name"])}</strong>: {esc("; ".join(conflicts))}. Investigate before accepting further reservations.</div>'
+                warning = f'<div class="inventory-conflict" role="alert"><strong>INVENTORY CONFLICT — {esc(element["name"])}</strong>: {esc("; ".join(conflicts))}. Investigate before accepting further reservations.</div>'
+            else:
+                warning = ''
             locked_item = locked_holds.get(eid)
             locked_in_basket = locked_item is not None
             cells = ''
@@ -305,7 +307,7 @@ def register_calendar_v5_routes(app) -> None:
                 row_classes += ' party-unsuitable'
             if held_now_unsuitable:
                 row_classes += ' held-now-unsuitable'
-            cal_rows += f'<div class="{row_classes}" data-element="{eid}" data-name="{esc(element["name"])}" data-features="{feature_json}"><div class="cal-name" style="grid-column:1;grid-row:1">{name_html}</div>{cells}{bars}{selection}</div>'
+            cal_rows += f'<div class="{row_classes}" data-element="{eid}" data-name="{esc(element["name"])}" data-features="{feature_json}"><div class="cal-name" style="grid-column:1;grid-row:1">{name_html}</div>{cells}{bars}{selection}</div>{warning}'
 
         if not cal_rows:
             cal_rows = '<div class="card"><p>No active Elements exist for this Element Type.</p></div>' if selected_type else '<div class="card"><p>Select an Element Type to see matching Elements.</p></div>'
@@ -335,6 +337,7 @@ def register_calendar_v5_routes(app) -> None:
         .availability-head{{display:flex;justify-content:space-between;align-items:center;gap:14px;flex-wrap:wrap}} .availability-head h2{{margin:0}} .legend-row{{display:flex;gap:6px;flex-wrap:wrap;align-items:center}} .legend.mini{{padding:2px 6px;border-radius:4px;font-size:11px}} .available-key{{background:#dff2df}} .own-held{{background:#ffe39a}} .legend.closed{{background:#e1e4e8}}
         .cal-bar{{z-index:4;align-self:center;height:30px;margin:0 2px;border-radius:5px;overflow:hidden;white-space:nowrap;display:flex;align-items:center}} .cal-bar a,.cal-bar span{{display:block;padding:6px 8px;color:#26313d;text-decoration:none;width:100%;overflow:hidden;text-overflow:ellipsis}}
         .hold-modal{{position:fixed;inset:0;background:rgba(0,0,0,.35);z-index:100;display:flex;align-items:center;justify-content:center}} .hold-modal[hidden]{{display:none}} .hold-dialog{{background:white;padding:24px;border-radius:10px;max-width:620px;width:90%;max-height:80vh;overflow:auto}}
+        .inventory-conflict{{background:#fff1f0;color:#8c1c13;border:2px solid #b42318;padding:8px 12px;margin:3px 0 10px;font-size:13px}}
         .booking-detail-overlay{{position:fixed;inset:0;background:rgba(0,0,0,.22);z-index:180;display:flex;align-items:center;justify-content:center}} .booking-detail-overlay[hidden]{{display:none}} .booking-detail-window{{background:white;width:min(1050px,94vw);height:min(780px,90vh);min-width:400px;min-height:260px;resize:both;overflow:hidden;display:flex;flex-direction:column;border:1px solid #748397;border-radius:9px;box-shadow:0 12px 45px #0004}} .booking-detail-handle{{display:flex;align-items:center;justify-content:space-between;gap:10px;background:#e9eef4;padding:8px 12px;cursor:move;user-select:none}} #booking-detail-frame{{flex:1;width:100%;border:0;background:white}}
         .quick-element-info{{position:fixed;z-index:120;background:white;border:1px solid #8293a4;border-radius:6px;padding:10px 12px;box-shadow:0 4px 14px rgba(0,0,0,.2);font-size:12px;pointer-events:none;max-width:320px}}
         .quick-element-info ul{{margin:6px 0 0;padding-left:18px}}
