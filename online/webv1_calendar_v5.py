@@ -36,9 +36,10 @@ def register_calendar_v5_routes(app) -> None:
         selected_type = element_type if element_type in types else ''
         # Multiple type selection is restricted to the staff master calendar.
         # An absent selection means ALL, preserving existing bookmarked URLs.
+        explicit_type_selection = request.query_params.get('types_selection') == '1'
         requested_types = request.query_params.getlist('types')
-        selected_types = [t for t in types if t in requested_types] if staff and requested_types else []
-        filter_types = selected_types if staff and requested_types else ([selected_type] if selected_type else [])
+        selected_types = [t for t in types if t in requested_types] if staff and explicit_type_selection else []
+        filter_types = selected_types if staff and explicit_type_selection else ([selected_type] if selected_type else [])
 
         visible_start, display_days = _window(start, anchor_arrival, anchor_departure)
         date_warning = ''
@@ -75,11 +76,11 @@ def register_calendar_v5_routes(app) -> None:
         options = '<option value="">ALL Element Types</option>' + ''.join(
             f'<option value="{esc(t)}" {"selected" if t == selected_type else ""}>{esc(t)}</option>' for t in types
         )
-        type_checks = ''.join(f'<label style="display:inline-flex;flex-direction:row;align-items:center;gap:5px"><input type="checkbox" name="types" value="{esc(t)}" {"checked" if (t in selected_types or not requested_types) else ""}>{esc(t)}</label>' for t in types)
-        type_picker = (f'<fieldset style="display:flex;flex-wrap:wrap;gap:12px"><legend>Element Types</legend>{type_checks}<button type="button" onclick="this.closest(\'fieldset\').querySelectorAll(\'input[type=checkbox]\').forEach(x=>x.checked=true)">Select All</button><button type="button" onclick="this.closest(\'fieldset\').querySelectorAll(\'input[type=checkbox]\').forEach(x=>x.checked=false)">Clear All</button></fieldset>' if staff and not (basket or edit_hold or recovery_enquiry) else f'<label>Elements <select name="element_type">{options}</select></label>')
+        type_checks = ''.join(f'<label style="display:inline-flex;flex-direction:row;align-items:center;gap:5px"><input type="checkbox" name="types" value="{esc(t)}" {"checked" if (t in selected_types or not explicit_type_selection) else ""}>{esc(t)}</label>' for t in types)
+        type_picker = (f'<fieldset style="display:flex;flex-wrap:wrap;gap:12px"><legend>Element Types</legend><input type="hidden" name="types_selection" value="1">{type_checks}<button type="button" onclick="this.closest(\'fieldset\').querySelectorAll(\'input[type=checkbox]\').forEach(x=>x.checked=true)">Select All</button><button type="button" onclick="this.closest(\'fieldset\').querySelectorAll(\'input[type=checkbox]\').forEach(x=>x.checked=false)">Clear All</button></fieldset>' if staff and not (basket or edit_hold or recovery_enquiry) else f'<label>Elements <select name="element_type">{options}</select></label>')
         preserve = f'element_type={quote_plus(selected_type)}&arrival={quote_plus(arrival)}&departure={quote_plus(departure)}'
-        if staff and requested_types:
-            preserve += ''.join('&types=' + quote_plus(t) for t in selected_types)
+        if staff and explicit_type_selection:
+            preserve += '&types_selection=1' + ''.join('&types=' + quote_plus(t) for t in selected_types)
         if edit_hold:
             preserve += f'&edit_hold={edit_hold}'
 
@@ -155,7 +156,9 @@ def register_calendar_v5_routes(app) -> None:
 
         cal_header = _header(dates, arrival_day, departure_day)
         cal_rows = ''
-        if selected_type or staff:
+        if staff and explicit_type_selection and not selected_types:
+            elements = []
+        elif selected_type or staff:
             if filter_types:
                 marks = ','.join('?' for _ in filter_types)
                 elements = rows(database, f'SELECT * FROM setup_elements WHERE company_id=? AND active=1 AND element_type IN ({marks}) ORDER BY element_type,name COLLATE NOCASE', (cid, *filter_types))
