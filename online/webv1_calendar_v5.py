@@ -180,9 +180,9 @@ def register_calendar_v5_routes(app) -> None:
             blocking = []
             for booking in bookings:
                 if str(booking['status']) != 'cancelled' and (booking['blocks_availability'] is None or int(booking['blocks_availability'])):
-                    blocking.append((_parse(str(booking['arrival_date'])), _parse(str(booking['departure_date'])), f"Booking {booking['reference']}", f"/operations/bookings/{int(booking['booking_id'])}"))
+                    blocking.append((_parse(str(booking['arrival_date'])), _parse(str(booking['departure_date'])), f"Booking {booking['reference']} — {(str(booking['first_name'] or '') + ' ' + str(booking['last_name'] or '')).strip() or 'Customer'} ({booking['arrival_date']} to {booking['departure_date']})", f"/operations/bookings/{int(booking['booking_id'])}"))
             for enquiry in enquiries:
-                blocking.append((_parse(str(enquiry['arrival_date'])), _parse(str(enquiry['departure_date'])), f"Enquiry #{int(enquiry['enquiry_id'])}", f"/operations/enquiries/{int(enquiry['enquiry_id'])}"))
+                blocking.append((_parse(str(enquiry['arrival_date'])), _parse(str(enquiry['departure_date'])), f"Enquiry #{int(enquiry['enquiry_id'])} — {(str(enquiry['first_name'] or '') + ' ' + str(enquiry['last_name'] or '')).strip() or 'Customer'} ({enquiry['arrival_date']} to {enquiry['departure_date']})", f"/operations/enquiries/{int(enquiry['enquiry_id'])}"))
             conflict_pairs = []
             for i, first in enumerate(blocking):
                 for second in blocking[i + 1:]:
@@ -195,7 +195,7 @@ def register_calendar_v5_routes(app) -> None:
                     for item in (first, second):
                         links.append(f'<a class="conflict-record-link" href="{esc(item[3])}">{esc(item[2])}</a>')
                     conflict_lines.append(' conflicts with '.join(links))
-                warning = f'<div class="inventory-conflict" role="alert"><strong>INVENTORY CONFLICT — {esc(element["name"])}</strong><div>{"; ".join(conflict_lines)}</div><small>Open either record to edit it. Close the detail window to refresh this calendar and verify the resolution.</small></div>'
+                warning = f'<div class="inventory-conflict" role="alert"><strong>INVENTORY CONFLICT — {esc(element["name"])}</strong><div>{"; ".join(conflict_lines)}</div><small>Open both records side by side; edit or release the conflicting allocation. Close the windows to refresh the calendar.</small></div>'
             else:
                 warning = ''
             locked_item = locked_holds.get(eid)
@@ -324,7 +324,7 @@ def register_calendar_v5_routes(app) -> None:
         <div id="calendar-scroll" class="calendar-scroll"><div class="calendar-grid" style="--days:{display_days}">{cal_header}{cal_rows}</div></div>
         <p class="muted">Every Element of the selected type is shown. Pale green days are available. Elements that do not meet the booking requirements remain visible with the reason why, so you can change the requirements if you want a particular Element. A yellow Element remains protected while held; if revised requirements make it unsuitable it is clearly marked and must be replaced before proceeding.</p></div>'''
 
-        body += f'''<div id="booking-detail-modal" class="booking-detail-overlay" hidden><div id="booking-detail-window" class="booking-detail-window"><div id="booking-detail-handle" class="booking-detail-handle"><strong>Booking / Enquiry details</strong><button type="button" id="booking-detail-close" class="secondary">Close</button></div><iframe id="booking-detail-frame" title="Booking or enquiry details"></iframe></div></div><div id="quick-element-info" class="quick-element-info" hidden></div>
+        body += f'''<div id="booking-detail-modal" class="booking-detail-overlay" hidden></div><div id="quick-element-info" class="quick-element-info" hidden></div>
         <div id="info-modal" class="hold-modal" hidden><div class="hold-dialog"><button id="info-close" type="button" class="secondary close-info">Close</button><h2 id="info-title"></h2><p class="muted">Element information</p><div id="info-features"></div></div></div>
         <style>
         main:has(.master-calendar-page){{max-width:98vw;width:98vw;margin:12px auto;padding:0 12px 24px;box-sizing:border-box}}
@@ -346,17 +346,34 @@ def register_calendar_v5_routes(app) -> None:
         .cal-bar{{z-index:4;align-self:center;height:30px;margin:0 2px;border-radius:5px;overflow:hidden;white-space:nowrap;display:flex;align-items:center}} .cal-bar a,.cal-bar span{{display:block;padding:6px 8px;color:#26313d;text-decoration:none;width:100%;overflow:hidden;text-overflow:ellipsis}}
         .hold-modal{{position:fixed;inset:0;background:rgba(0,0,0,.35);z-index:100;display:flex;align-items:center;justify-content:center}} .hold-modal[hidden]{{display:none}} .hold-dialog{{background:white;padding:24px;border-radius:10px;max-width:620px;width:90%;max-height:80vh;overflow:auto}}
         .inventory-conflict a{{font-weight:700;text-decoration:underline;color:#8c1c13;margin:0 4px}} .inventory-conflict small{{display:block;margin-top:6px}} .inventory-conflict{{background:#fff1f0;color:#8c1c13;border:2px solid #b42318;padding:8px 12px;margin:3px 0 10px;font-size:13px}}
-        .booking-detail-overlay{{position:fixed;inset:0;background:rgba(0,0,0,.22);z-index:180;display:flex;align-items:center;justify-content:center}} .booking-detail-overlay[hidden]{{display:none}} .booking-detail-window{{background:white;width:min(1050px,94vw);height:min(780px,90vh);min-width:400px;min-height:260px;resize:both;overflow:hidden;display:flex;flex-direction:column;border:1px solid #748397;border-radius:9px;box-shadow:0 12px 45px #0004}} .booking-detail-handle{{display:flex;align-items:center;justify-content:space-between;gap:10px;background:#e9eef4;padding:8px 12px;cursor:move;user-select:none}} #booking-detail-frame{{flex:1;width:100%;border:0;background:white}}
+        .booking-detail-overlay{{position:fixed;inset:0;z-index:180;pointer-events:none}} .booking-detail-overlay[hidden]{{display:none}} .booking-detail-overlay .booking-detail-window{{pointer-events:auto}} .booking-detail-window{{background:white;width:min(690px,88vw);height:min(730px,80vh);min-width:400px;min-height:260px;resize:both;overflow:hidden;display:flex;flex-direction:column;border:1px solid #748397;border-radius:9px;box-shadow:0 12px 45px #0004}} .booking-detail-handle{{display:flex;align-items:center;justify-content:space-between;gap:10px;background:#e9eef4;padding:8px 12px;cursor:move;user-select:none}} #booking-detail-frame{{flex:1;width:100%;border:0;background:white}}
         .quick-element-info{{position:fixed;z-index:120;background:white;border:1px solid #8293a4;border-radius:6px;padding:10px 12px;box-shadow:0 4px 14px rgba(0,0,0,.2);font-size:12px;pointer-events:none;max-width:320px}}
         .quick-element-info ul{{margin:6px 0 0;padding-left:18px}}
         </style>
         <script>
-        const bookingModal=document.getElementById('booking-detail-modal'),bookingWindow=document.getElementById('booking-detail-window'),bookingFrame=document.getElementById('booking-detail-frame');
-        document.querySelectorAll('.cal-bar a[href^="/operations/bookings/"],.cal-bar a[href^="/operations/enquiries/"],.inventory-conflict a.conflict-record-link').forEach(link=>link.addEventListener('click',event=>{{event.preventDefault();bookingFrame.src=link.href;bookingModal.hidden=false;}}));
-        document.getElementById('booking-detail-close').addEventListener('click',()=>{{bookingModal.hidden=true;bookingFrame.removeAttribute('src');window.location.reload();}});
-        let drag=null;document.getElementById('booking-detail-handle').addEventListener('pointerdown',event=>{{if(event.target.closest('button'))return;const rect=bookingWindow.getBoundingClientRect();bookingWindow.style.position='fixed';bookingWindow.style.left=rect.left+'px';bookingWindow.style.top=rect.top+'px';bookingWindow.style.margin='0';drag={{x:event.clientX,y:event.clientY,left:rect.left,top:rect.top}};event.currentTarget.setPointerCapture(event.pointerId);}});
-        document.getElementById('booking-detail-handle').addEventListener('pointermove',event=>{{if(!drag)return;bookingWindow.style.left=Math.max(0,Math.min(window.innerWidth-100,drag.left+event.clientX-drag.x))+'px';bookingWindow.style.top=Math.max(0,Math.min(window.innerHeight-40,drag.top+event.clientY-drag.y))+'px';}});
-        document.getElementById('booking-detail-handle').addEventListener('pointerup',()=>{{drag=null;}});
+        const bookingModal=document.getElementById('booking-detail-modal');
+        let windowCount=0,topWindow=200;
+        function openBookingWindow(url,label) {{
+          const existing=Array.from(bookingModal.querySelectorAll('.booking-detail-window')).find(w=>w.dataset.url===url);
+          if(existing){{existing.style.zIndex=String(++topWindow);return;}}
+          const panel=document.createElement('div');panel.className='booking-detail-window';panel.dataset.url=url;
+          const offset=(windowCount++%3)*42;
+          panel.style.cssText='position:fixed;left:'+Math.max(8,Math.round(window.innerWidth/2-490+offset))+'px;top:'+(75+offset)+'px;width:min(690px,88vw);height:min(730px,80vh);z-index:'+(++topWindow);
+          const handle=document.createElement('div');handle.className='booking-detail-handle';
+          const heading=document.createElement('strong');heading.textContent=label||'Booking / Enquiry details';
+          const close=document.createElement('button');close.type='button';close.className='secondary';close.textContent='Close';
+          close.addEventListener('click',()=>{{panel.remove();if(!bookingModal.children.length){{bookingModal.hidden=true;window.location.reload();}}}});
+          handle.append(heading,close);
+          const frame=document.createElement('iframe');frame.title=label||'Booking / Enquiry details';frame.src=url;
+          panel.append(handle,frame);bookingModal.append(panel);bookingModal.hidden=false;
+          panel.addEventListener('pointerdown',()=>{{panel.style.zIndex=String(++topWindow);}});
+          let drag=null;
+          handle.addEventListener('pointerdown',ev=>{{if(ev.target.closest('button'))return;const rect=panel.getBoundingClientRect();drag={{x:ev.clientX,y:ev.clientY,left:rect.left,top:rect.top}};handle.setPointerCapture(ev.pointerId);}});
+          handle.addEventListener('pointermove',ev=>{{if(!drag)return;panel.style.left=Math.max(0,Math.min(window.innerWidth-100,drag.left+ev.clientX-drag.x))+'px';panel.style.top=Math.max(0,Math.min(window.innerHeight-40,drag.top+ev.clientY-drag.y))+'px';}});
+          handle.addEventListener('pointerup',()=>{{drag=null;}});
+          handle.addEventListener('pointercancel',()=>{{drag=null;}});
+        }}
+        document.querySelectorAll('.cal-bar a[href^="/operations/bookings/"],.cal-bar a[href^="/operations/enquiries/"],.inventory-conflict a.conflict-record-link').forEach(link=>link.addEventListener('click',event=>{{event.preventDefault();openBookingWindow(link.href,link.textContent.trim());}}));
         const csrf={json.dumps(str(context['csrf_token']))}; const editingHold={int(edit_hold or 0)}; const recoveryEnquiry={int(recovery_enquiry or 0)},recoveryElement={int(recovery_element or 0)}; const anchorArr={json.dumps(anchor_arrival)},anchorDep={json.dumps(anchor_departure)};
         const elementType=document.getElementById('element-type'),arrivalInput=document.getElementById('arrival-date'),departureInput=document.getElementById('departure-date'),scrollBox=document.getElementById('calendar-scroll');
         let selectedElement=0,firstPick='';
