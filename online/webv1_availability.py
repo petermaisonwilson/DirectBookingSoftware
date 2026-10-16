@@ -181,11 +181,14 @@ def create_or_replace_hold(database, context, company_id: int, session_token: st
         raise ValueError(state['reason'])
     now = _now(); prompt = now + timedelta(minutes=HOLD_MINUTES); expires = prompt + timedelta(minutes=HOLD_GRACE_MINUTES)
     with database.connect() as c:
+        # Hold allocation and conflict checks must be atomic across sessions.
+        c.execute('BEGIN IMMEDIATE')
         _purge_expired_holds(c)
+        from .webv1_status_availability import _enquiry_conflict
         conflict = c.execute('''SELECT id FROM element_holds WHERE company_id=? AND element_id=? AND session_token<>?
                                 AND date(arrival_date)<date(?) AND date(departure_date)>date(?) AND expires_at>? LIMIT 1''',
                              (company_id, element_id, session_token, departure, arrival, iso_now())).fetchone()
-        if conflict or _booking_conflict(c, company_id, element_id, arrival, departure) or _closure_conflict(c, company_id, element_id, arrival, departure):
+        if conflict or _booking_conflict(c, company_id, element_id, arrival, departure) or _enquiry_conflict(c, company_id, element_id, arrival, departure) or _closure_conflict(c, company_id, element_id, arrival, departure):
             raise ValueError('That Element has just become unavailable. Please choose another.')
         existing = c.execute('SELECT * FROM element_holds WHERE company_id=? AND element_id=? AND session_token=?', (company_id, element_id, session_token)).fetchone()
         if existing:
