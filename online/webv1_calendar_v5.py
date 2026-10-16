@@ -174,6 +174,20 @@ def register_calendar_v5_routes(app) -> None:
             features = popup_addons_for_element(database, cid, feature_year, element)
             feature_json = esc(json.dumps(features, ensure_ascii=False))
             bookings, enquiries, closures, holds = _records(database, cid, eid, visible_start, visible_end)
+            # Show genuine blocking inventory conflicts explicitly; never conceal either record.
+            blocking = []
+            for booking in bookings:
+                if str(booking['status']) != 'cancelled' and (booking['blocks_availability'] is None or int(booking['blocks_availability'])):
+                    blocking.append((_parse(str(booking['arrival_date'])), _parse(str(booking['departure_date'])), f"Booking {booking['reference']}"))
+            for enquiry in enquiries:
+                blocking.append((_parse(str(enquiry['arrival_date'])), _parse(str(enquiry['departure_date'])), f"Enquiry #{int(enquiry['enquiry_id'])}"))
+            conflicts = []
+            for i, first in enumerate(blocking):
+                for second in blocking[i + 1:]:
+                    if first[0] and first[1] and second[0] and second[1] and first[0] < second[1] and second[0] < first[1]:
+                        conflicts.append(f"{first[2]} / {second[2]}")
+            if staff and conflicts:
+                cal_rows += f'<div class="card" style="grid-column:1/-1;border:2px solid #b42318;background:#fff1f0;color:#8c1c13"><strong>INVENTORY CONFLICT — {esc(element["name"])}</strong>: {esc("; ".join(conflicts))}. Investigate before accepting further reservations.</div>'
             locked_item = locked_holds.get(eid)
             locked_in_basket = locked_item is not None
             cells = ''
