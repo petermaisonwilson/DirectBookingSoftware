@@ -48,12 +48,11 @@ def _edit_history(database, company_id: int, enquiry_id: int) -> str:
     from datetime import datetime, timezone
     from zoneinfo import ZoneInfo
 
-    events=rows(database, """SELECT a.created_at,a.before_json,a.after_json,a.actor_role,
+    events=rows(database, """SELECT a.created_at,a.action,a.before_json,a.after_json,a.actor_role,
         u.email AS actor_email FROM audit_log a
         LEFT JOIN users u ON u.id=a.actor_user_id
         WHERE a.company_id=? AND a.entity_type='enquiry' AND a.entity_id=?
-          AND a.action='ENQUIRY_UPDATED' ORDER BY a.id DESC""", (company_id,str(enquiry_id)))
-    if not events: return ''
+          ORDER BY a.id DESC""", (company_id,str(enquiry_id)))
     person_names={str(r['id']):str(r['name']) for r in rows(database,
         'SELECT id,name FROM setup_person_types WHERE company_id=?',(company_id,))}
     addon_names={str(r['id']):str(r['name']) for r in rows(database,
@@ -76,7 +75,7 @@ def _edit_history(database, company_id: int, enquiry_id: int) -> str:
             before=json.loads(event['before_json'] or '{}')
             after=json.loads(event['after_json'] or '{}')
         except (ValueError,TypeError): continue
-        if not before: continue
+        action=str(event['action'] or '')
         changes=[]
         for key,label in [('arrival_date','Arrival'),('departure_date','Departure')]:
             if before.get(key)!=after.get(key):
@@ -91,7 +90,9 @@ def _edit_history(database, company_id: int, enquiry_id: int) -> str:
                 changes.extend(count_changes(key,old,new,names))
         if before.get('provisional_total')!=after.get('provisional_total'):
             changes.append(f'Enquiry value changed from {money(before.get("provisional_total") or 0)} to {money(after.get("provisional_total") or 0)}')
-        if not changes: continue
+        labels={'ENQUIRY_UPDATED':'Enquiry amended','ENQUIRY_RELEASED':'Enquiry released — space freed','ENQUIRY_REOPENED':'Enquiry reopened — availability checked','ENQUIRY_CREATED':'Enquiry created','ENQUIRY_CONVERTED':'Enquiry converted to booking'}
+        label=labels.get(action,action.replace('_',' ').title())
+        if action=='ENQUIRY_UPDATED' and not changes: continue
         actor=esc(event['actor_email'] or event['actor_role'] or 'Staff')
         try:
             dt=datetime.fromisoformat(str(event['created_at']).replace('Z','+00:00'))
@@ -99,8 +100,8 @@ def _edit_history(database, company_id: int, enquiry_id: int) -> str:
             stamp=dt.astimezone(ZoneInfo('Europe/Paris')).strftime('%d/%m/%Y %H:%M')
         except (ValueError,TypeError): stamp=esc(event['created_at'] or '')
         items=''.join(f'<li>{change}</li>' for change in changes)
-        entries.append(f'<div><strong>{stamp} — {actor} — Enquiry amended</strong><ul>{items}</ul></div>')
-    return '<div class="card"><h2>Enquiry history</h2>'+''.join(entries)+'</div>' if entries else ''
+        entries.append(f'<div><strong>{stamp} — {actor} — {esc(label)}</strong>{f"<ul>{items}</ul>" if items else ""}</div>')
+    return '<div class="card"><h2>Enquiry history</h2>'+(''.join(entries) if entries else '<p>No recorded actions yet. The original enquiry details are shown above.</p>')+'</div>'
 
 
 def register_enquiry_routes(app) -> None:
