@@ -45,7 +45,7 @@ def register_calendar_v5_routes(app) -> None:
             else:
                 visible_start, display_days = from_day, (to_day - from_day).days + 1
         elif not (anchor_arrival and anchor_departure):
-            display_days = 60
+            display_days = 30
         visible_end = visible_start + timedelta(days=display_days)
         dates = [visible_start + timedelta(days=i) for i in range(display_days)]
         arrival_day, departure_day = _parse(arrival), _parse(departure)
