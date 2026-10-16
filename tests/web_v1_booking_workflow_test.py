@@ -111,7 +111,7 @@ def main() -> None:
 
         before = availability_state(db, cid, element_id, '2035-06-10', '2035-06-13')
         assert before['available'] is False and before['state'] == 'ENQUIRY'
-        holding_report=client.get('/operations/enquiries?holding=1')
+        holding_report=client.get('/operations/enquiries?status=holding')
         assert holding_report.status_code==200 and f'#{enquiry_id}' in holding_report.text and 'Holding' in holding_report.text
         first = client.post(f'/operations/enquiries/{enquiry_id}/convert', data={'csrf': csrf, 'workflow_status_id': str(confirmed_id)}, follow_redirects=False)
         assert first.status_code == 303 and f'/operations/enquiries/{enquiry_id}/confirm' in first.headers['location']
@@ -292,7 +292,7 @@ def main() -> None:
         assert life_state['state']=='ENQUIRY', life_state
         assert client.post(f'/operations/enquiries/{life_id}/release',data={'csrf':csrf},follow_redirects=False).status_code==303
         assert availability_state(db,cid,element_id,'2035-07-01','2035-07-04')['available'] is True
-        released_report = client.get('/operations/enquiries?holding=0')
+        released_report = client.get('/operations/enquiries?status=released')
         assert released_report.status_code == 200 and f'#{life_id}' in released_report.text
         assert f'<a href="/operations/enquiries/{enquiry_id}">#{enquiry_id}</a>' not in released_report.text
         released_anchor = f'<a href="/operations/enquiries/{life_id}">#{life_id}</a>'
