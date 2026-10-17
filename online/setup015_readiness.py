@@ -188,6 +188,8 @@ def element_available_setup_ready(
     element_id: int,
     arrival: date,
     departure: date,
+    *,
+    missing_items_cache: dict | None = None,
 ) -> tuple[bool, str]:
     """Return whether an Element is safe to offer for these dates.
 
@@ -201,7 +203,13 @@ def element_available_setup_ready(
     if arrival.year != (departure - timedelta(days=1)).year:
         return False, 'The stay must remain within one pricing year.'
     year = arrival.year
-    missing = element_missing_items(database, company_id, year, element_id)
+    cache_key = (company_id, year, element_id)
+    if missing_items_cache is not None and cache_key in missing_items_cache:
+        missing = missing_items_cache[cache_key]
+    else:
+        missing = element_missing_items(database, company_id, year, element_id)
+        if missing_items_cache is not None:
+            missing_items_cache[cache_key] = missing
     year_wide = [
         item for item in missing
         if item['category'] not in {'Element pricing', 'Seasons'}
