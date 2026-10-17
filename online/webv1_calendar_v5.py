@@ -191,6 +191,8 @@ def register_calendar_v5_routes(app) -> None:
         availability_seconds = 0.0
         availability_calls = 0
         setup_missing_cache = {}
+        popup_seconds = 0.0
+        popup_calls = 0
         for element in elements:
             eid = int(element['id'])
             reasons = element_reasons(database, cid, feature_year, element, people, requirements) if requirements_ready else []
@@ -198,7 +200,10 @@ def register_calendar_v5_routes(app) -> None:
             same_party_hold = next((r for r in basket if int(r['element_id']) == eid and working_lead and str(r['lead_name'] or '').strip() == working_lead), None)
             held_now_unsuitable = bool(party_unsuitable and same_party_hold)
 
+            popup_started = perf_counter()
             features = popup_addons_for_element(database, cid, feature_year, element)
+            popup_seconds += perf_counter() - popup_started
+            popup_calls += 1
             feature_json = esc(json.dumps(features, ensure_ascii=False))
             bookings, enquiries, closures, holds = bulk_inventory[eid]
             # Show genuine blocking inventory conflicts explicitly; never conceal either record.
@@ -369,9 +374,9 @@ def register_calendar_v5_routes(app) -> None:
 
         if staff:
             logging.getLogger(__name__).info(
-                'Master calendar: elements=%s days=%s inventory_s=%.3f availability_calls=%s availability_s=%.3f total_s=%.3f',
+                'Master calendar: elements=%s days=%s inventory_s=%.3f availability_calls=%s availability_s=%.3f popup_calls=%s popup_s=%.3f total_s=%.3f',
                 len(elements), display_days, inventory_seconds + bulk_seconds, availability_calls,
-                availability_seconds, perf_counter() - render_started,
+                availability_seconds, popup_calls, popup_seconds, perf_counter() - render_started,
             )
 
         body += f'''<div class="card availability-card"><div class="availability-head"><div class="legend-row compact"><strong>Key:</strong>{legend}</div></div>
