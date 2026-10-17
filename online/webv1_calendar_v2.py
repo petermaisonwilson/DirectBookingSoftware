@@ -110,6 +110,65 @@ def _records(database, cid: int, element_id: int, start: date, end: date):
     return bookings, enquiries, closures, holds
 
 
+
+def _records_bulk(database, cid: int, element_ids: list[int], start: date, end: date):
+    """Fetch calendar inventory once per category, preserving _records row shapes."""
+    if not element_ids:
+        return {}
+    marks = ','.join('?' for _ in element_ids)
+    ids = tuple(element_ids)
+    bounds = (end.isoformat(), start.isoformat())
+    result = {eid: [[], [], [], []] for eid in element_ids}
+    with database.connect() as c:
+        bookings = c.execute(f'''
+          SELECT be.element_id,be.arrival_date,be.departure_date,b.id AS booking_id,b.reference,b.status,b.workflow_status_id,
+                 cr.first_name,cr.last_name,
+                 s.name AS workflow_name,s.short_name,s.colour,s.blocks_availability,s.internal_state
+          FROM booking_elements be
+          JOIN bookings b ON b.id=be.booking_id AND b.company_id=be.company_id
+          LEFT JOIN customer_records cr ON cr.id=b.customer_id AND cr.company_id=b.company_id
+          LEFT JOIN booking_status_definitions s ON s.id=b.workflow_status_id AND s.company_id=b.company_id
+          WHERE be.company_id=? AND be.element_id IN ({marks})
+            AND date(be.arrival_date)<date(?) AND date(be.departure_date)>date(?)
+          ORDER BY be.arrival_date
+        ''', (cid, *ids, *bounds)).fetchall()
+        enquiries = c.execute(f'''
+          SELECT ee.element_id,e.id AS enquiry_id,ee.arrival_date,ee.departure_date,e.availability_expires_at,
+                 cr.first_name,cr.last_name,s.name AS workflow_name,s.short_name,s.colour,s.blocks_availability,s.internal_state
+          FROM enquiries e
+          JOIN enquiry_elements ee ON ee.enquiry_id=e.id AND ee.company_id=e.company_id
+          LEFT JOIN customer_records cr ON cr.id=e.customer_id AND cr.company_id=e.company_id
+          JOIN booking_status_definitions s ON s.id=e.workflow_status_id AND s.company_id=e.company_id
+          WHERE e.company_id=? AND ee.element_id IN ({marks}) AND COALESCE(ee.recovery_state,'held')='held'
+            AND e.status NOT IN ('closed','converted') AND s.blocks_availability=1
+            AND NOT EXISTS (SELECT 1 FROM bookings bx WHERE bx.company_id=e.company_id AND bx.enquiry_id=e.id)
+            AND date(ee.arrival_date)<date(?) AND date(ee.departure_date)>date(?)
+          UNION ALL
+          SELECT er.element_id,e.id,e.arrival_date,e.departure_date,e.availability_expires_at,
+                 cr.first_name,cr.last_name,s.name,s.short_name,s.colour,s.blocks_availability,s.internal_state
+          FROM enquiries e
+          JOIN enquiry_requests er ON er.enquiry_id=e.id AND er.company_id=e.company_id
+          LEFT JOIN customer_records cr ON cr.id=e.customer_id AND cr.company_id=e.company_id
+          JOIN booking_status_definitions s ON s.id=e.workflow_status_id AND s.company_id=e.company_id
+          WHERE e.company_id=? AND er.element_id IN ({marks})
+            AND NOT EXISTS (SELECT 1 FROM enquiry_elements x WHERE x.company_id=e.company_id AND x.enquiry_id=e.id)
+            AND e.status NOT IN ('closed','converted') AND s.blocks_availability=1
+            AND NOT EXISTS (SELECT 1 FROM bookings bx WHERE bx.company_id=e.company_id AND bx.enquiry_id=e.id)
+            AND date(e.arrival_date)<date(?) AND date(e.departure_date)>date(?)
+          ORDER BY 3
+        ''', (cid, *ids, *bounds, cid, *ids, *bounds)).fetchall()
+        closures = c.execute(f'''SELECT * FROM element_closures WHERE company_id=? AND element_id IN ({marks})
+                                AND date(start_date)<date(?) AND date(end_date)>date(?) ORDER BY start_date''',
+                             (cid, *ids, *bounds)).fetchall()
+        holds = c.execute(f'''SELECT * FROM element_holds WHERE company_id=? AND element_id IN ({marks}) AND expires_at>?
+                             AND date(arrival_date)<date(?) AND date(departure_date)>date(?) ORDER BY arrival_date''',
+                          (cid, *ids, iso_now(), *bounds)).fetchall()
+    for index, collection in enumerate((bookings, enquiries, closures, holds)):
+        for record in collection:
+            result[int(record['element_id'])][index].append(record)
+    return {eid: tuple(groups) for eid, groups in result.items()}
+
+
 def _blocking_booking(row) -> bool:
     if row['blocks_availability'] is not None:
         return bool(int(row['blocks_availability']))
