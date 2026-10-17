@@ -72,7 +72,7 @@ def _enquiry_conflict(connection, company_id: int, element_id: int, start: str, 
     return connection.execute(legacy_sql,legacy_params).fetchone()
 
 
-def availability_state(database, company_id: int, element_id: int, arrival: str, departure: str, *, session_token: str = '', exclude_booking_id: int | None = None, exclude_enquiry_id: int | None = None) -> dict[str, Any]:
+def availability_state(database, company_id: int, element_id: int, arrival: str, departure: str, *, session_token: str = '', exclude_booking_id: int | None = None, exclude_enquiry_id: int | None = None, missing_items_cache: dict | None = None) -> dict[str, Any]:
     try:
         start, end = date.fromisoformat(arrival), date.fromisoformat(departure)
     except ValueError:
@@ -96,7 +96,8 @@ def availability_state(database, company_id: int, element_id: int, arrival: str,
     # A brand-new Season has no Element rates, so only those new dates remain
     # off sale until pricing is completed.
     setup_ready, setup_reason = element_available_setup_ready(
-        database, company_id, element_id, start, end
+        database, company_id, element_id, start, end,
+        missing_items_cache=missing_items_cache,
     )
     if not setup_ready:
         return {'available': False, 'state': 'SETUP_INCOMPLETE', 'reason': setup_reason}
