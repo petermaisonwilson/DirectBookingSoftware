@@ -267,6 +267,20 @@ def main() -> None:
             assert c.execute('SELECT COUNT(*) AS n FROM hold_requirement_people WHERE hold_id=?', (expiry_hold,)).fetchone()['n'] == 0
             assert c.execute('SELECT COUNT(*) AS n FROM hold_requirement_addons WHERE hold_id=?', (expiry_hold,)).fetchone()['n'] == 0
 
+        # Bulk popup feature resolution must match canonical per-element
+        # inheritance, including type defaults, individual overrides and hiding.
+        from online.webv1_addon_popup import popup_addons_for_element, popup_addons_for_elements
+        with db.connect() as c:
+            popup_elements = c.execute(
+                'SELECT * FROM setup_elements WHERE company_id=? AND id IN (?,?,?)',
+                (company, pitch_one, pitch_two, peg),
+            ).fetchall()
+        popup_bulk = popup_addons_for_elements(db, company, 2035, popup_elements)
+        for popup_element in popup_elements:
+            assert popup_bulk[int(popup_element['id'])] == popup_addons_for_element(
+                db, company, 2035, popup_element
+            )
+
         # Grouped Master Calendar inventory must match the established per-Element
         # retrieval, including bookings, enquiries, closures and live holds.
         from datetime import date
