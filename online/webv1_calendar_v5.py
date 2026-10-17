@@ -16,7 +16,7 @@ from .webv1_booking_progress import booking_progress_strip
 from .webv1_booking_requirements import _saved_lead_name, _saved_requirements
 from .webv1_booking_requirements_core import element_reasons
 from .webv1_booking_status import default_status
-from .webv1_calendar_v2 import _bar, _cols, _records, _session_context
+from .webv1_calendar_v2 import _bar, _cols, _records, _records_bulk, _session_context
 from .webv1_calendar_v4 import _basket_rows, _header, _parse, _window
 from .webv1_status_availability import availability_state
 from .webv1_ordering import setup_rows
@@ -184,6 +184,9 @@ def register_calendar_v5_routes(app) -> None:
         }
 
         render_started = perf_counter()
+        bulk_started = perf_counter()
+        bulk_inventory = _records_bulk(database, cid, [int(e['id']) for e in elements], visible_start, visible_end)
+        bulk_seconds = perf_counter() - bulk_started
         inventory_seconds = 0.0
         availability_seconds = 0.0
         availability_calls = 0
@@ -197,9 +200,7 @@ def register_calendar_v5_routes(app) -> None:
 
             features = popup_addons_for_element(database, cid, feature_year, element)
             feature_json = esc(json.dumps(features, ensure_ascii=False))
-            inventory_started = perf_counter()
-            bookings, enquiries, closures, holds = _records(database, cid, eid, visible_start, visible_end)
-            inventory_seconds += perf_counter() - inventory_started
+            bookings, enquiries, closures, holds = bulk_inventory[eid]
             # Show genuine blocking inventory conflicts explicitly; never conceal either record.
             # Show each conflicting record as an actionable link to the existing
             # movable/resizable detail window. Keep records visible for inspection.
@@ -369,7 +370,7 @@ def register_calendar_v5_routes(app) -> None:
         if staff:
             logging.getLogger(__name__).info(
                 'Master calendar: elements=%s days=%s inventory_s=%.3f availability_calls=%s availability_s=%.3f total_s=%.3f',
-                len(elements), display_days, inventory_seconds, availability_calls,
+                len(elements), display_days, inventory_seconds + bulk_seconds, availability_calls,
                 availability_seconds, perf_counter() - render_started,
             )
 
