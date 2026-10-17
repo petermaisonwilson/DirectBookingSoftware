@@ -19,7 +19,7 @@ INTERNAL_STATES = (
 )
 
 DEFAULT_STATUSES = (
-    ('Keep as Quote', 'Quote', '#FFE39A', 10, 'HELD', 1, 10),
+    ('Enquiry / Held', 'Held', '#FFE39A', 10, 'HELD', 1, 10),
     ('Payment Pending', 'Pending', '#FFF3CD', 15, 'RESERVED', 1, None),
     ('Deposit Paid', 'Deposit', '#F3C5C9', 20, 'CONFIRMED', 1, None),
     ('Balance Paid', 'Paid', '#CDECCF', 30, 'CONFIRMED', 1, None),
@@ -93,10 +93,19 @@ def initialise_booking_statuses(database) -> None:
                 (company_id,name,short_name,colour,display_order,internal_state,blocks_availability,expiry_minutes,automation_config_json,active,created_at,updated_at)
                 VALUES (?,?,?,?,?,'RESERVED',1,NULL,'{}',1,?,?)''',
                 (cid,'Payment Pending','Pending','#FFF3CD',15,now,now))
-        # Rename only the untouched factory default. Client-created or edited status names remain unchanged.
+        # Restore the original Enquiry / Held label only for the untouched
+        # factory status. Preserve IDs, historical references and custom labels.
         c.execute("""UPDATE booking_status_definitions
-                     SET name='Keep as Quote',short_name='Quote',updated_at=?
-                     WHERE name='Enquiry / Held' AND short_name='Held' AND internal_state='HELD'""", (iso_now(),))
+                     SET name='Enquiry / Held',short_name='Held',updated_at=?
+                     WHERE name='Keep as Quote' AND short_name='Quote'
+                       AND internal_state='HELD' AND system_code='HELD'
+                       AND colour='#FFE39A' AND display_order=10
+                       AND blocks_availability=1 AND expiry_minutes=10
+                       AND NOT EXISTS (
+                         SELECT 1 FROM booking_status_definitions other
+                         WHERE other.company_id=booking_status_definitions.company_id
+                           AND other.name='Enquiry / Held' COLLATE NOCASE
+                       )""", (iso_now(),))
         # Existing historical records are deliberately not turned into fresh blocking Enquiries.
         c.executescript('''
         DROP TRIGGER IF EXISTS webv1_default_enquiry_workflow;

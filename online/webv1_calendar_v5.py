@@ -149,12 +149,16 @@ def register_calendar_v5_routes(app) -> None:
         held_colour = str(held_status['colour']) if held_status else '#FFE39A'
         held_name = str(held_status['name']) if held_status else 'Enquiry / Held'
         if staff:
-            status_rows = rows(database, 'SELECT * FROM booking_status_definitions WHERE company_id=? AND active=1 ORDER BY display_order,name', (cid,))
+            status_rows = rows(database, """SELECT * FROM booking_status_definitions
+                WHERE company_id=? AND active=1 AND blocks_availability=1
+                  AND internal_state!='RELEASED'
+                ORDER BY display_order,name""", (cid,))
             status_legend = ''.join(f'<span class="legend mini" style="background:{esc(r["colour"])}">{esc(r["name"])}</span>' for r in status_rows)
         else:
             status_legend = '<span class="legend mini unavailable">Unavailable</span>'
         unsuitable_legend = '<span class="legend mini party-unsuitable-key">Not suitable for your requirements</span>' if requirements_ready else ''
-        legend = f'<span class="legend mini available-key">Available</span>{unsuitable_legend}{status_legend}<span class="legend mini own-held">In this booking</span><span class="legend mini closed">Closed</span>'
+        booking_legend = '<span class="legend mini own-held">In this booking</span>' if not staff else ''
+        legend = f'<span class="legend mini available-key">Available</span>{unsuitable_legend}{status_legend}{booking_legend}'
 
         cal_header = _header(dates, arrival_day, departure_day)
         cal_rows = ''
