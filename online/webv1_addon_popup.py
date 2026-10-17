@@ -47,6 +47,54 @@ def popup_addons_for_element(database, company_id: int, year: int, element) -> l
     return result
 
 
+
+def popup_addons_for_elements(database, company_id: int, year: int, elements) -> dict[int, list[dict[str, object]]]:
+    """Bulk equivalent of popup_addons_for_element, preserving override precedence."""
+    element_ids = [int(element['id']) for element in elements]
+    result: dict[int, list[dict[str, object]]] = {eid: [] for eid in element_ids}
+    if not element_ids:
+        return result
+    marks = ','.join('?' for _ in element_ids)
+    with database.connect() as c:
+        addons = c.execute(
+            'SELECT id,name FROM setup_addons WHERE company_id=? AND active=1 ORDER BY name COLLATE NOCASE',
+            (company_id,),
+        ).fetchall()
+        hidden = {
+            (int(row['element_id']), int(row['addon_id']))
+            for row in c.execute(
+                f'SELECT element_id,addon_id FROM setup_element_popup_items WHERE company_id=? AND element_id IN ({marks}) AND show_popup=0',
+                (company_id, *element_ids),
+            ).fetchall()
+        }
+        overrides = {
+            (int(row['element_id']), int(row['addon_id'])): str(row['state'] or 'I').upper()
+            for row in c.execute(
+                f'SELECT element_id,addon_id,state FROM setup_element_addons WHERE company_id=? AND year=? AND element_id IN ({marks})',
+                (company_id, year, *element_ids),
+            ).fetchall()
+        }
+        type_rules = {
+            (str(row['element_type']), int(row['addon_id'])): bool(int(row['allowed'] or 0))
+            for row in c.execute(
+                'SELECT element_type,addon_id,allowed FROM setup_type_addons WHERE company_id=? AND year=?',
+                (company_id, year),
+            ).fetchall()
+        }
+    for element in elements:
+        eid = int(element['id'])
+        element_type = str(element['element_type'])
+        for addon in addons:
+            aid = int(addon['id'])
+            if (eid, aid) in hidden:
+                continue
+            state = overrides.get((eid, aid), 'I')
+            allowed = state == 'Y' or (state != 'N' and type_rules.get((element_type, aid), False))
+            if allowed:
+                result[eid].append({'id': aid, 'name': str(addon['name']), 'available': True})
+    return result
+
+
 def _remove_element_list(text: str) -> str:
     marker = '<div class="card"><table><thead><tr><th>Name</th><th>Element Type</th>'
     start = text.find(marker)
