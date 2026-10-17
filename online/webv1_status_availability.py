@@ -72,7 +72,7 @@ def _enquiry_conflict(connection, company_id: int, element_id: int, start: str, 
     return connection.execute(legacy_sql,legacy_params).fetchone()
 
 
-def availability_state(database, company_id: int, element_id: int, arrival: str, departure: str, *, session_token: str = '', exclude_booking_id: int | None = None, exclude_enquiry_id: int | None = None, missing_items_cache: dict | None = None) -> dict[str, Any]:
+def availability_state(database, company_id: int, element_id: int, arrival: str, departure: str, *, session_token: str = '', exclude_booking_id: int | None = None, exclude_enquiry_id: int | None = None, missing_items_cache: dict | None = None, operating_window_cache: dict | None = None, element_active_cache: dict | None = None) -> dict[str, Any]:
     try:
         start, end = date.fromisoformat(arrival), date.fromisoformat(departure)
     except ValueError:
@@ -81,15 +81,28 @@ def availability_state(database, company_id: int, element_id: int, arrival: str,
         return {'available': False, 'state': 'INVALID', 'reason': 'Departure must be after arrival.'}
     if start.year != (end - timedelta(days=1)).year:
         return {'available': False, 'state': 'OUT_OF_SEASON', 'reason': 'The stay must remain within one pricing year.'}
-    window = legacy.operating_window(database, company_id, start.year)
+    window_key = (company_id, start.year)
+    if operating_window_cache is not None and window_key in operating_window_cache:
+        window = operating_window_cache[window_key]
+    else:
+        window = legacy.operating_window(database, company_id, start.year)
+        if operating_window_cache is not None:
+            operating_window_cache[window_key] = window
     if window is None:
         return {'available': False, 'state': 'OUT_OF_SEASON', 'reason': 'No operating season is configured for these dates.'}
     if start < window[0] or end > window[1]:
         return {'available': False, 'state': 'OUT_OF_SEASON', 'reason': 'The selected stay is outside the configured operating season.'}
-    with database.connect() as c:
-        element = c.execute('SELECT * FROM setup_elements WHERE id=? AND company_id=?', (element_id, company_id)).fetchone()
-        if element is None or not int(element['active']):
-            return {'available': False, 'state': 'INACTIVE', 'reason': 'Element is inactive.'}
+    element_key = (company_id, element_id)
+    if element_active_cache is not None and element_key in element_active_cache:
+        active = element_active_cache[element_key]
+    else:
+        with database.connect() as c:
+            element = c.execute('SELECT active FROM setup_elements WHERE id=? AND company_id=?', (element_id, company_id)).fetchone()
+        active = bool(element is not None and int(element['active']))
+        if element_active_cache is not None:
+            element_active_cache[element_key] = active
+    if not active:
+        return {'available': False, 'state': 'INACTIVE', 'reason': 'Element is inactive.'}
 
     # Setup is a gate before inventory. Existing Seasons may be extended safely
     # because their stored Season price continues to apply to the new dates.
