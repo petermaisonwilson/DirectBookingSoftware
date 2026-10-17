@@ -267,6 +267,24 @@ def main() -> None:
             assert c.execute('SELECT COUNT(*) AS n FROM hold_requirement_people WHERE hold_id=?', (expiry_hold,)).fetchone()['n'] == 0
             assert c.execute('SELECT COUNT(*) AS n FROM hold_requirement_addons WHERE hold_id=?', (expiry_hold,)).fetchone()['n'] == 0
 
+        # Grouped Master Calendar inventory must match the established per-Element
+        # retrieval, including bookings, enquiries, closures and live holds.
+        from datetime import date
+        from online.webv1_calendar_v2 import _records, _records_bulk
+        comparison_ids = [pitch_one, pitch_two, peg]
+        comparison_start, comparison_end = date(2035, 1, 1), date(2036, 1, 1)
+        grouped = _records_bulk(db, company, comparison_ids, comparison_start, comparison_end)
+        for element_id in comparison_ids:
+            original = _records(db, company, element_id, comparison_start, comparison_end)
+            for original_group, grouped_group in zip(original, grouped[element_id]):
+                # Grouped queries include element_id as an extra field.
+                original_values = [tuple(dict(row).items()) for row in original_group]
+                grouped_values = [
+                    tuple((key, value) for key, value in dict(row).items() if key != 'element_id')
+                    for row in grouped_group
+                ]
+                assert original_values == grouped_values, (element_id, original_values, grouped_values)
+
         restart = client.get('/availability/calendar', follow_redirects=False)
         assert restart.status_code == 303 and restart.headers['location'] == '/availability/start'
         with db.connect() as c:
