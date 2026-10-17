@@ -1,6 +1,8 @@
 from __future__ import annotations
 
 import json
+import logging
+from time import perf_counter
 from datetime import date, timedelta
 from urllib.parse import quote_plus
 
@@ -181,6 +183,10 @@ def register_calendar_v5_routes(app) -> None:
             if not editing or int(r['id']) != int(edit_hold)
         }
 
+        render_started = perf_counter()
+        inventory_seconds = 0.0
+        availability_seconds = 0.0
+        availability_calls = 0
         for element in elements:
             eid = int(element['id'])
             reasons = element_reasons(database, cid, feature_year, element, people, requirements) if requirements_ready else []
@@ -190,7 +196,9 @@ def register_calendar_v5_routes(app) -> None:
 
             features = popup_addons_for_element(database, cid, feature_year, element)
             feature_json = esc(json.dumps(features, ensure_ascii=False))
+            inventory_started = perf_counter()
             bookings, enquiries, closures, holds = _records(database, cid, eid, visible_start, visible_end)
+            inventory_seconds += perf_counter() - inventory_started
             # Show genuine blocking inventory conflicts explicitly; never conceal either record.
             # Show each conflicting record as an actionable link to the existing
             # movable/resizable detail window. Keep records visible for inspection.
@@ -251,7 +259,10 @@ def register_calendar_v5_routes(app) -> None:
                 next_day = day + timedelta(days=1)
                 state = occupied_days.get(day) if fast_staff_view else None
                 if state is None:
+                    availability_started = perf_counter()
                     state = availability_state(database, cid, eid, day.isoformat(), next_day.isoformat(), session_token=token)
+                    availability_seconds += perf_counter() - availability_started
+                    availability_calls += 1
                 code = str(state['state'])
                 own_editing_day = bool(
                     editing and eid == int(editing['element_id'])
@@ -353,6 +364,13 @@ def register_calendar_v5_routes(app) -> None:
 
         if not cal_rows:
             cal_rows = '<div class="card"><p>No active Elements exist for this Element Type.</p></div>' if selected_type else '<div class="card"><p>Select an Element Type to see matching Elements.</p></div>'
+
+        if staff:
+            logging.getLogger(__name__).info(
+                'Master calendar: elements=%s days=%s inventory_s=%.3f availability_calls=%s availability_s=%.3f total_s=%.3f',
+                len(elements), display_days, inventory_seconds, availability_calls,
+                availability_seconds, perf_counter() - render_started,
+            )
 
         body += f'''<div class="card availability-card"><div class="availability-head"><div class="legend-row compact"><strong>Key:</strong>{legend}</div></div>
         <div id="calendar-scroll" class="calendar-scroll"><div class="calendar-grid" style="--days:{display_days}">{cal_header}{cal_rows}</div></div>
