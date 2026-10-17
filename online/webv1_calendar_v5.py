@@ -195,6 +195,8 @@ def register_calendar_v5_routes(app) -> None:
         availability_seconds = 0.0
         availability_calls = 0
         setup_missing_cache = {}
+        operating_window_cache = {}
+        element_active_cache = {}
         for element in elements:
             eid = int(element['id'])
             reasons = element_reasons(database, cid, feature_year, element, people, requirements) if requirements_ready else []
@@ -266,7 +268,7 @@ def register_calendar_v5_routes(app) -> None:
                 state = occupied_days.get(day) if fast_staff_view else None
                 if state is None:
                     availability_started = perf_counter()
-                    state = availability_state(database, cid, eid, day.isoformat(), next_day.isoformat(), session_token=token, missing_items_cache=setup_missing_cache)
+                    state = availability_state(database, cid, eid, day.isoformat(), next_day.isoformat(), session_token=token, missing_items_cache=setup_missing_cache, operating_window_cache=operating_window_cache, element_active_cache=element_active_cache)
                     availability_seconds += perf_counter() - availability_started
                     availability_calls += 1
                 code = str(state['state'])
