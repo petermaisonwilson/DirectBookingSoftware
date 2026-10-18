@@ -10,6 +10,21 @@ from .webv1_status_availability import availability_state
 from .webv1_booking_finance import sync_payment_status
 
 
+def _assert_amendable_booking(connection, company_id: int, booking_id: int) -> None:
+    """Cancellation is terminal for accommodation amendments, not financial records."""
+    booking = connection.execute(
+        """SELECT b.id, s.internal_state, s.blocks_availability
+           FROM bookings b LEFT JOIN booking_status_definitions s
+             ON s.id=b.workflow_status_id AND s.company_id=b.company_id
+           WHERE b.company_id=? AND b.id=?""",
+        (company_id, booking_id),
+    ).fetchone()
+    if booking is None:
+        raise ValueError('Booking does not exist.')
+    if str(booking['internal_state'] or '') == 'RELEASED':
+        raise ValueError('This cancelled or released Booking cannot be amended. Its financial and communication records remain available.')
+
+
 def _dates(a: str, d: str):
     start=date.fromisoformat(a); end=date.fromisoformat(d)
     if end<=start: raise ValueError('Departure date must be after arrival date.')
@@ -23,6 +38,8 @@ def amendment_quote(database, company_id: int, booking_id: int, booking_element_
         WHERE be.company_id=? AND be.booking_id=? AND be.id=?''',(company_id,booking_id,booking_element_id))
     booking=one(database,'SELECT * FROM bookings WHERE company_id=? AND id=?',(company_id,booking_id))
     if be is None or booking is None: raise ValueError('Booking element does not exist.')
+    with database.connect() as guard:
+        _assert_amendable_booking(guard, company_id, booking_id)
     old_start,old_end=_dates(str(be['arrival_date']),str(be['departure_date']))
     new_start,new_end=_dates(new_arrival,new_departure)
     if new_start.year!=(new_end-timedelta(days=1)).year:
@@ -106,6 +123,7 @@ def apply_amendment(database, context, quote: dict) -> int:
         from .webv1_status_availability import _booking_conflict, _enquiry_conflict
         from .webv1_availability import _closure_conflict
         c.execute('BEGIN IMMEDIATE')
+        _assert_amendable_booking(c, cid, booking_id)
         current = c.execute('SELECT arrival_date,departure_date FROM booking_elements WHERE id=? AND company_id=?', (beid,cid)).fetchone()
         if current is None or str(current['arrival_date']) != str(quote['old_arrival']) or str(current['departure_date']) != str(quote['old_departure']):
             raise ValueError('This Booking has changed since the amendment was calculated. Recalculate before saving.')
