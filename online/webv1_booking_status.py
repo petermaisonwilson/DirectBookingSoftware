@@ -299,6 +299,16 @@ def register_booking_status_routes(app) -> None:
             booking = c.execute('SELECT * FROM bookings WHERE id=? AND company_id=?', (booking_id, cid)).fetchone()
             status = c.execute('SELECT * FROM booking_status_definitions WHERE id=? AND company_id=? AND active=1', (status_id, cid)).fetchone()
             if booking is None or status is None: return RedirectResponse('/availability/calendar', 303)
+            # A manual status switch must never bypass the cancellation workflow.
+            # Cancelled bookings are terminal; financial settlement stays accessible.
+            current = c.execute(
+                'SELECT internal_state FROM booking_status_definitions WHERE id=? AND company_id=?',
+                (booking['workflow_status_id'], cid),
+            ).fetchone()
+            if current is not None and str(current['internal_state']) == 'RELEASED':
+                return RedirectResponse(f'/operations/bookings/{booking_id}?message=Cancelled+bookings+cannot+be+reinstated', 303)
+            if str(status['internal_state']) == 'RELEASED':
+                return RedirectResponse(f'/operations/bookings/{booking_id}?message=Use+the+authorised+cancellation+procedure', 303)
             before = dict(booking)
             c.execute('UPDATE bookings SET workflow_status_id=?,updated_at=? WHERE id=? AND company_id=?', (status_id, iso_now(), booking_id, cid))
         audit(database, context, cid, 'BOOKING_STATUS_CHANGED', 'booking', booking_id, before,
