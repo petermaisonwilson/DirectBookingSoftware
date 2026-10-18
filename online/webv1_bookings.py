@@ -451,6 +451,20 @@ def register_booking_routes(app) -> None:
             labels={'BOOKING_STATUS_CHANGED':'Booking status changed','BOOKING_STATUS_AUTOMATIC':'Booking status updated automatically'}
             return labels.get(action, action.replace('_',' ').title())
         history_rows = ''.join(f'<tr><td>{esc(_fmt_when(h["created_at"]))}</td><td>{esc(((h["first_name"] or "")+" "+(h["last_name"] or "")).strip() or h["actor_role"] or "System")}</td><td>{esc(history_text(h))}</td></tr>' for h in hist) or '<tr><td colspan="3" class="muted">No history yet.</td></tr>'
+        cancelled = str(b['status'] or '').lower() == 'cancelled' or str(b['internal_state'] or '') == 'RELEASED'
+        cancellation = one(database, 'SELECT * FROM booking_cancellations WHERE company_id=? AND booking_id=?', (cid, booking_id))
+        if cancelled:
+            cancellation_panel = (f'<div class="card"><h2>Cancelled — permanent</h2>'
+                f'<p>Accommodation released. Customer, original booking, payment and history records remain accessible.</p>'
+                f'<p><strong>Reason:</strong> {esc(cancellation["reason"]) if cancellation else "Legacy cancellation"}<br>'
+                f'<strong>Refund decision:</strong> {esc(cancellation["refund_decision"]) if cancellation else "Not recorded"}<br>'
+                f'<strong>Planned refund:</strong> {_money(cancellation["refund_amount"]) if cancellation else "Not recorded"}<br>'
+                f'<strong>Retained:</strong> {_money(cancellation["retained_amount"]) if cancellation else "Not recorded"}</p>'
+                f'<p>Refund decisions do not issue refunds. Financial settlement requires a separate recorded action.</p></div>')
+        else:
+            cancellation_panel = (f'<div class="card"><h2>Cancel Booking</h2>'
+                f'<p>Permanent action: all reserved Elements will be released and cannot be reinstated.</p>'
+                f'<p><a href="/operations/bookings/{booking_id}/cancel">Review Cancellation</a></p></div>')
         body = f'''<h1>Booking {esc(b['reference'])}</h1><p><a href="/operations/bookings">← Bookings</a> &nbsp; <a href="/availability/calendar-v2?start={esc(b['arrival_date'])}">Return to Master Calendar</a></p>{notice}
         <div class="grid"><div class="card"><h2>Customer</h2><p><strong>{esc((str(b['first_name'] or '')+' '+str(b['last_name'] or '')).strip() or 'Customer')}</strong><br>{esc(b['email'] or '—')}<br>{esc(b['phone'] or '—')}</p></div>
         <div class="card"><h2>Stay</h2><p><strong>Arrival:</strong> {_fmt_day(b['arrival_date'])}<br><strong>Departure:</strong> {_fmt_day(b['departure_date'])}<br><strong>Total:</strong> {_money(b['total_amount'])}<br><strong>Paid:</strong> {_money(paid)}<br><strong>Outstanding:</strong> {_money(balance)}</p></div></div>
