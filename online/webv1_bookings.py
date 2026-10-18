@@ -33,6 +33,19 @@ CREATE TABLE IF NOT EXISTS booking_payments (
     FOREIGN KEY(booking_id) REFERENCES bookings(id) ON DELETE CASCADE
 );
 CREATE INDEX IF NOT EXISTS idx_booking_payments_booking ON booking_payments(company_id, booking_id, payment_date, id);
+CREATE TABLE IF NOT EXISTS booking_cancellations (
+ id INTEGER PRIMARY KEY AUTOINCREMENT,
+ company_id INTEGER NOT NULL,
+ booking_id INTEGER NOT NULL,
+ reason TEXT NOT NULL,
+ refund_decision TEXT NOT NULL,
+ refund_amount REAL NOT NULL DEFAULT 0,
+ retained_amount REAL NOT NULL DEFAULT 0,
+ financial_note TEXT NOT NULL DEFAULT '',
+ created_by_user_id INTEGER,
+ created_at TEXT NOT NULL,
+ UNIQUE(company_id,booking_id)
+);
 CREATE TABLE IF NOT EXISTS booking_amendments (
     id INTEGER PRIMARY KEY AUTOINCREMENT,
     company_id INTEGER NOT NULL,
@@ -289,6 +302,9 @@ def register_booking_routes(app) -> None:
             LEFT JOIN booking_status_definitions s ON s.id=b.workflow_status_id AND s.company_id=b.company_id
             WHERE b.company_id=? ORDER BY b.arrival_date,b.id''', (cid,))
         trs = ''.join(f'''<tr><td><a href="/operations/bookings/{int(r['id'])}">{esc(r['reference'])}</a></td><td>{esc((str(r['first_name'] or '')+' '+str(r['last_name'] or '')).strip() or 'Customer')}</td><td><span style="padding:4px 8px;border-radius:4px;background:{esc(r['colour'] or '#eee')}">{esc(r['workflow_name'] or r['status'])}</span></td><td>{_fmt_day(r['arrival_date'])}</td><td>{_fmt_day(r['departure_date'])}</td><td>{_money(r['total_amount'])}</td></tr>''' for r in data) or '<tr><td colspan="6" class="muted">No Bookings yet.</td></tr>'
+        cancelled = str(b['status'] or '').lower() == 'cancelled' or str(b['internal_state'] or '') == 'RELEASED'
+        cancellation = one(database, 'SELECT * FROM booking_cancellations WHERE company_id=? AND booking_id=?', (cid, booking_id))
+        cancellation_panel = (f'<div class="card"><h2>Cancelled — permanent</h2><p>Accommodation is released. Original booking, customer and payments remain available.</p><p><strong>Reason:</strong> {esc(cancellation["reason"]) if cancellation else "Legacy cancellation"}<br><strong>Refund decision:</strong> {esc(cancellation["refund_decision"]) if cancellation else "Not recorded"}<br><strong>Planned refund:</strong> {_money(cancellation["refund_amount"]) if cancellation else "Not recorded"}<br><strong>Retained:</strong> {_money(cancellation["retained_amount"]) if cancellation else "Not recorded"}</p><p>Refund decisions do not issue refunds. Financial settlement and communications must be separately authorised.</p></div>' if cancelled else f'<div class="card"><h2>Cancel Booking</h2><p>Cancellation is permanent. All allocated Elements will be released; this Booking can never be reinstated.</p><p><a href="/operations/bookings/{booking_id}/cancel">Review Cancellation</a></p></div>')
         body = f'''<h1>Bookings</h1><p><a href="/operations">← Operations</a></p><div class="card"><table><thead><tr><th>Reference</th><th>Customer</th><th>Status</th><th>Arrival</th><th>Departure</th><th>Total</th></tr></thead><tbody>{trs}</tbody></table></div>'''
         return layout('Bookings', body, context)
 
@@ -428,6 +444,8 @@ def register_booking_routes(app) -> None:
                 manual=float(after.get('manual_discount_private') or 0)
                 if manual: text+=f"; staff discount {_money(manual)}"
                 return text
+            if action=='BOOKING_CANCELLED':
+                return f"Cancelled permanently: {after.get('reason','')}; refund decision {after.get('refund_decision','')}; planned refund {_money(after.get('refund_amount',0))}; retained {_money(after.get('retained_amount',0))}"
             if action=='BOOKING_CREATED': return f"Created booking {after.get('reference','')}".strip()
             if action=='BOOKING_CONFIRMED_WITHOUT_PAYMENT': return 'Confirmed booking without payment' + (f": {after.get('reason')}" if after.get('reason') else '')
             labels={'BOOKING_STATUS_CHANGED':'Booking status changed','BOOKING_STATUS_AUTOMATIC':'Booking status updated automatically'}
@@ -437,12 +455,80 @@ def register_booking_routes(app) -> None:
         <div class="grid"><div class="card"><h2>Customer</h2><p><strong>{esc((str(b['first_name'] or '')+' '+str(b['last_name'] or '')).strip() or 'Customer')}</strong><br>{esc(b['email'] or '—')}<br>{esc(b['phone'] or '—')}</p></div>
         <div class="card"><h2>Stay</h2><p><strong>Arrival:</strong> {_fmt_day(b['arrival_date'])}<br><strong>Departure:</strong> {_fmt_day(b['departure_date'])}<br><strong>Total:</strong> {_money(b['total_amount'])}<br><strong>Paid:</strong> {_money(paid)}<br><strong>Outstanding:</strong> {_money(balance)}</p></div></div>
         <div class="card"><h2>Booking Status</h2><p><strong>{esc(b['workflow_name'] or b['status'])}</strong></p><p class="muted">Status is controlled automatically by DBS from the booking lifecycle and account balance.</p></div>
-        <div class="card"><h2>Amend Booking</h2><p class="muted">Preview the price before applying. Original frozen booking values remain in history.</p>{''.join(f'<form method="post" action="/operations/bookings/{booking_id}/amend-preview"><input type="hidden" name="csrf" value="{esc(context["csrf_token"])}"><input type="hidden" name="booking_element_id" value="{int(e["id"])}"><h3>{esc(e["element_name"])}</h3><div class="grid"><div><label>Arrival</label><input type="date" name="arrival_date" value="{esc(e["arrival_date"])}" required></div><div><label>Departure</label><input type="date" name="departure_date" value="{esc(e["departure_date"])}" required></div><div><label>Staff discount</label><input type="number" name="manual_discount" min="0" step="0.01" value="{manual_by_element.get(int(e["id"]),0):.2f}"></div></div><p><button>Preview Amendment</button></p></form>' for e in elements)}</div>
+        {cancellation_panel}
+        {'<div class="card"><h2>Accommodation locked</h2><p>This booking is permanently cancelled. Financial records and history remain accessible.</p></div>' if cancelled else '<div class="card"><h2>Amend Booking</h2>'}<p class="muted">Preview the price before applying. Original frozen booking values remain in history.</p>{''.join(f'<form method="post" action="/operations/bookings/{booking_id}/amend-preview"><input type="hidden" name="csrf" value="{esc(context["csrf_token"])}"><input type="hidden" name="booking_element_id" value="{int(e["id"])}"><h3>{esc(e["element_name"])}</h3><div class="grid"><div><label>Arrival</label><input type="date" name="arrival_date" value="{esc(e["arrival_date"])}" required></div><div><label>Departure</label><input type="date" name="departure_date" value="{esc(e["departure_date"])}" required></div><div><label>Staff discount</label><input type="number" name="manual_discount" min="0" step="0.01" value="{manual_by_element.get(int(e["id"]),0):.2f}"></div></div><p><button>Preview Amendment</button></p></form>' for e in elements)}{'' if cancelled else '</div>'}
         <div class="card"><h2>Frozen Booking</h2>{element_html}<p class="muted">Each element is shown from its own frozen snapshot. Later Setup price changes do not alter this Booking.</p></div>
         <div class="card"><h2>Payments</h2><table><thead><tr><th>Date</th><th>Amount</th><th>Method</th><th>Reference</th><th>Notes</th></tr></thead><tbody>{payment_rows}</tbody></table><h3>Record payment</h3><form method="post" action="/operations/bookings/{booking_id}/payments"><input type="hidden" name="csrf" value="{esc(context['csrf_token'])}"><div class="grid"><div><label>Amount</label><input name="amount" type="number" min="0.01" step="0.01" value="{balance:.2f}" required></div><div><label>Date</label><input name="payment_date" type="date" value="{_local_today().isoformat()}" required></div><div><label>Method</label><select name="payment_method_id" required>{''.join(f'<option value="{int(m["id"])}">{esc(m["name"])}</option>' for m in rows(database,'SELECT * FROM payment_method_definitions WHERE company_id=? AND active=1 ORDER BY display_order,name',(cid,)))}</select></div><div><label>Reference</label><input name="reference"></div></div><label>Notes</label><input name="notes"><p><button>Record Payment</button></p></form></div>
         <div class="card"><h2>Booking History</h2><table><thead><tr><th>When</th><th>Who</th><th>What happened</th></tr></thead><tbody>{history_rows}</tbody></table></div>'''
         return layout(f'Booking {b["reference"]}', body, context)
 
+
+
+    @app.get('/operations/bookings/{booking_id}/cancel', response_class=HTMLResponse)
+    def cancellation_review(booking_id: int, request: Request):
+        context=context_for(database,request); cid=int(working_company(context))
+        b=_booking(database,cid,booking_id)
+        if b is None: return HTMLResponse(layout('Not found','<p>Booking not found.</p>',context),404)
+        if str(b['status'] or '').lower()=='cancelled' or str(b['internal_state'] or '')=='RELEASED':
+            return RedirectResponse(f'/operations/bookings/{booking_id}?message=Already+cancelled',303)
+        f=booking_financials(database,cid,booking_id)
+        paid=round(float(f['paid']),2)
+        body=f'''<h1>Permanent Booking Cancellation — {esc(b['reference'])}</h1>
+        <div class="card"><p><strong>Customer:</strong> {esc(str(b['first_name'] or '')+' '+str(b['last_name'] or ''))}<br>
+        <strong>Stay:</strong> {_fmt_day(b['arrival_date'])} to {_fmt_day(b['departure_date'])}<br>
+        <strong>Booking total:</strong> {_money(b['total_amount'])}<br>
+        <strong>Payments received:</strong> {_money(paid)}<br>
+        <strong>Outstanding:</strong> {_money(f['outstanding'])}</p>
+        <p><strong>WARNING: Cancellation is permanent and cannot be reversed. All Elements will be released.</strong></p>
+        <form method="post" action="/operations/bookings/{booking_id}/cancel">
+        <input type="hidden" name="csrf" value="{esc(context['csrf_token'])}">
+        <label>Cancellation reason (required)</label><textarea name="reason" required></textarea>
+        <label>Decision for payments already received</label>
+        <select name="refund_decision" required>
+        <option value="">Choose...</option><option value="full_refund">Full refund</option>
+        <option value="partial_refund">Partial refund / cancellation fee</option>
+        <option value="no_refund">No refund — retain payments</option></select>
+        <label>Refund to be processed later (€)</label><input name="refund_amount" type="number" min="0" max="{paid:.2f}" step="0.01" required value="0.00">
+        <label>Financial explanation</label><textarea name="financial_note" required></textarea>
+        <label><input type="checkbox" name="acknowledge" value="yes" required> I authorise permanent cancellation and release of all Elements.</label>
+        <p><button>Confirm Permanent Cancellation</button> <a href="/operations/bookings/{booking_id}">Go back</a></p>
+        </form></div>'''
+        return layout('Cancel Booking',body,context)
+
+    @app.post('/operations/bookings/{booking_id}/cancel')
+    async def cancellation_apply(booking_id: int, request: Request):
+        context=context_for(database,request); cid=int(working_company(context))
+        data=await form_data(request); require_csrf(context,data)
+        reason=str(data.get('reason','')).strip()
+        note=str(data.get('financial_note','')).strip()
+        decision=str(data.get('refund_decision','')).strip()
+        if not reason or not note or data.get('acknowledge')!='yes' or decision not in ('full_refund','partial_refund','no_refund'):
+            return HTMLResponse(layout('Cancellation not authorised','<p>Reason, financial explanation, refund decision and authorisation are all required.</p>',context),400)
+        try: refund=round(float(str(data.get('refund_amount','')).replace(',','.')),2)
+        except (ValueError,TypeError): refund=-1
+        try:
+            with database.connect() as c:
+                c.execute('BEGIN IMMEDIATE')
+                b=c.execute('''SELECT b.*,s.internal_state FROM bookings b LEFT JOIN booking_status_definitions s
+                    ON s.id=b.workflow_status_id AND s.company_id=b.company_id
+                    WHERE b.id=? AND b.company_id=?''',(booking_id,cid)).fetchone()
+                if b is None or str(b['status'] or '').lower()=='cancelled' or str(b['internal_state'] or '')=='RELEASED':
+                    raise ValueError('Booking is missing or already cancelled.')
+                paid=round(float(c.execute('SELECT COALESCE(SUM(amount),0) AS paid FROM booking_payments WHERE company_id=? AND booking_id=?',(cid,booking_id)).fetchone()['paid']),2)
+                if refund<0 or refund>paid: raise ValueError('Refund must be between zero and the total payments received.')
+                if (decision=='full_refund' and refund!=paid) or (decision=='no_refund' and refund!=0) or (decision=='partial_refund' and (refund<=0 or refund>=paid)):
+                    raise ValueError('Refund amount does not match the selected refund decision.')
+                status=c.execute("""SELECT id FROM booking_status_definitions WHERE company_id=? AND internal_state='RELEASED' AND blocks_availability=0 AND active=1 ORDER BY id LIMIT 1""",(cid,)).fetchone()
+                if status is None: raise ValueError('No active non-blocking cancellation status configured.')
+                now=iso_now()
+                c.execute('''INSERT INTO booking_cancellations(company_id,booking_id,reason,refund_decision,refund_amount,retained_amount,financial_note,created_by_user_id,created_at)
+                    VALUES(?,?,?,?,?,?,?,?,?)''',(cid,booking_id,reason,decision,refund,round(paid-refund,2),note,context['user_id'],now))
+                c.execute('UPDATE bookings SET status=?,workflow_status_id=?,updated_at=? WHERE company_id=? AND id=?',
+                          ('cancelled',int(status['id']),now,cid,booking_id))
+        except ValueError as exc:
+            return HTMLResponse(layout('Cancellation not completed',f'<p>{esc(str(exc))}</p><a href="/operations/bookings/{booking_id}/cancel">Return</a>',context),400)
+        audit(database,context,cid,'BOOKING_CANCELLED','booking',booking_id,after={'reason':reason,'refund_decision':decision,'refund_amount':refund,'retained_amount':round(paid-refund,2),'financial_note':note})
+        return RedirectResponse(f'/operations/bookings/{booking_id}?message=Booking+cancelled+permanently',303)
 
     @app.post('/operations/bookings/{booking_id}/amend-preview', response_class=HTMLResponse)
     async def amend_preview(booking_id: int, request: Request):
