@@ -359,6 +359,23 @@ def main() -> None:
         assert unapproved_refund.status_code==400
         assert client.get(f'/operations/bookings/{booking_id}/cancel',follow_redirects=False).status_code==303
 
+        # Cancelled bookings release inventory and cannot accept accommodation amendments.
+        released=availability_state(db,cid,element_id,'2035-06-10','2035-06-13')
+        assert released['available'] is True, released
+        try:
+            amendment_quote(db,cid,booking_id,beid,'2035-06-10','2035-06-18')
+            raise AssertionError('Cancelled booking accepted an amendment quote')
+        except ValueError as exc:
+            assert 'cannot be amended' in str(exc)
+        rejected_amendment=client.post(f'/operations/bookings/{booking_id}/amend-preview',data={
+            'csrf':csrf,'booking_element_id':str(beid),
+            'arrival_date':'2035-06-10','departure_date':'2035-06-18','manual_discount':'0'
+        },follow_redirects=False)
+        assert rejected_amendment.status_code==303
+        with db.connect() as c:
+            assert c.execute('SELECT status FROM bookings WHERE id=?',(booking_id,)).fetchone()['status']=='cancelled'
+
+
     print('Direct Booking Web V1 Booking workflow test: passed')
 
 
