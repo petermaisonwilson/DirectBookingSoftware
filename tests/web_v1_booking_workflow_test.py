@@ -323,6 +323,42 @@ def main() -> None:
             actions = [str(r['action']) for r in c.execute("SELECT action FROM audit_log WHERE company_id=? AND entity_type='booking' AND entity_id=?", (cid, str(booking_id))).fetchall()]
             assert 'BOOKING_CREATED' in actions and 'BOOKING_PAYMENT_RECORDED' in actions and 'BOOKING_STATUS_AUTOMATIC' in actions
 
+        # Terminal cancellation: explicit staff authority, inventory release and immutable history.
+        review=client.get(f'/operations/bookings/{booking_id}/cancel')
+        assert review.status_code==200 and 'Confirm Permanent Cancellation' in review.text
+        refused=client.post(f'/operations/bookings/{booking_id}/cancel',data={
+            'csrf':csrf,'reason':'Customer requested cancellation',
+            'refund_decision':'no_refund','refund_amount':'0',
+            'financial_note':'Non-refundable payment retained'
+        },follow_redirects=False)
+        assert refused.status_code==400
+        cancelled=client.post(f'/operations/bookings/{booking_id}/cancel',data={
+            'csrf':csrf,'reason':'Customer requested cancellation',
+            'refund_decision':'no_refund','refund_amount':'0',
+            'financial_note':'Non-refundable payment retained','acknowledge':'yes'
+        },follow_redirects=False)
+        assert cancelled.status_code==303
+        with db.connect() as c:
+            b=c.execute('SELECT status FROM bookings WHERE company_id=? AND id=?',(cid,booking_id)).fetchone()
+            assert b['status']=='cancelled'
+            assert c.execute('SELECT COUNT(*) AS n FROM booking_cancellations WHERE company_id=? AND booking_id=?',(cid,booking_id)).fetchone()['n']==1
+            assert c.execute("SELECT COUNT(*) AS n FROM audit_log WHERE company_id=? AND entity_type='booking' AND entity_id=? AND action='BOOKING_CANCELLED'",(cid,str(booking_id))).fetchone()['n']==1
+        cancelled_page=client.get(f'/operations/bookings/{booking_id}')
+        assert cancelled_page.status_code==200 and 'Cancelled — permanent' in cancelled_page.text
+        assert 'Review Cancellation' not in cancelled_page.text
+        assert reference in client.get('/operations/bookings').text
+        duplicate=client.post(f'/operations/bookings/{booking_id}/cancel',data={
+            'csrf':csrf,'reason':'Second cancellation','refund_decision':'no_refund',
+            'refund_amount':'0','financial_note':'Duplicate','acknowledge':'yes'
+        },follow_redirects=False)
+        assert duplicate.status_code==400
+        unapproved_refund=client.post(f'/operations/bookings/{booking_id}/refunds',data={
+            'csrf':csrf,'amount':'1','refund_date':'2035-06-01','method':'Bank transfer',
+            'reference':'TEST-1','acknowledge':'yes'
+        },follow_redirects=False)
+        assert unapproved_refund.status_code==400
+        assert client.get(f'/operations/bookings/{booking_id}/cancel',follow_redirects=False).status_code==303
+
     print('Direct Booking Web V1 Booking workflow test: passed')
 
 
