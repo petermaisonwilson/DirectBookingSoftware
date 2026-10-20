@@ -531,7 +531,7 @@ def register_booking_routes(app) -> None:
         <option value="no_refund">No refund — retain payments</option></select>
         <label>Refund to be processed later (€)</label><input name="refund_amount" type="number" min="0" max="{paid:.2f}" step="0.01" required value="0.00">
         <label>Financial explanation</label><textarea name="financial_note" required></textarea>
-        <label><input type="checkbox" name="acknowledge" value="yes" required> I authorise permanent cancellation and release of all Elements.</label>
+        <label style="display:inline-flex;align-items:center;justify-content:flex-start;gap:8px;width:auto;max-width:100%;cursor:pointer"><input type="checkbox" name="acknowledge" value="yes" required style="width:22px;height:22px;min-width:22px;flex:0 0 22px;margin:0;cursor:pointer"> <span>I authorise cancellation and release of all Elements</span></label>
         <p><button>Confirm Permanent Cancellation</button> <a href="/operations/bookings/{booking_id}">Go back</a></p>
         </form></div>'''
         return layout('Cancel Booking',body,context)
