@@ -120,7 +120,10 @@ def availability_state(database, company_id: int, element_id: int, arrival: str,
         closed = legacy._closure_conflict(c, company_id, element_id, arrival, departure)
         if closed:
             return {'available': False, 'state': 'CLOSED', 'reason': str(closed['reason'] or 'Closed'), 'closure_id': int(closed['id'])}
-        canonical = inventory_conflict(c, company_id, element_id, arrival, departure)
+        # Legacy test databases may predate the canonical reservation migration.
+        # Check the new inventory only where the canonical tables exist.
+        canonical_tables = {row['name'] for row in c.execute("SELECT name FROM sqlite_master WHERE type='table' AND name IN ('reservations','reservation_elements')").fetchall()}
+        canonical = inventory_conflict(c, company_id, element_id, arrival, departure) if len(canonical_tables) == 2 else None
         if canonical:
             return {'available': False, 'state': 'RESERVED', 'reason': 'Allocated to an existing reservation.', 'reservation_id': int(canonical['id'])}
         booked = _booking_conflict(c, company_id, element_id, arrival, departure, exclude_booking_id)
