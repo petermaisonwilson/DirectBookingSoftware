@@ -4,6 +4,7 @@ from datetime import date, timedelta
 from typing import Any
 
 from .database import iso_now
+from .webv1_reservation_core import inventory_conflict
 from .setup015_calculator import _addon_rule
 from .setup015_core import rows
 from .setup015_readiness import element_available_setup_ready
@@ -119,6 +120,9 @@ def availability_state(database, company_id: int, element_id: int, arrival: str,
         closed = legacy._closure_conflict(c, company_id, element_id, arrival, departure)
         if closed:
             return {'available': False, 'state': 'CLOSED', 'reason': str(closed['reason'] or 'Closed'), 'closure_id': int(closed['id'])}
+        canonical = inventory_conflict(c, company_id, element_id, arrival, departure)
+        if canonical:
+            return {'available': False, 'state': 'RESERVED', 'reason': 'Allocated to an existing reservation.', 'reservation_id': int(canonical['id'])}
         booked = _booking_conflict(c, company_id, element_id, arrival, departure, exclude_booking_id)
         if booked:
             return {'available': False, 'state': 'BOOKED', 'reason': str(booked['workflow_name'] or f"Booked: {booked['reference']}"), 'booking_id': int(booked['id']), 'booking_reference': str(booked['reference']), 'workflow_name': str(booked['workflow_name'] or 'Booked'), 'colour': str(booked['colour'] or '#F3C5C9')}
