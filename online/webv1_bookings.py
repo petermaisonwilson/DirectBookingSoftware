@@ -264,13 +264,18 @@ def _conversion_enquiry(database,context,cid,enquiry_id,workflow_status_id):
 def _lock_and_verify_conversion(c, cid, enquiry_id, elements):
     """Serialise booking conversions and recheck blocking inventory in the write transaction."""
     from .webv1_status_availability import _booking_conflict, _enquiry_conflict
+    from .webv1_reservation_core import inventory_conflict
     c.execute('BEGIN IMMEDIATE')
+    canonical_tables = {row['name'] for row in c.execute("SELECT name FROM sqlite_master WHERE type='table' AND name IN ('reservations','reservation_elements')").fetchall()}
+    canonical_ready = len(canonical_tables) == 2
     existing = c.execute('SELECT id FROM bookings WHERE company_id=? AND enquiry_id=? LIMIT 1', (cid, enquiry_id)).fetchone()
     if existing:
         raise ValueError('This Enquiry has already been converted into a Booking.')
     for element in elements:
         eid = int(element['element_id'])
         arrival, departure = str(element['arrival_date']), str(element['departure_date'])
+        if canonical_ready and inventory_conflict(c, cid, eid, arrival, departure):
+            raise ValueError('This Element is allocated to another reservation. Refresh the Enquiry.')
         if _booking_conflict(c, cid, eid, arrival, departure):
             raise ValueError('This Element has been booked by another reservation. Refresh the Enquiry.')
         if _enquiry_conflict(c, cid, eid, arrival, departure, exclude_enquiry_id=enquiry_id):
