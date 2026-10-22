@@ -64,5 +64,30 @@ class ReservationLifecycleTests(unittest.TestCase):
         db.close()
 
 
+    def test_reinstatement_rechecks_space_and_does_not_change_state_on_conflict(self):
+        db = sqlite3.connect(':memory:')
+        db.row_factory = sqlite3.Row
+        db.executescript("""
+            CREATE TABLE setup_elements(id INTEGER, company_id INTEGER, active INTEGER);
+            CREATE TABLE reservations(id INTEGER, company_id INTEGER, state TEXT, updated_at TEXT);
+            CREATE TABLE reservation_elements(id INTEGER, company_id INTEGER, reservation_id INTEGER,
+                element_id INTEGER, arrival_date TEXT, departure_date TEXT);
+            INSERT INTO setup_elements VALUES (10,1,1);
+            INSERT INTO reservations VALUES (1,1,'CONFIRMED',''),(2,1,'ENQUIRY_RELEASED','');
+            INSERT INTO reservation_elements VALUES (1,1,1,10,'2026-11-01','2026-11-05'),
+                (2,1,2,10,'2026-11-03','2026-11-06');
+        """)
+        with self.assertRaises(ReservationError):
+            transition(db, 1, 2, 'ENQUIRY_HELD', '2026-10-22')
+        self.assertEqual(db.execute('SELECT state FROM reservations WHERE id=2').fetchone()[0],
+                         'ENQUIRY_RELEASED')
+        db.execute('UPDATE reservation_elements SET arrival_date=?,departure_date=? WHERE reservation_id=2',
+                   ('2026-11-05','2026-11-08'))
+        transition(db, 1, 2, 'ENQUIRY_HELD', '2026-10-22')
+        self.assertEqual(db.execute('SELECT state FROM reservations WHERE id=2').fetchone()[0],
+                         'ENQUIRY_HELD')
+        db.close()
+
+
 if __name__ == '__main__':
     unittest.main()
