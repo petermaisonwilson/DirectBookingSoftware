@@ -174,5 +174,22 @@ class ReservationLifecycleTests(unittest.TestCase):
         db.close()
 
 
+    def test_cancelled_reservation_cannot_be_amended(self):
+        from online.webv1_reservation_core import replace_reservation_elements
+        db = sqlite3.connect(':memory:')
+        db.row_factory = sqlite3.Row
+        db.executescript("""
+            CREATE TABLE reservations(id INTEGER PRIMARY KEY,company_id INTEGER,state TEXT,
+                total_amount REAL,updated_at TEXT);
+            INSERT INTO reservations VALUES (1,1,'CANCELLED',50,'');
+        """)
+        with self.assertRaisesRegex(ReservationError, 'Cancelled'):
+            replace_reservation_elements(db,1,1,[
+                {'element_id':10,'arrival_date':'2026-11-01','departure_date':'2026-11-05'}
+            ],'2026-10-24',check_legacy=False)
+        self.assertEqual(db.execute('SELECT total_amount FROM reservations WHERE id=1').fetchone()[0],50)
+        db.close()
+
+
 if __name__ == '__main__':
     unittest.main()
