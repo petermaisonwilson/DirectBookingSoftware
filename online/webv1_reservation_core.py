@@ -83,6 +83,15 @@ def create_reservation(connection, company_id, reference, customer_id, allocatio
     if not allocations:
         raise ReservationError('An Enquiry must contain at least one Element.')
     validate_allocations(connection, company_id, allocations)
+    from .webv1_status_availability import _booking_conflict, _enquiry_conflict
+    for item in allocations:
+        element_id = int(item['element_id'])
+        arrival = str(item['arrival_date'])
+        departure = str(item['departure_date'])
+        if _booking_conflict(connection, company_id, element_id, arrival, departure):
+            raise ReservationError('Element is already booked.')
+        if _enquiry_conflict(connection, company_id, element_id, arrival, departure):
+            raise ReservationError('Element is already held by another Enquiry.')
     total = sum(float(item.get('total_amount') or 0) for item in allocations)
     cursor = connection.execute(
         'INSERT INTO reservations (company_id,reference,customer_id,state,currency,total_amount,notes,created_at,updated_at) '
