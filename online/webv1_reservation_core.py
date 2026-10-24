@@ -91,6 +91,10 @@ def create_reservation(connection, company_id, reference, customer_id, allocatio
         raise ReservationError('New reservations must begin as an Enquiry.')
     if not allocations:
         raise ReservationError('An Enquiry must contain at least one Element.')
+    if not str(reference).strip():
+        raise ReservationError('An Enquiry reference is required.')
+    if not str(currency).strip() or len(str(currency)) != 3:
+        raise ReservationError('A valid three-letter currency is required.')
     validate_allocations(connection, company_id, allocations)
     from .webv1_status_availability import _booking_conflict, _enquiry_conflict
     for item in allocations:
