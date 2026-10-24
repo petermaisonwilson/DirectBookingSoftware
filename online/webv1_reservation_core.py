@@ -69,3 +69,31 @@ def transition(connection, company_id, reservation_id, target, updated_at):
         validate_allocations(connection, company_id, allocations, reservation_id)
     connection.execute('UPDATE reservations SET state=?,updated_at=? WHERE company_id=? AND id=?',
                        (target, updated_at, company_id, reservation_id))
+
+
+def create_reservation(connection, company_id, reference, customer_id, allocations, created_at,
+                       *, state='ENQUIRY_HELD', currency='EUR', notes=''):
+    """Create one canonical reservation and its allocations in the caller's write transaction.
+
+    Caller must begin a serialised write transaction and check any remaining
+    legacy inventory before calling while both models coexist.
+    """
+    if state not in ('ENQUIRY_HELD', 'ENQUIRY_RELEASED'):
+        raise ReservationError('New reservations must begin as an Enquiry.')
+    if not allocations:
+        raise ReservationError('An Enquiry must contain at least one Element.')
+    validate_allocations(connection, company_id, allocations)
+    total = sum(float(item.get('total_amount') or 0) for item in allocations)
+    cursor = connection.execute(
+        'INSERT INTO reservations (company_id,reference,customer_id,state,currency,total_amount,notes,created_at,updated_at) '
+        'VALUES (?,?,?,?,?,?,?,?,?)',
+        (company_id, reference, customer_id, state, currency, total, notes, created_at, created_at))
+    reservation_id = int(cursor.lastrowid)
+    for item in allocations:
+        connection.execute(
+            'INSERT INTO reservation_elements (company_id,reservation_id,element_id,arrival_date,departure_date,'
+            'total_amount,pricing_snapshot_json,lead_name) VALUES (?,?,?,?,?,?,?,?)',
+            (company_id, reservation_id, int(item['element_id']), str(item['arrival_date']),
+             str(item['departure_date']), float(item.get('total_amount') or 0),
+             str(item.get('pricing_snapshot_json') or '{}'), str(item.get('lead_name') or '')))
+    return reservation_id
