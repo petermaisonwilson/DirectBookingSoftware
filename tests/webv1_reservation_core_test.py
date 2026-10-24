@@ -149,5 +149,30 @@ class ReservationLifecycleTests(unittest.TestCase):
         db.close()
 
 
+    def test_multi_element_amendment_replaces_elements_and_total(self):
+        from online.webv1_reservation_core import replace_reservation_elements
+        db = sqlite3.connect(':memory:')
+        db.row_factory = sqlite3.Row
+        db.executescript("""
+            CREATE TABLE setup_elements(id INTEGER,company_id INTEGER,active INTEGER);
+            CREATE TABLE reservations(id INTEGER PRIMARY KEY,company_id INTEGER,state TEXT,
+                total_amount REAL,updated_at TEXT);
+            CREATE TABLE reservation_elements(id INTEGER PRIMARY KEY,company_id INTEGER,reservation_id INTEGER,
+                element_id INTEGER,arrival_date TEXT,departure_date TEXT,total_amount REAL,
+                pricing_snapshot_json TEXT,lead_name TEXT);
+            INSERT INTO setup_elements VALUES (10,1,1),(11,1,1);
+            INSERT INTO reservations VALUES (1,1,'ENQUIRY_HELD',50,'');
+            INSERT INTO reservation_elements VALUES (1,1,1,10,'2026-11-01','2026-11-05',50,'{}','');
+        """)
+        items = [
+            {'element_id':10,'arrival_date':'2026-11-02','departure_date':'2026-11-06','total_amount':80},
+            {'element_id':11,'arrival_date':'2026-11-02','departure_date':'2026-11-06','total_amount':120},
+        ]
+        replace_reservation_elements(db,1,1,items,'2026-10-24',check_legacy=False)
+        self.assertEqual(db.execute('SELECT COUNT(*) FROM reservation_elements').fetchone()[0],2)
+        self.assertEqual(db.execute('SELECT total_amount FROM reservations WHERE id=1').fetchone()[0],200)
+        db.close()
+
+
 if __name__ == '__main__':
     unittest.main()
