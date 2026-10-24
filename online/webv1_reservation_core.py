@@ -67,6 +67,14 @@ def transition(connection, company_id, reservation_id, target, updated_at):
         if not allocations:
             raise ReservationError('A held or confirmed reservation must contain an Element.')
         validate_allocations(connection, company_id, allocations, reservation_id)
+        from .webv1_status_availability import _booking_conflict, _enquiry_conflict
+        for item in allocations:
+            element_id = int(item['element_id'])
+            arrival, departure = str(item['arrival_date']), str(item['departure_date'])
+            if _booking_conflict(connection, company_id, element_id, arrival, departure):
+                raise ReservationError('Element is already booked.')
+            if _enquiry_conflict(connection, company_id, element_id, arrival, departure):
+                raise ReservationError('Element is already held by another Enquiry.')
     connection.execute('UPDATE reservations SET state=?,updated_at=? WHERE company_id=? AND id=?',
                        (target, updated_at, company_id, reservation_id))
 
