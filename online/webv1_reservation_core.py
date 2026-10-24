@@ -115,3 +115,39 @@ def create_reservation(connection, company_id, reference, customer_id, allocatio
              str(item['departure_date']), float(item.get('total_amount') or 0),
              str(item.get('pricing_snapshot_json') or '{}'), str(item.get('lead_name') or '')))
     return reservation_id
+
+
+def replace_reservation_elements(connection, company_id, reservation_id, allocations, updated_at,
+                                 *, check_legacy=True):
+    """Replace all Elements of an editable master record within the caller's transaction."""
+    row = connection.execute(
+        'SELECT state FROM reservations WHERE company_id=? AND id=?',
+        (company_id, reservation_id)).fetchone()
+    if row is None:
+        raise ReservationError('Reservation not found for this client.')
+    if str(row['state']) not in ('ENQUIRY_HELD', 'ENQUIRY_RELEASED', 'CONFIRMED'):
+        raise ReservationError('Cancelled reservations cannot be amended.')
+    if not allocations:
+        raise ReservationError('A reservation must contain at least one Element.')
+    validate_allocations(connection, company_id, allocations, reservation_id)
+    if check_legacy:
+        from .webv1_status_availability import _booking_conflict, _enquiry_conflict
+        for item in allocations:
+            eid = int(item['element_id'])
+            start, end = str(item['arrival_date']), str(item['departure_date'])
+            if _booking_conflict(connection, company_id, eid, start, end):
+                raise ReservationError('Element is already booked.')
+            if _enquiry_conflict(connection, company_id, eid, start, end):
+                raise ReservationError('Element is already held by another Enquiry.')
+    connection.execute('DELETE FROM reservation_elements WHERE company_id=? AND reservation_id=?',
+                       (company_id, reservation_id))
+    for item in allocations:
+        connection.execute(
+            'INSERT INTO reservation_elements (company_id,reservation_id,element_id,arrival_date,departure_date,'
+            'total_amount,pricing_snapshot_json,lead_name) VALUES (?,?,?,?,?,?,?,?)',
+            (company_id, reservation_id, int(item['element_id']), str(item['arrival_date']),
+             str(item['departure_date']), float(item.get('total_amount') or 0),
+             str(item.get('pricing_snapshot_json') or '{}'), str(item.get('lead_name') or '')))
+    total = sum(float(item.get('total_amount') or 0) for item in allocations)
+    connection.execute('UPDATE reservations SET total_amount=?,updated_at=? WHERE company_id=? AND id=?',
+                       (total, updated_at, company_id, reservation_id))
