@@ -128,5 +128,26 @@ class ReservationLifecycleTests(unittest.TestCase):
         db.close()
 
 
+    def test_create_rejects_held_enquiry_before_writing(self):
+        from online.webv1_reservation_core import create_reservation
+        from unittest.mock import patch
+        db = sqlite3.connect(':memory:')
+        db.row_factory = sqlite3.Row
+        db.executescript("""
+            CREATE TABLE setup_elements(id INTEGER,company_id INTEGER,active INTEGER);
+            CREATE TABLE reservations(id INTEGER PRIMARY KEY,company_id INTEGER,state TEXT);
+            CREATE TABLE reservation_elements(id INTEGER,company_id INTEGER,reservation_id INTEGER,
+                element_id INTEGER,arrival_date TEXT,departure_date TEXT);
+            INSERT INTO setup_elements VALUES (10,1,1);
+        """)
+        item = {'element_id':10,'arrival_date':'2026-11-01','departure_date':'2026-11-05'}
+        with patch('online.webv1_status_availability._booking_conflict', return_value=None), \
+             patch('online.webv1_status_availability._enquiry_conflict', return_value={'id':12}):
+            with self.assertRaisesRegex(ReservationError, 'already held'):
+                create_reservation(db,1,'E-002',None,[item],'2026-10-24')
+        self.assertEqual(db.execute('SELECT COUNT(*) FROM reservations').fetchone()[0],0)
+        db.close()
+
+
 if __name__ == '__main__':
     unittest.main()
