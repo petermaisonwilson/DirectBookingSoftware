@@ -53,7 +53,7 @@ def validate_allocations(connection, company_id, allocations, exclude_reservatio
             raise ReservationError('Element is already allocated to another reservation.')
 
 
-def transition(connection, company_id, reservation_id, target, updated_at, *, check_legacy=False):
+def transition(connection, company_id, reservation_id, target, updated_at, *, check_legacy=True):
     """Caller must hold the write transaction before checking and updating."""
     reservation = connection.execute('SELECT state FROM reservations WHERE company_id=? AND id=?',
                                      (company_id, reservation_id)).fetchone()
