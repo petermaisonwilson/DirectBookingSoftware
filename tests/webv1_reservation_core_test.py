@@ -89,5 +89,23 @@ class ReservationLifecycleTests(unittest.TestCase):
         db.close()
 
 
+    def test_booking_conversion_rejects_canonical_allocation(self):
+        from online.webv1_bookings import _lock_and_verify_conversion
+        db = sqlite3.connect(':memory:')
+        db.row_factory = sqlite3.Row
+        db.executescript("""
+            CREATE TABLE reservations(id INTEGER, company_id INTEGER, state TEXT);
+            CREATE TABLE reservation_elements(id INTEGER, company_id INTEGER, reservation_id INTEGER,
+                element_id INTEGER, arrival_date TEXT, departure_date TEXT);
+            CREATE TABLE bookings(id INTEGER, company_id INTEGER, enquiry_id INTEGER);
+            INSERT INTO reservations VALUES (1,1,'CONFIRMED');
+            INSERT INTO reservation_elements VALUES (1,1,1,10,'2026-11-01','2026-11-05');
+        """)
+        with self.assertRaisesRegex(ValueError, 'allocated to another reservation'):
+            _lock_and_verify_conversion(db, 1, 22, [
+                {'element_id':10,'arrival_date':'2026-11-02','departure_date':'2026-11-04'}])
+        db.close()
+
+
 if __name__ == '__main__':
     unittest.main()
