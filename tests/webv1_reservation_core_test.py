@@ -191,5 +191,35 @@ class ReservationLifecycleTests(unittest.TestCase):
         db.close()
 
 
+    def test_create_single_master_enquiry_with_two_elements(self):
+        from online.webv1_reservation_core import create_reservation
+        from unittest.mock import patch
+        db = sqlite3.connect(':memory:')
+        db.row_factory = sqlite3.Row
+        db.executescript("""
+            CREATE TABLE setup_elements(id INTEGER,company_id INTEGER,active INTEGER);
+            CREATE TABLE reservations(id INTEGER PRIMARY KEY,company_id INTEGER,reference TEXT,
+                customer_id INTEGER,state TEXT,currency TEXT,total_amount REAL,notes TEXT,
+                created_at TEXT,updated_at TEXT);
+            CREATE TABLE reservation_elements(id INTEGER PRIMARY KEY,company_id INTEGER,
+                reservation_id INTEGER,element_id INTEGER,arrival_date TEXT,departure_date TEXT,
+                total_amount REAL,pricing_snapshot_json TEXT,lead_name TEXT);
+            INSERT INTO setup_elements VALUES (10,1,1),(11,1,1),(10,2,1);
+        """)
+        items = [
+            {'element_id':10,'arrival_date':'2026-11-01','departure_date':'2026-11-05','total_amount':80},
+            {'element_id':11,'arrival_date':'2026-11-01','departure_date':'2026-11-05','total_amount':120},
+        ]
+        with patch('online.webv1_status_availability._booking_conflict', return_value=None), \
+             patch('online.webv1_status_availability._enquiry_conflict', return_value=None):
+            rid = create_reservation(db,1,'E-100',None,items,'2026-10-24')
+        record = db.execute('SELECT * FROM reservations WHERE id=?',(rid,)).fetchone()
+        self.assertEqual(record['state'],'ENQUIRY_HELD')
+        self.assertEqual(record['total_amount'],200)
+        self.assertEqual(record['company_id'],1)
+        self.assertEqual(db.execute('SELECT COUNT(*) FROM reservation_elements WHERE reservation_id=?',(rid,)).fetchone()[0],2)
+        db.close()
+
+
 if __name__ == '__main__':
     unittest.main()
