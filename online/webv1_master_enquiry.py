@@ -47,9 +47,14 @@ def register_master_enquiry_routes(app):
         body += '</select><h2>People</h2>'
         for person in people:
             body += f'<label>{esc(person["name"])}</label><input type="number" min="0" step="1" name="person_{int(person["id"])}" value="0">'
-        body += '<h2>Add-ons</h2><p class="muted">Enter quantities for standard whole-stay Add-ons. Person-specific and selected-day Add-ons are not yet supported here.</p>'
+        body += '<h2>Add-ons</h2><p class="muted">Whole-stay quantities and Person Type Add-ons. Selected-day options remain in the full workflow.</p>'
         for addon in addons:
-            body += f'<label>{esc(addon["name"])}</label><input type="number" min="0" step="1" name="addon_{int(addon["id"])}" value="0">'
+            aid = int(addon['id'])
+            body += f'<h3>{esc(addon["name"])}</h3>'
+            body += f'<label>Standard quantity</label><input type="number" min="0" step="1" name="addon_{aid}" value="0">'
+            for person in people:
+                body += (f'<label>{esc(person["name"])} quantity for this Add-on</label>'
+                         f'<input type="number" min="0" step="1" name="addon_person_{aid}_{int(person["id"])}" value="0">')
         body += ('<p class="muted">The full booking workflow remains available for complex Add-on requirements.</p>'
                  '<label>Arrival</label><input name="arrival_date" type="date" required>'
                  '<label>Departure</label><input name="departure_date" type="date" required>'
@@ -94,7 +99,9 @@ def register_master_enquiry_routes(app):
             addon_ids = [int(row['id']) for row in c.execute(
                 'SELECT id FROM setup_addons WHERE company_id=? AND active=1', (company_id,))]
         for addon_id in addon_ids:
-            if values.get(f'addon_{addon_id}', '0').strip() not in ('', '0'):
+            if values.get(f'addon_{addon_id}', '0').strip() not in ('', '0') or any(
+                key.startswith(f'addon_person_{addon_id}_') and value.strip() not in ('', '0')
+                for key, value in values.items()):
                 values[f'addon_when_{addon_id}'] = 'every_day'
         values['element_type'] = str(element['element_type'])
         calculation, errors, message = _calculate(database, company_id, values)
