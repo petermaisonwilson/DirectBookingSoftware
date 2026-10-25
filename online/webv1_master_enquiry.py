@@ -4,7 +4,7 @@ Kept at a separate URL until the existing booking and finance pages have
 been replaced. Uses the same master record for subsequent lifecycle actions.
 """
 import json
-from datetime import date
+from datetime import date, timedelta
 from uuid import uuid4
 
 
@@ -17,6 +17,7 @@ from .setup015_core import context_for, require_csrf, working_company
 from .webv1_reservation_core import ReservationError
 from .webv1_enquiry_builder import _calculate
 from .webv1_addon_person import addon_person_mode
+from .webv1_addon_when import when_options
 from .webv1_reservation_service import create_enquiry
 
 
@@ -48,10 +49,17 @@ def register_master_enquiry_routes(app):
         body += '</select><h2>People</h2>'
         for person in people:
             body += f'<label>{esc(person["name"])}</label><input type="number" min="0" step="1" name="person_{int(person["id"])}" value="0">'
-        body += '<h2>Add-ons</h2><p class="muted">Whole-stay quantities and Person Type Add-ons. Selected-day options remain in the full workflow.</p>'
+        body += '<h2>Add-ons</h2><p class="muted">Whole-stay and selected-day Add-ons. Enter dates as YYYY-MM-DD.</p>'
         for addon in addons:
             aid = int(addon['id'])
             body += f'<h3>{esc(addon["name"])}</h3>'
+            options = {str(x['option_code']) for x in when_options(database, company_id, aid)}
+            if 'selected_days' in options:
+                body += (f'<label>When</label><select name="addon_when_{aid}">'
+                         '<option value="every_day">Every day</option>'
+                         '<option value="selected_days">Selected days</option></select>')
+                body += (f'<label>Selected-day quantities</label><textarea name="selected_days_{aid}" '
+                         'placeholder="YYYY-MM-DD, quantity (one per line)"></textarea>')
             if addon_person_mode(database, company_id, aid) == 'person_type':
                 for person in people:
                     body += (f'<label>{esc(person["name"])} quantity</label>'
@@ -102,6 +110,31 @@ def register_master_enquiry_routes(app):
             addon_ids = [int(row['id']) for row in c.execute(
                 'SELECT id FROM setup_addons WHERE company_id=? AND active=1', (company_id,))]
         for addon_id in addon_ids:
+            if values.get(f'addon_when_{addon_id}') == 'selected_days':
+                raw_lines = values.get(f'selected_days_{addon_id}', '').splitlines()
+                for line in raw_lines:
+                    if not line.strip():
+                        continue
+                    parts = [part.strip() for part in line.split(',')]
+                    try:
+                        if len(parts) != 2:
+                            raise ValueError('Invalid entry')
+                        day = date.fromisoformat(parts[0])
+                        qty = int(parts[1])
+                        if day < arrival or day >= departure or qty < 0:
+                            raise ValueError('Outside stay')
+                    except (ValueError, TypeError):
+                        return HTMLResponse(layout('Invalid Add-on day',
+                            f'<div class="error">Invalid selected-day entry for Add-on {addon_id}.</div>',
+                            context), status_code=400)
+                    key = f'addon_day_{addon_id}_{day.isoformat()}'
+                    if key in values:
+                        return HTMLResponse(layout('Duplicate Add-on day',
+                            '<div class="error">Each selected day must appear only once.</div>',
+                            context), status_code=400)
+                    values[key] = str(qty)
+                values[f'addon_selected_{addon_id}'] = '1'
+                continue
             if values.get(f'addon_{addon_id}', '0').strip() not in ('', '0') or any(
                 key.startswith(f'addon_person_{addon_id}_') and value.strip() not in ('', '0')
                 for key, value in values.items()):
