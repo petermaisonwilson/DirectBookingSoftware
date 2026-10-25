@@ -52,7 +52,7 @@ def register_master_enquiry_routes(app):
             body += (f'<fieldset><legend>{esc(item["name"])} — optional individual dates</legend>'
                      f'<label>Arrival</label><input type="date" name="arrival_{eid}">'
                      f'<label>Departure</label><input type="date" name="departure_{eid}"></fieldset>')
-        body += '<h2>People</h2>'
+        body += '<h2>Default people</h2>'
         for person in people:
             body += f'<label>{esc(person["name"])}</label><input type="number" min="0" step="1" name="person_{int(person["id"])}" value="0">'
         body += '<h2>Add-ons</h2><p class="muted">Whole-stay and selected-day Add-ons. Enter dates as YYYY-MM-DD.</p>'
