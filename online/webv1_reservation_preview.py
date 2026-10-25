@@ -3,6 +3,8 @@
 Kept separate from the existing operational screens until the full lifecycle,
 finance and history are migrated.
 """
+import json
+
 from fastapi import Request
 from fastapi.responses import HTMLResponse
 
@@ -66,5 +68,20 @@ def register_reservation_preview_routes(app):
             body += (f'<tr><td>{esc(item.get("element_name") or item["element_id"])}</td>'
                      f'<td>{esc(item["arrival_date"])}</td><td>{esc(item["departure_date"])}</td>'
                      f'<td>{float(item["total_amount"] or 0):.2f}</td></tr>')
-        body += '</table><p class="muted">Read-only development view; payments and history are not yet connected.</p>'
+        body += '</table><h2>Price breakdown</h2>'
+        for item in result['elements']:
+            try:
+                snapshot = json.loads(item.get('pricing_snapshot_json') or '{}')
+            except (ValueError, TypeError):
+                snapshot = {}
+            body += f'<h3>{esc(item.get("element_name") or item["element_id"])}</h3>'
+            body += '<table><tr><th>Item</th><th>Calculation</th><th>Amount</th></tr>'
+            for line in snapshot.get('lines', []):
+                if not isinstance(line, dict):
+                    continue
+                body += (f'<tr><td>{esc(line.get("item", ""))}</td>'
+                         f'<td>{esc(line.get("rule", ""))}</td>'
+                         f'<td>{float(line.get("amount") or 0):.2f}</td></tr>')
+            body += '</table>'
+        body += '<p class="muted">Read-only development view; payments and history are not yet connected.</p>'
         return HTMLResponse(layout('Reservation detail', body, context))
