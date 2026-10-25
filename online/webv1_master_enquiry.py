@@ -46,7 +46,13 @@ def register_master_enquiry_routes(app):
         body += '</select><label>Elements (Ctrl-click to select more than one)</label><select name="element_ids" multiple size="8" required>'
         for item in elements:
             body += f'<option value="{int(item["id"])}">{esc(item["name"])}</option>'
-        body += '</select><p class="muted">All selected Elements currently share dates, people and Add-ons. Independent Element requirements will follow.</p><h2>People</h2>'
+        body += '</select><p class="muted">Each selected Element can have its own arrival and departure dates below. People and Add-ons are currently shared.</p>'
+        for item in elements:
+            eid = int(item['id'])
+            body += (f'<fieldset><legend>{esc(item["name"])} — optional individual dates</legend>'
+                     f'<label>Arrival</label><input type="date" name="arrival_{eid}">'
+                     f'<label>Departure</label><input type="date" name="departure_{eid}"></fieldset>')
+        body += '<h2>People</h2>'
         for person in people:
             body += f'<label>{esc(person["name"])}</label><input type="number" min="0" step="1" name="person_{int(person["id"])}" value="0">'
         body += '<h2>Add-ons</h2><p class="muted">Whole-stay and selected-day Add-ons. Enter dates as YYYY-MM-DD.</p>'
@@ -164,7 +170,26 @@ def register_master_enquiry_routes(app):
                 values[f'addon_when_{addon_id}'] = 'every_day'
         allocations = []
         for element_id in selected_ids:
+            try:
+                element_arrival = date.fromisoformat(data.get(f'arrival_{element_id}') or arrival.isoformat())
+                element_departure = date.fromisoformat(data.get(f'departure_{element_id}') or departure.isoformat())
+                if element_arrival >= element_departure:
+                    raise ValueError('Invalid date range')
+            except (ValueError, TypeError):
+                return HTMLResponse(layout('Invalid Element dates',
+                    f'<div class="error">Invalid dates for Element {element_id}.</div>', context), status_code=400)
             element_values = dict(values)
+            element_values['arrival_date'] = element_arrival.isoformat()
+            element_values['departure_date'] = element_departure.isoformat()
+            for addon_id in addon_ids:
+                if element_values.get(f'addon_when_{addon_id}') == 'selected_days':
+                    for key, quantity in element_values.items():
+                        if key.startswith((f'addon_day_{addon_id}_', f'addon_day_person_{addon_id}_')) and quantity not in ('', '0'):
+                            service_date = key[-10:]
+                            if service_date < element_arrival.isoformat() or service_date >= element_departure.isoformat():
+                                return HTMLResponse(layout('Add-on dates outside Element stay',
+                                    f'<div class="error">Selected Add-on dates must fall within every selected Element stay. Element {element_id} is incompatible.</div>',
+                                    context), status_code=400)
             element_values['element_id'] = str(element_id)
             element_values['element_type'] = str(elements_by_id[element_id]['element_type'])
             calculation, errors, message = _calculate(database, company_id, element_values)
@@ -176,10 +201,10 @@ def register_master_enquiry_routes(app):
             snapshot = {key: calculation[key] for key in (
                 'element_type', 'element_name', 'year', 'nights', 'people_total',
                 'people_counts', 'selected_addons', 'addon_counts', 'addon_days',
-                'addon_people', 'addon_person_days', 'lines', 'base_amount',
+                'addon_people', 'addon_person_days', 'addon_when', 'lines', 'base_amount',
                 'discount_amount', 'discount_rule', 'total')}
-            allocations.append({'element_id': element_id, 'arrival_date': arrival.isoformat(),
-                                'departure_date': departure.isoformat(), 'total_amount': calculation['total'],
+            allocations.append({'element_id': element_id, 'arrival_date': element_arrival.isoformat(),
+                                'departure_date': element_departure.isoformat(), 'total_amount': calculation['total'],
                                 'pricing_snapshot_json': json.dumps(snapshot, separators=(',', ':'))})
         try:
             rid = create_enquiry(database, company_id, reference, customer_id, allocations,
