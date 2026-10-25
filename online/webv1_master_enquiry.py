@@ -53,6 +53,13 @@ def register_master_enquiry_routes(app):
                      f'<label>Arrival</label><input type="date" name="arrival_{eid}">'
                      f'<label>Departure</label><input type="date" name="departure_{eid}"></fieldset>')
         body += '<h2>Individual Element occupancy</h2>'
+        for item in elements:
+            eid = int(item['id'])
+            body += f'<fieldset><legend>{esc(item["name"])}</legend>'
+            for person in people:
+                pid = int(person['id'])
+                body += f'<label>{esc(person["name"])}</label><input type="number" min="0" name="element_person_{eid}_{pid}" placeholder="Default">'
+            body += '</fieldset>'
         body += '<h2>Default people</h2>'
         for person in people:
             body += f'<label>{esc(person["name"])}</label><input type="number" min="0" step="1" name="person_{int(person["id"])}" value="0">'
