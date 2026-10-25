@@ -3,6 +3,7 @@
 Kept at a separate URL until the existing booking and finance pages have
 been replaced. Uses the same master record for subsequent lifecycle actions.
 """
+import json
 from datetime import date
 from uuid import uuid4
 
@@ -14,6 +15,7 @@ from .app import esc, form_data, layout
 from .database import iso_now
 from .setup015_core import context_for, require_csrf, working_company
 from .webv1_reservation_core import ReservationError
+from .webv1_enquiry_builder import _calculate
 from .webv1_reservation_service import create_enquiry
 
 
@@ -28,6 +30,7 @@ def register_master_enquiry_routes(app):
             elements = c.execute(
                 'SELECT id,name FROM setup_elements WHERE company_id=? AND active=1 ORDER BY name,id',
                 (company_id,)).fetchall()
+            people = c.execute('SELECT id,name FROM setup_person_types WHERE company_id=? AND active=1 ORDER BY name,id', (company_id,)).fetchall()
             customers = c.execute(
                 'SELECT id,first_name,last_name FROM customer_records WHERE company_id=? AND active=1 '
                 'ORDER BY last_name,first_name,id', (company_id,)).fetchall()
@@ -40,7 +43,10 @@ def register_master_enquiry_routes(app):
         body += '</select><label>Element</label><select name="element_id" required>'
         for item in elements:
             body += f'<option value="{int(item["id"])}">{esc(item["name"])}</option>'
-        body += ('</select><label>Arrival</label><input name="arrival_date" type="date" required>'
+        body += '</select><h2>People</h2>'
+        for person in people:
+            body += f'<label>{esc(person["name"])}</label><input type="number" min="0" step="1" name="person_{int(person["id"])}" value="0">'
+        body += ('<label>Arrival</label><input name="arrival_date" type="date" required>'
                  '<label>Departure</label><input name="departure_date" type="date" required>'
                  '<label>Notes</label><input name="notes" maxlength="1000">'
                  '<button type="submit">Create development Enquiry</button></form>')
@@ -71,11 +77,26 @@ def register_master_enquiry_routes(app):
                                         '<div class="error">Customer not found for this client.</div>',
                                         context), status_code=400)
         reference = 'ENQ-' + uuid4().hex[:12].upper()
-        # Development entry does not yet calculate a tariff. Mark this explicitly
-        # rather than presenting a zero-value stay as a completed price quote.
+        with database.connect() as c:
+            element = c.execute('SELECT element_type FROM setup_elements WHERE company_id=? AND id=? AND active=1',
+                                (company_id, element_id)).fetchone()
+        if element is None:
+            return HTMLResponse(layout('Invalid Element', '<div class="error">Element unavailable.</div>', context), status_code=400)
+        values = dict(data)
+        values['element_type'] = str(element['element_type'])
+        calculation, errors, message = _calculate(database, company_id, values)
+        if message or calculation is None:
+            return HTMLResponse(layout('Pricing or requirements incomplete',
+                                        f'<div class="error">{esc(message or "Cannot calculate this Enquiry.")}</div>',
+                                        context), status_code=400)
+        snapshot = {key: calculation[key] for key in (
+            'element_type', 'element_name', 'year', 'nights', 'people_total',
+            'people_counts', 'selected_addons', 'addon_counts', 'addon_days',
+            'addon_people', 'addon_person_days', 'lines', 'base_amount',
+            'discount_amount', 'discount_rule', 'total')}
         allocation = {'element_id': element_id, 'arrival_date': arrival.isoformat(),
-                      'departure_date': departure.isoformat(), 'total_amount': 0,
-                      'pricing_snapshot_json': '{"pricing_status":"NOT_CALCULATED"}'}
+                      'departure_date': departure.isoformat(), 'total_amount': calculation['total'],
+                      'pricing_snapshot_json': json.dumps(snapshot, separators=(',', ':'))}
         try:
             rid = create_enquiry(database, company_id, reference, customer_id, [allocation],
                                  iso_now(), notes=data.get('notes', '')[:1000])
