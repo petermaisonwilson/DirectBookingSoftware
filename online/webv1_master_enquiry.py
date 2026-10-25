@@ -37,7 +37,7 @@ def register_master_enquiry_routes(app):
                 'ORDER BY last_name,first_name,id', (company_id,)).fetchall()
         body = ('<h1>New single-record Enquiry — development</h1>'
                 '<p class="muted">This separate screen does not replace the existing booking workflow. '
-                'Price calculation, party requirements and payment are not yet connected.</p>'
+                'Standard pricing and occupancy checks are connected; payment and full requirements are not yet available.</p>'
                 '<form method="post"><label>Customer</label><select name="customer_id" required>')
         for item in customers:
             body += f'<option value="{int(item["id"])}">{esc(str(item["first_name"] or "") + " " + str(item["last_name"] or ""))}</option>'
@@ -88,6 +88,14 @@ def register_master_enquiry_routes(app):
         if element is None:
             return HTMLResponse(layout('Invalid Element', '<div class="error">Element unavailable.</div>', context), status_code=400)
         values = dict(data)
+        # A standard quantity applies to the whole stay; make the intended mode
+        # explicit rather than depending on an Add-on's default selection.
+        with database.connect() as c:
+            addon_ids = [int(row['id']) for row in c.execute(
+                'SELECT id FROM setup_addons WHERE company_id=? AND active=1', (company_id,))]
+        for addon_id in addon_ids:
+            if values.get(f'addon_{addon_id}', '0').strip() not in ('', '0'):
+                values[f'addon_when_{addon_id}'] = 'every_day'
         values['element_type'] = str(element['element_type'])
         calculation, errors, message = _calculate(database, company_id, values)
         if message or calculation is None:
