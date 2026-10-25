@@ -46,7 +46,7 @@ def register_reservation_preview_routes(app):
                      f'<td>{esc(_STATES.get(item["state"], item["state"]))}</td>'
                      f'<td>{float(item["total_amount"] or 0):.2f} {esc(item["currency"])}</td>'
                      f'<td>{esc(item["created_at"])}</td></tr>')
-        body += '</table>'
+        body += '</table><p><a href="/operations/master-reservations/new">Create development Enquiry</a></p>'
         return HTMLResponse(layout('Single-record reservations', body, context))
 
     @app.get('/operations/master-reservations/{reservation_id}', response_class=HTMLResponse)
