@@ -198,6 +198,10 @@ def register_master_enquiry_routes(app):
                                 return HTMLResponse(layout('Add-on dates outside Element stay',
                                     f'<div class="error">Selected Add-on dates must fall within every selected Element stay. Element {element_id} is incompatible.</div>',
                                     context), status_code=400)
+            for person_id in [int(person['id']) for person in people]:
+                override = data.get(f'element_person_{element_id}_{person_id}', '').strip()
+                if override != '':
+                    element_values[f'person_{person_id}'] = override
             element_values['element_id'] = str(element_id)
             element_values['element_type'] = str(elements_by_id[element_id]['element_type'])
             calculation, errors, message = _calculate(database, company_id, element_values)
