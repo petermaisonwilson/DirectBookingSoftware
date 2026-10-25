@@ -6,6 +6,7 @@ been replaced. Uses the same master record for subsequent lifecycle actions.
 from datetime import date
 from uuid import uuid4
 
+
 from fastapi import Request
 from fastapi.responses import HTMLResponse, RedirectResponse
 
@@ -70,8 +71,11 @@ def register_master_enquiry_routes(app):
                                         '<div class="error">Customer not found for this client.</div>',
                                         context), status_code=400)
         reference = 'ENQ-' + uuid4().hex[:12].upper()
+        # Development entry does not yet calculate a tariff. Mark this explicitly
+        # rather than presenting a zero-value stay as a completed price quote.
         allocation = {'element_id': element_id, 'arrival_date': arrival.isoformat(),
-                      'departure_date': departure.isoformat(), 'total_amount': 0}
+                      'departure_date': departure.isoformat(), 'total_amount': 0,
+                      'pricing_snapshot_json': '{"pricing_status":"NOT_CALCULATED"}'}
         try:
             rid = create_enquiry(database, company_id, reference, customer_id, [allocation],
                                  iso_now(), notes=data.get('notes', '')[:1000])
