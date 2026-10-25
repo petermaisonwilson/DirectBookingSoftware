@@ -4,7 +4,7 @@ Kept at a separate URL until the existing booking and finance pages have
 been replaced. Uses the same master record for subsequent lifecycle actions.
 """
 import json
-from datetime import date, timedelta
+from datetime import date
 from uuid import uuid4
 
 
@@ -112,6 +112,10 @@ def register_master_enquiry_routes(app):
         for addon_id in addon_ids:
             if values.get(f'addon_when_{addon_id}') == 'selected_days':
                 raw_lines = values.get(f'selected_days_{addon_id}', '').splitlines()
+                if not raw_lines or not any(line.strip() for line in raw_lines):
+                    return HTMLResponse(layout('Missing Add-on dates',
+                        '<div class="error">Enter at least one selected day and quantity.</div>',
+                        context), status_code=400)
                 for line in raw_lines:
                     if not line.strip():
                         continue
