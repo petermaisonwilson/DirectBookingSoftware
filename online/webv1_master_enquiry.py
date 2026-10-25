@@ -58,8 +58,12 @@ def register_master_enquiry_routes(app):
                 body += (f'<label>When</label><select name="addon_when_{aid}">'
                          '<option value="every_day">Every day</option>'
                          '<option value="selected_days">Selected days</option></select>')
-                body += (f'<label>Selected-day quantities</label><textarea name="selected_days_{aid}" '
-                         'placeholder="YYYY-MM-DD, quantity (one per line)"></textarea>')
+                if addon_person_mode(database, company_id, aid) == 'person_type':
+                    body += (f'<label>Selected-day Person Type quantities</label><textarea name="selected_person_days_{aid}" '
+                             'placeholder="YYYY-MM-DD, Person Type ID, quantity (one per line)"></textarea>')
+                else:
+                    body += (f'<label>Selected-day quantities</label><textarea name="selected_days_{aid}" '
+                             'placeholder="YYYY-MM-DD, quantity (one per line)"></textarea>')
             if addon_person_mode(database, company_id, aid) == 'person_type':
                 for person in people:
                     body += (f'<label>{esc(person["name"])} quantity</label>'
@@ -111,7 +115,9 @@ def register_master_enquiry_routes(app):
                 'SELECT id FROM setup_addons WHERE company_id=? AND active=1', (company_id,))]
         for addon_id in addon_ids:
             if values.get(f'addon_when_{addon_id}') == 'selected_days':
-                raw_lines = values.get(f'selected_days_{addon_id}', '').splitlines()
+                person_mode = addon_person_mode(database, company_id, addon_id) == 'person_type'
+                field = f'selected_person_days_{addon_id}' if person_mode else f'selected_days_{addon_id}'
+                raw_lines = values.get(field, '').splitlines()
                 if not raw_lines or not any(line.strip() for line in raw_lines):
                     return HTMLResponse(layout('Missing Add-on dates',
                         '<div class="error">Enter at least one selected day and quantity.</div>',
@@ -121,17 +127,26 @@ def register_master_enquiry_routes(app):
                         continue
                     parts = [part.strip() for part in line.split(',')]
                     try:
-                        if len(parts) != 2:
+                        if len(parts) != (3 if person_mode else 2):
                             raise ValueError('Invalid entry')
                         day = date.fromisoformat(parts[0])
-                        qty = int(parts[1])
+                        if person_mode:
+                            person_id = int(parts[1])
+                            with database.connect() as c:
+                                valid_person = c.execute(
+                                    'SELECT 1 FROM setup_person_types WHERE company_id=? AND id=? AND active=1',
+                                    (company_id, person_id)).fetchone()
+                            if valid_person is None:
+                                raise ValueError('Unknown Person Type')
+                        qty = int(parts[2 if person_mode else 1])
                         if day < arrival or day >= departure or qty < 0:
                             raise ValueError('Outside stay')
                     except (ValueError, TypeError):
                         return HTMLResponse(layout('Invalid Add-on day',
                             f'<div class="error">Invalid selected-day entry for Add-on {addon_id}.</div>',
                             context), status_code=400)
-                    key = f'addon_day_{addon_id}_{day.isoformat()}'
+                    key = (f'addon_day_person_{addon_id}_{person_id}_{day.isoformat()}'
+                           if person_mode else f'addon_day_{addon_id}_{day.isoformat()}')
                     if key in values:
                         return HTMLResponse(layout('Duplicate Add-on day',
                             '<div class="error">Each selected day must appear only once.</div>',
