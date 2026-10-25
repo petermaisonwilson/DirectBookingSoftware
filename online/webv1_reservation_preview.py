@@ -25,9 +25,17 @@ def register_reservation_preview_routes(app):
     def register(request: Request):
         context = context_for(database, request)
         company_id = working_company(context)
-        records = list_reservations(database, company_id)
+        selected = request.query_params.get('status', '').strip()
+        if selected and selected not in _STATES:
+            return HTMLResponse(layout('Invalid status', '<div class="error">Invalid reservation status.</div>', context), status_code=400)
+        records = list_reservations(database, company_id, state=selected or None)
         body = '<h1>Single-record reservations — preview</h1>'
         body += '<p class="muted">Read-only development view. Existing Enquiry and Booking screens remain in use.</p>'
+        body += '<form method="get"><label for="status">Status</label><select name="status" id="status">'
+        body += '<option value="">All statuses</option>'
+        for code, label in _STATES.items():
+            body += f'<option value="{esc(code)}" {"selected" if code == selected else ""}>{esc(label)}</option>'
+        body += '</select><button type="submit">Filter</button></form>'
         body += '<table><tr><th>Reference</th><th>Status</th><th>Total</th><th>Created</th></tr>'
         for item in records:
             rid = int(item['id'])
@@ -53,9 +61,9 @@ def register_reservation_preview_routes(app):
                 f'<h1>Reservation {esc(record["reference"])}</h1>'
                 f'<p><strong>Status:</strong> {esc(_STATES.get(record["state"], record["state"]))}</p>'
                 f'<p><strong>Total:</strong> {float(record["total_amount"] or 0):.2f} {esc(record["currency"])}</p>'
-                '<h2>Elements</h2><table><tr><th>Element ID</th><th>Arrival</th><th>Departure</th><th>Total</th></tr>')
+                '<h2>Elements</h2><table><tr><th>Element</th><th>Arrival</th><th>Departure</th><th>Total</th></tr>')
         for item in result['elements']:
-            body += (f'<tr><td>{int(item["element_id"])}</td>'
+            body += (f'<tr><td>{esc(item.get("element_name") or item["element_id"])}</td>'
                      f'<td>{esc(item["arrival_date"])}</td><td>{esc(item["departure_date"])}</td>'
                      f'<td>{float(item["total_amount"] or 0):.2f}</td></tr>')
         body += '</table><p class="muted">Read-only development view; payments and history are not yet connected.</p>'
