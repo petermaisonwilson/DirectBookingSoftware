@@ -84,6 +84,19 @@ def register_master_enquiry_routes(app):
                              f'<input type="number" min="0" step="1" name="addon_person_{aid}_{int(person["id"])}" value="0">')
             else:
                 body += f'<label>Quantity</label><input type="number" min="0" step="1" name="addon_{aid}" value="0">'
+        body += '<h2>Individual Element Add-on quantities</h2><p class="muted">Leave blank to use the shared quantity; enter 0 to exclude an Add-on.</p>'
+        for item in elements:
+            eid = int(item['id'])
+            body += f'<fieldset><legend>{esc(item["name"])}</legend>'
+            for addon in addons:
+                aid = int(addon['id'])
+                if addon_person_mode(database, company_id, aid) == 'person_type':
+                    for person in people:
+                        pid = int(person['id'])
+                        body += f'<label>{esc(addon["name"])} — {esc(person["name"])}</label><input type="number" min="0" name="element_addon_person_{eid}_{aid}_{pid}" placeholder="Shared">'
+                else:
+                    body += f'<label>{esc(addon["name"])}</label><input type="number" min="0" name="element_addon_{eid}_{aid}" placeholder="Shared">'
+            body += '</fieldset>'
         body += ('<p class="muted">The full booking workflow remains available for complex Add-on requirements.</p>'
                  '<label>Arrival</label><input name="arrival_date" type="date" required>'
                  '<label>Departure</label><input name="departure_date" type="date" required>'
