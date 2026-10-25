@@ -38,3 +38,15 @@ def reservation_summary(database, company_id, reservation_id):
             'SELECT * FROM reservation_elements WHERE company_id=? AND reservation_id=? ORDER BY id',
             (company_id, reservation_id)).fetchall()
         return {'reservation': dict(record), 'elements': [dict(item) for item in elements]}
+
+
+def list_reservations(database, company_id, *, state=None):
+    """List master records for the current client only."""
+    with database.connect() as connection:
+        sql = 'SELECT * FROM reservations WHERE company_id=?'
+        params = [company_id]
+        if state is not None:
+            sql += ' AND state=?'
+            params.append(state)
+        sql += ' ORDER BY created_at DESC,id DESC'
+        return [dict(row) for row in connection.execute(sql, params).fetchall()]
