@@ -35,7 +35,9 @@ def reservation_summary(database, company_id, reservation_id):
         if record is None:
             return None
         elements = connection.execute(
-            'SELECT * FROM reservation_elements WHERE company_id=? AND reservation_id=? ORDER BY id',
+            'SELECT re.*, se.name AS element_name FROM reservation_elements re '
+            'LEFT JOIN setup_elements se ON se.id=re.element_id AND se.company_id=re.company_id '
+            'WHERE re.company_id=? AND re.reservation_id=? ORDER BY re.id',
             (company_id, reservation_id)).fetchall()
         return {'reservation': dict(record), 'elements': [dict(item) for item in elements]}
 
