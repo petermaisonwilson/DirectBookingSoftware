@@ -31,6 +31,7 @@ def register_master_enquiry_routes(app):
                 'SELECT id,name FROM setup_elements WHERE company_id=? AND active=1 ORDER BY name,id',
                 (company_id,)).fetchall()
             people = c.execute('SELECT id,name FROM setup_person_types WHERE company_id=? AND active=1 ORDER BY name,id', (company_id,)).fetchall()
+            addons = c.execute('SELECT id,name FROM setup_addons WHERE company_id=? AND active=1 ORDER BY name,id', (company_id,)).fetchall()
             customers = c.execute(
                 'SELECT id,first_name,last_name FROM customer_records WHERE company_id=? AND active=1 '
                 'ORDER BY last_name,first_name,id', (company_id,)).fetchall()
@@ -46,7 +47,10 @@ def register_master_enquiry_routes(app):
         body += '</select><h2>People</h2>'
         for person in people:
             body += f'<label>{esc(person["name"])}</label><input type="number" min="0" step="1" name="person_{int(person["id"])}" value="0">'
-        body += ('<p class="muted">Add-ons and detailed requirements must be entered through the full booking workflow; this development screen does not yet support them.</p>'
+        body += '<h2>Add-ons</h2><p class="muted">Enter quantities for standard whole-stay Add-ons. Person-specific and selected-day Add-ons are not yet supported here.</p>'
+        for addon in addons:
+            body += f'<label>{esc(addon["name"])}</label><input type="number" min="0" step="1" name="addon_{int(addon["id"])}" value="0">'
+        body += ('<p class="muted">The full booking workflow remains available for complex Add-on requirements.</p>'
                  '<label>Arrival</label><input name="arrival_date" type="date" required>'
                  '<label>Departure</label><input name="departure_date" type="date" required>'
                  '<label>Notes</label><input name="notes" maxlength="1000">'
