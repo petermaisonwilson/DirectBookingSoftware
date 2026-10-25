@@ -46,7 +46,8 @@ def register_master_enquiry_routes(app):
         body += '</select><h2>People</h2>'
         for person in people:
             body += f'<label>{esc(person["name"])}</label><input type="number" min="0" step="1" name="person_{int(person["id"])}" value="0">'
-        body += ('<label>Arrival</label><input name="arrival_date" type="date" required>'
+        body += ('<p class="muted">Add-ons and detailed requirements must be entered through the full booking workflow; this development screen does not yet support them.</p>'
+                 '<label>Arrival</label><input name="arrival_date" type="date" required>'
                  '<label>Departure</label><input name="departure_date" type="date" required>'
                  '<label>Notes</label><input name="notes" maxlength="1000">'
                  '<button type="submit">Create development Enquiry</button></form>')
