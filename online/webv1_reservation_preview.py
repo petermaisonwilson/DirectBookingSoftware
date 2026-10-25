@@ -83,5 +83,11 @@ def register_reservation_preview_routes(app):
                          f'<td>{esc(line.get("rule", ""))}</td>'
                          f'<td>{float(line.get("amount") or 0):.2f}</td></tr>')
             body += '</table>'
-        body += '<p class="muted">Read-only development view; payments and history are not yet connected.</p>'
+        body += '<h2>Reservation history</h2><table><tr><th>When</th><th>Action</th><th>By</th><th>Reason</th></tr>'
+        for event in result['history']:
+            body += (f'<tr><td>{esc(event["created_at"])}</td>'
+                     f'<td>{esc(event["event_type"])}</td>'
+                     f'<td>{esc(event["actor"])}</td>'
+                     f'<td>{esc(event["reason"])}</td></tr>')
+        body += '</table><p class="muted">Read-only development view; payments are not yet connected.</p>'
         return HTMLResponse(layout('Reservation detail', body, context))
