@@ -43,10 +43,10 @@ def register_master_enquiry_routes(app):
                 '<form method="post"><label>Customer</label><select name="customer_id" required>')
         for item in customers:
             body += f'<option value="{int(item["id"])}">{esc(str(item["first_name"] or "") + " " + str(item["last_name"] or ""))}</option>'
-        body += '</select><label>Element</label><select name="element_id" required>'
+        body += '</select><label>Elements (Ctrl-click to select more than one)</label><select name="element_ids" multiple size="8" required>'
         for item in elements:
             body += f'<option value="{int(item["id"])}">{esc(item["name"])}</option>'
-        body += '</select><h2>People</h2>'
+        body += '</select><p class="muted">All selected Elements currently share dates, people and Add-ons. Independent Element requirements will follow.</p><h2>People</h2>'
         for person in people:
             body += f'<label>{esc(person["name"])}</label><input type="number" min="0" step="1" name="person_{int(person["id"])}" value="0">'
         body += '<h2>Add-ons</h2><p class="muted">Whole-stay and selected-day Add-ons. Enter dates as YYYY-MM-DD.</p>'
@@ -85,7 +85,9 @@ def register_master_enquiry_routes(app):
         require_csrf(context, data)
         try:
             customer_id = int(data.get('customer_id', ''))
-            element_id = int(data.get('element_id', ''))
+            selected_ids = [int(item) for item in (await request.form()).getlist('element_ids')]
+            if not selected_ids or len(selected_ids) != len(set(selected_ids)):
+                raise ValueError('Choose distinct Elements.')
             arrival = date.fromisoformat(data.get('arrival_date', ''))
             departure = date.fromisoformat(data.get('departure_date', ''))
             if arrival >= departure:
@@ -103,9 +105,11 @@ def register_master_enquiry_routes(app):
                                         context), status_code=400)
         reference = 'ENQ-' + uuid4().hex[:12].upper()
         with database.connect() as c:
-            element = c.execute('SELECT element_type FROM setup_elements WHERE company_id=? AND id=? AND active=1',
-                                (company_id, element_id)).fetchone()
-        if element is None:
+            elements_by_id = {
+                int(row['id']): row for row in c.execute(
+                    'SELECT id,element_type FROM setup_elements WHERE company_id=? AND active=1',
+                    (company_id,)).fetchall()}
+        if any(eid not in elements_by_id for eid in selected_ids):
             return HTMLResponse(layout('Invalid Element', '<div class="error">Element unavailable.</div>', context), status_code=400)
         values = dict(data)
         # A standard quantity applies to the whole stay; make the intended mode
@@ -158,22 +162,27 @@ def register_master_enquiry_routes(app):
                 key.startswith(f'addon_person_{addon_id}_') and value.strip() not in ('', '0')
                 for key, value in values.items()):
                 values[f'addon_when_{addon_id}'] = 'every_day'
-        values['element_type'] = str(element['element_type'])
-        calculation, errors, message = _calculate(database, company_id, values)
-        if message or calculation is None:
-            return HTMLResponse(layout('Pricing or requirements incomplete',
-                                        f'<div class="error">{esc(message or "Cannot calculate this Enquiry.")}</div>',
-                                        context), status_code=400)
-        snapshot = {key: calculation[key] for key in (
-            'element_type', 'element_name', 'year', 'nights', 'people_total',
-            'people_counts', 'selected_addons', 'addon_counts', 'addon_days',
-            'addon_people', 'addon_person_days', 'lines', 'base_amount',
-            'discount_amount', 'discount_rule', 'total')}
-        allocation = {'element_id': element_id, 'arrival_date': arrival.isoformat(),
-                      'departure_date': departure.isoformat(), 'total_amount': calculation['total'],
-                      'pricing_snapshot_json': json.dumps(snapshot, separators=(',', ':'))}
+        allocations = []
+        for element_id in selected_ids:
+            element_values = dict(values)
+            element_values['element_id'] = str(element_id)
+            element_values['element_type'] = str(elements_by_id[element_id]['element_type'])
+            calculation, errors, message = _calculate(database, company_id, element_values)
+            if message or calculation is None or errors:
+                explanation = message or '; '.join(map(str, errors)) or 'Cannot calculate this Enquiry.'
+                return HTMLResponse(layout('Pricing or requirements incomplete',
+                                            f'<div class="error">Element {element_id}: {esc(explanation)}</div>',
+                                            context), status_code=400)
+            snapshot = {key: calculation[key] for key in (
+                'element_type', 'element_name', 'year', 'nights', 'people_total',
+                'people_counts', 'selected_addons', 'addon_counts', 'addon_days',
+                'addon_people', 'addon_person_days', 'lines', 'base_amount',
+                'discount_amount', 'discount_rule', 'total')}
+            allocations.append({'element_id': element_id, 'arrival_date': arrival.isoformat(),
+                                'departure_date': departure.isoformat(), 'total_amount': calculation['total'],
+                                'pricing_snapshot_json': json.dumps(snapshot, separators=(',', ':'))})
         try:
-            rid = create_enquiry(database, company_id, reference, customer_id, [allocation],
+            rid = create_enquiry(database, company_id, reference, customer_id, allocations,
                                  iso_now(), notes=data.get('notes', '')[:1000])
         except ReservationError as exc:
             return HTMLResponse(layout('Enquiry unavailable',
