@@ -16,6 +16,7 @@ from .database import iso_now
 from .setup015_core import context_for, require_csrf, working_company
 from .webv1_reservation_core import ReservationError
 from .webv1_enquiry_builder import _calculate
+from .webv1_addon_person import addon_person_mode
 from .webv1_reservation_service import create_enquiry
 
 
@@ -51,10 +52,12 @@ def register_master_enquiry_routes(app):
         for addon in addons:
             aid = int(addon['id'])
             body += f'<h3>{esc(addon["name"])}</h3>'
-            body += f'<label>Standard quantity</label><input type="number" min="0" step="1" name="addon_{aid}" value="0">'
-            for person in people:
-                body += (f'<label>{esc(person["name"])} quantity for this Add-on</label>'
-                         f'<input type="number" min="0" step="1" name="addon_person_{aid}_{int(person["id"])}" value="0">')
+            if addon_person_mode(database, company_id, aid) == 'person_type':
+                for person in people:
+                    body += (f'<label>{esc(person["name"])} quantity</label>'
+                             f'<input type="number" min="0" step="1" name="addon_person_{aid}_{int(person["id"])}" value="0">')
+            else:
+                body += f'<label>Quantity</label><input type="number" min="0" step="1" name="addon_{aid}" value="0">'
         body += ('<p class="muted">The full booking workflow remains available for complex Add-on requirements.</p>'
                  '<label>Arrival</label><input name="arrival_date" type="date" required>'
                  '<label>Departure</label><input name="departure_date" type="date" required>'
