@@ -37,6 +37,41 @@ class ReservationLifecycleTests(unittest.TestCase):
             self.assertEqual([row['id'] for row in list_reservations(database, 1)], [1])
             self.assertEqual(list_reservations(database, 1, state='CONFIRMED'), [])
 
+    def test_reservation_reads_through_sqlalchemy_connection(self):
+        """Exercise the PostgreSQL-style read API without requiring a server."""
+        from sqlalchemy import create_engine, text
+        from online.webv1_reservation_service import reservation_summary, list_reservations
+
+        engine = create_engine('sqlite:///:memory:')
+        with engine.begin() as connection:
+            connection.execute(text(
+                'CREATE TABLE reservations (id INTEGER, company_id INTEGER, state TEXT, created_at TEXT)'))
+            connection.execute(text(
+                'CREATE TABLE setup_elements (id INTEGER, company_id INTEGER, name TEXT)'))
+            connection.execute(text(
+                'CREATE TABLE reservation_elements (id INTEGER, company_id INTEGER, reservation_id INTEGER, element_id INTEGER)'))
+            connection.execute(text(
+                'CREATE TABLE reservation_history (id INTEGER, company_id INTEGER, reservation_id INTEGER, event_type TEXT)'))
+            connection.execute(text(
+                "INSERT INTO reservations VALUES (1,1,'ENQUIRY_HELD','2026-10-26'),"
+                "(2,2,'CONFIRMED','2026-10-26')"))
+            connection.execute(text("INSERT INTO setup_elements VALUES (10,1,'Pitch A')"))
+            connection.execute(text("INSERT INTO reservation_elements VALUES (1,1,1,10)"))
+            connection.execute(text("INSERT INTO reservation_history VALUES (1,1,1,'CREATED')"))
+
+        class SqlAlchemyReadDatabase:
+            is_sqlite = False
+
+            def sql_connection(self):
+                return engine.connect()
+
+        database = SqlAlchemyReadDatabase()
+        self.assertEqual(reservation_summary(database, 1, 1)['elements'][0]['element_name'], 'Pitch A')
+        self.assertIsNone(reservation_summary(database, 1, 2))
+        self.assertEqual([row['id'] for row in list_reservations(database, 1)], [1])
+        self.assertEqual(list_reservations(database, 1, state='CONFIRMED'), [])
+        engine.dispose()
+
     def test_cancellation_is_terminal(self):
         self.assertFalse(allowed_transition('CANCELLED', 'CONFIRMED'))
         self.assertFalse(allowed_transition('CANCELLED', 'ENQUIRY_HELD'))
