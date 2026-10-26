@@ -127,6 +127,69 @@ class OperationalJourneyTests(unittest.TestCase):
         with ThreadPoolExecutor(max_workers=len(functions)) as executor:
             return list(executor.map(run, functions))
 
+    def test_closures_are_atomic_tenant_scoped_and_serialize_with_bookings(self):
+        enquiry = self.enquiry()
+        payload = {'csrf': self.csrf(), 'element_id': self.element,
+                   'start_date': '2038-06-01', 'end_date': '2038-06-03', 'reason': 'Maintenance'}
+        responses = self.race([
+            lambda: self.clients[0].post(f'/operations/enquiries/{enquiry}/confirm-payment',
+                data=self.payment_payload(), follow_redirects=False),
+            lambda: self.clients[1].post('/setup/elements/availability/save',
+                data=dict(payload, csrf=self.csrf(1)), follow_redirects=False)])
+        self.assertTrue(all(r.status_code == 303 for r in responses),
+                        [(r.status_code, r.text) for r in responses])
+        bookings = self.scalar('SELECT COUNT(*) FROM bookings WHERE company_id=:tenant', (self.cid,))
+        closures = self.scalar('SELECT COUNT(*) FROM element_closures WHERE company_id=:tenant', (self.cid,))
+        self.assertEqual(bookings + closures, 1)
+        # Competing closure writes themselves must also recheck after the lock.
+        second = self.new_element('Maintenance pitch')
+        responses = self.race([lambda index=index: self.clients[index].post(
+            '/setup/elements/availability/save', data=dict(payload, element_id=second, csrf=self.csrf(index)),
+            follow_redirects=False) for index in range(2)])
+        self.assertTrue(all(r.status_code == 303 for r in responses))
+        self.assertEqual(self.scalar('SELECT COUNT(*) FROM element_closures WHERE company_id=:tenant AND element_id=:element',
+                                     (self.cid, second)), 1)
+        closure = int(self.scalar('SELECT id FROM element_closures WHERE company_id=:tenant AND element_id=:element',
+                                  (self.cid, second)))
+        original = self.db.write_audit
+        def fail(**kwargs):
+            if kwargs['action'] in ('ELEMENT_CLOSURE_SAVED', 'ELEMENT_CLOSURE_DELETED'):
+                raise RuntimeError('Injected closure history failure')
+            return original(**kwargs)
+        unused = self.new_element('Closure rollback pitch')
+        with patch.object(self.db, 'write_audit', side_effect=fail):
+            create = self.clients[0].post('/setup/elements/availability/save',
+                data=dict(payload, element_id=unused), follow_redirects=False)
+            self.assertEqual(create.status_code, 500)
+            update = self.clients[0].post('/setup/elements/availability/save',
+                data=dict(payload, id=closure, element_id=second, reason='Changed'), follow_redirects=False)
+            delete = self.clients[0].post('/setup/elements/availability/delete',
+                data={'csrf': self.csrf(), 'id': closure, 'element_id': second}, follow_redirects=False)
+            self.assertEqual(update.status_code, 500)
+            self.assertEqual(delete.status_code, 500)
+        self.assertEqual(self.scalar('SELECT COUNT(*) FROM element_closures WHERE element_id=:element', (unused,)), 0)
+        self.assertEqual(self.scalar('SELECT reason FROM element_closures WHERE company_id=:tenant AND id=:closure',
+                                     (self.cid, closure)), 'Maintenance')
+        with self.db.connect() as c:
+            other = int(execute_sql(c, 'SELECT id FROM companies WHERE id<>:tenant ORDER BY id LIMIT 1', (self.cid,)).fetchone()[0])
+            foreign = int(insert_sql(c, "INSERT INTO setup_elements(company_id,name,element_type,pricing_method) VALUES (:tenant,'Foreign pitch','Camping','Per night')",
+                                     (other,)).lastrowid)
+        rejected = self.clients[0].post('/setup/elements/availability/save',
+            data=dict(payload, element_id=foreign), follow_redirects=False)
+        self.assertEqual(rejected.status_code, 404)
+        self.assertEqual(self.scalar('SELECT COUNT(*) FROM element_closures WHERE element_id=:element', (foreign,)), 0)
+        # Canonical confirmed allocations have the same closure protection as bookings.
+        from online.webv1_reservation_service import create_enquiry, change_reservation_state
+        third = self.new_element('Canonical confirmed pitch')
+        rid = create_enquiry(self.db, self.cid, 'CAN-CLOSURE', self.customer,
+            [{'element_id': third, 'arrival_date': '2038-06-01', 'departure_date': '2038-06-03',
+              'total_amount': 200}], iso_now())
+        change_reservation_state(self.db, self.cid, rid, 'CONFIRMED', iso_now())
+        rejected = self.clients[0].post('/setup/elements/availability/save',
+            data=dict(payload, element_id=third), follow_redirects=False)
+        self.assertEqual(rejected.status_code, 303)
+        self.assertEqual(self.scalar('SELECT COUNT(*) FROM element_closures WHERE element_id=:element', (third,)), 0)
+
     def test_actual_launcher_uses_the_configured_database(self):
         with socket.socket() as sock:
             sock.bind(('127.0.0.1', 0))

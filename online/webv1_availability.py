@@ -283,6 +283,20 @@ def register_availability_routes(app) -> None:
         if start.year != (end - timedelta(days=1)).year or window is None or start < window[0] or end > window[1]:
             return RedirectResponse(f'/setup/elements/availability?element_id={element_id}&message=Closure+must+sit+inside+one+configured+operating+season+year', 303)
         with database.connect() as c:
+            lock_inventory(c, cid)
+            element = execute_sql(c, 'SELECT id FROM setup_elements WHERE company_id=:tenant AND id=:element',
+                                  (cid, element_id)).fetchone()
+            if element is None:
+                raise HTTPException(status_code=404, detail='Element not found')
+            from .webv1_reservation_core import _execute
+            canonical = _execute(c,
+                "SELECT r.id FROM reservations r JOIN reservation_elements e "
+                "ON e.company_id=r.company_id AND e.reservation_id=r.id "
+                "WHERE r.company_id=:tenant AND r.state='CONFIRMED' AND e.element_id=:element "
+                "AND e.arrival_date<:departure AND e.departure_date>:arrival LIMIT 1",
+                {'tenant': cid, 'element': element_id, 'arrival': start.isoformat(), 'departure': end.isoformat()}).fetchone()
+            if canonical:
+                return RedirectResponse(f'/setup/elements/availability?element_id={element_id}&message=Cannot+close+dates+used+by+a+confirmed+reservation', 303)
             booked = _booking_conflict(c, cid, element_id, start.isoformat(), end.isoformat())
             if booked:
                 return RedirectResponse(f'/setup/elements/availability?element_id={element_id}&message=Cannot+close+these+dates%3A+booking+{esc(booked["reference"])}+already+uses+this+Element', 303)
@@ -296,7 +310,7 @@ def register_availability_routes(app) -> None:
                 execute_sql(c, 'UPDATE element_closures SET start_date=:q279_0,end_date=:q279_1,reason=:q279_2,updated_at=:q279_3 WHERE id=:q279_4 AND company_id=:q279_5', (start.isoformat(), end.isoformat(), reason, now, closure_id, cid)); saved_id = closure_id
             else:
                 saved_id = int(insert_sql(c, 'INSERT INTO element_closures(company_id,element_id,start_date,end_date,reason,created_by_user_id,created_at,updated_at) VALUES (:q288_0,:q288_1,:q288_2,:q288_3,:q288_4,:q288_5,:q288_6,:q288_7)', (cid, element_id, start.isoformat(), end.isoformat(), reason, context['user_id'], now, now)).lastrowid)
-        audit(database, context, cid, 'ELEMENT_CLOSURE_SAVED', 'element_closure', saved_id, dict(before) if before else None, {'element_id': element_id, 'start_date': start.isoformat(), 'end_date': end.isoformat(), 'reason': reason})
+            audit(database, context, cid, 'ELEMENT_CLOSURE_SAVED', 'element_closure', saved_id, dict(before) if before else None, {'element_id': element_id, 'start_date': start.isoformat(), 'end_date': end.isoformat(), 'reason': reason}, connection=c)
         return RedirectResponse(f'/setup/elements/availability?element_id={element_id}', 303)
 
     @app.post('/setup/elements/availability/delete')
@@ -305,7 +319,8 @@ def register_availability_routes(app) -> None:
         try: element_id = int(data.get('element_id', '')); closure_id = int(data.get('id', ''))
         except ValueError: return RedirectResponse('/setup/elements', 303)
         with database.connect() as c:
+            lock_inventory(c, cid)
             before = execute_sql(c, 'SELECT * FROM element_closures WHERE id=:q286_0 AND company_id=:q286_1 AND element_id=:q286_2', (closure_id, cid, element_id)).fetchone()
             if before: execute_sql(c, 'DELETE FROM element_closures WHERE id=:q280_0 AND company_id=:q280_1', (closure_id, cid))
-        if before: audit(database, context, cid, 'ELEMENT_CLOSURE_DELETED', 'element_closure', closure_id, dict(before), None)
+            if before: audit(database, context, cid, 'ELEMENT_CLOSURE_DELETED', 'element_closure', closure_id, dict(before), None, connection=c)
         return RedirectResponse(f'/setup/elements/availability?element_id={element_id}', 303)
