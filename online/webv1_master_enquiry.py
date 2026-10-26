@@ -221,7 +221,10 @@ def register_master_enquiry_routes(app):
                 override = data.get(f'element_addon_{element_id}_{addon_id}', '').strip()
                 if override != '':
                     element_values[f'addon_{addon_id}'] = override
-                    element_values[f'addon_selected_{addon_id}'] = '1'
+                    if override == '0':
+                        element_values.pop(f'addon_selected_{addon_id}', None)
+                    else:
+                        element_values[f'addon_selected_{addon_id}'] = '1'
                 for person in people:
                     pid = int(person['id'])
                     person_override = data.get(f'element_addon_person_{element_id}_{addon_id}_{pid}', '').strip()
