@@ -103,6 +103,30 @@ class ReservationLifecycleTests(unittest.TestCase):
                 connection, 3, 10, '2026-11-12', '2026-11-16'))
         engine.dispose()
 
+    def test_validate_allocations_via_sqlalchemy_connection(self):
+        """Element ownership and overlap validation accept SQLAlchemy connections."""
+        from sqlalchemy import create_engine, text
+
+        engine = create_engine('sqlite:///:memory:')
+        with engine.begin() as connection:
+            connection.execute(text(
+                'CREATE TABLE setup_elements (id INTEGER, company_id INTEGER, active INTEGER)'))
+            connection.execute(text(
+                'CREATE TABLE reservations (id INTEGER, company_id INTEGER, state TEXT)'))
+            connection.execute(text(
+                'CREATE TABLE reservation_elements (reservation_id INTEGER, company_id INTEGER, '
+                'element_id INTEGER, arrival_date TEXT, departure_date TEXT)'))
+            connection.execute(text('INSERT INTO setup_elements VALUES (10,1,1),(11,2,1),(12,1,0)'))
+            valid = [{'element_id': 10, 'arrival_date': '2026-11-10',
+                      'departure_date': '2026-11-15'}]
+            validate_allocations(connection, 1, valid)
+            for forbidden in (11, 12):
+                with self.subTest(element_id=forbidden), self.assertRaises(ReservationError):
+                    validate_allocations(connection, 1, [{
+                        'element_id': forbidden, 'arrival_date': '2026-11-10',
+                        'departure_date': '2026-11-15'}])
+        engine.dispose()
+
     def test_cancellation_is_terminal(self):
         self.assertFalse(allowed_transition('CANCELLED', 'CONFIRMED'))
         self.assertFalse(allowed_transition('CANCELLED', 'ENQUIRY_HELD'))
