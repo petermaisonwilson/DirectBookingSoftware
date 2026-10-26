@@ -90,6 +90,9 @@ def register_master_enquiry_routes(app):
             body += f'<fieldset><legend>{esc(item["name"])}</legend>'
             for addon in addons:
                 aid = int(addon['id'])
+                options = {str(x['option_code']) for x in when_options(database, company_id, aid)}
+                if 'selected_days' in options:
+                    body += f'<label>{esc(addon["name"])} — individual selected days</label><textarea name="element_selected_days_{eid}_{aid}" placeholder="YYYY-MM-DD, quantity (blank uses shared days)"></textarea>'
                 if addon_person_mode(database, company_id, aid) == 'person_type':
                     for person in people:
                         pid = int(person['id'])
