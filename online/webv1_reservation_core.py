@@ -43,7 +43,9 @@ def validate_allocations(connection, company_id, allocations, exclude_reservatio
         element_id = int(allocation['element_id'])
         arrival, departure = str(allocation['arrival_date']), str(allocation['departure_date'])
         try:
-            if date.fromisoformat(arrival) >= date.fromisoformat(departure):
+            arrival_day, departure_day = date.fromisoformat(arrival), date.fromisoformat(departure)
+            if (arrival_day.isoformat() != arrival or departure_day.isoformat() != departure
+                    or arrival_day >= departure_day):
                 raise ValueError()
         except ValueError as exc:
             raise ReservationError('Invalid arrival or departure dates.') from exc

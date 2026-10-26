@@ -27,6 +27,7 @@ on:
 
 jobs:
   test-web-v1-windows:
+    needs: reservation-portability
     permissions:
       contents: write
     runs-on: windows-latest

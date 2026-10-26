@@ -137,7 +137,9 @@ class ReservationIntegrationTests(unittest.TestCase):
                        lambda: change_reservation_state(self.db, self.other, rid, 'CANCELLED', NOW),
                        lambda: self.create([dict(self.allocation(), element_id=self.foreign)]),
                        lambda: self.create([self.allocation(1), self.allocation(1)]),
-                       lambda: self.create([self.allocation(1, end='2026-11-01')])):
+                       lambda: self.create([self.allocation(1, end='2026-11-01')]),
+                       lambda: self.create([self.allocation(1, start='bad')]),
+                       lambda: self.create([self.allocation(1, start='20261101')])):
             with self.assertRaises(ReservationError):
                 action()
         self.assertEqual(len(self.summary(rid)['history']), 1)

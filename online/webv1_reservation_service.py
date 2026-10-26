@@ -16,9 +16,17 @@ def _history(connection, company_id, reservation_id, event, when, actor, *, old=
 def _check_closures_and_holds(connection, company_id, allocations):
     """Recheck live inventory guards under the reservation write lock."""
     from .database import iso_now
+    from datetime import date
     now = iso_now()
     for item in allocations:
         item = _mapping(item)
+        arrival, departure = str(item['arrival_date']), str(item['departure_date'])
+        try:
+            first, last = date.fromisoformat(arrival), date.fromisoformat(departure)
+            if first.isoformat() != arrival or last.isoformat() != departure or first >= last:
+                raise ValueError()
+        except ValueError as exc:
+            raise ReservationError('Invalid arrival or departure dates.') from exc
         params = {'company_id': company_id, 'element_id': int(item['element_id']),
                   'arrival': str(item['arrival_date']), 'departure': str(item['departure_date']),
                   'now': now}
