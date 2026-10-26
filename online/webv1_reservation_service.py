@@ -1,7 +1,8 @@
 """Write operations for the single-record reservation system.
 
-All changes use one SQLite write transaction, so a failed availability check
-cannot leave behind half a reservation.
+All mutations use the shared reservation transaction boundary. The core SQL
+and legacy availability queries still require PostgreSQL compatibility work
+before the full reservation workflow can run on PostgreSQL.
 """
 import json
 
