@@ -43,33 +43,49 @@ def change_reservation_state(database, company_id, reservation_id, state, update
                  old=previous['state'] if previous else None, new=state, reason=reason)
 
 
+def _read_rows(database, sql, parameters):
+    """Read reservation rows through the configured database engine.
+
+    SQLAlchemy uses named parameters on both SQLite and PostgreSQL. Legacy
+    SQLite feature connections are retained until the complete write path is
+    converted, rather than silently rewriting SQL.
+    """
+    from sqlalchemy import text
+
+    if database.is_sqlite:
+        with database.connect() as connection:
+            return [dict(row) for row in connection.execute(
+                sql, parameters).fetchall()]
+    with database.sql_connection() as connection:
+        return [dict(row) for row in connection.execute(
+            text(sql), parameters).mappings().all()]
+
+
 def reservation_summary(database, company_id, reservation_id):
-    """Return the master record and its Elements, scoped to one client."""
-    with database.connect() as connection:
-        record = connection.execute(
-            'SELECT * FROM reservations WHERE company_id=? AND id=?',
-            (company_id, reservation_id)).fetchone()
-        if record is None:
-            return None
-        elements = connection.execute(
-            'SELECT re.*, se.name AS element_name FROM reservation_elements re '
-            'LEFT JOIN setup_elements se ON se.id=re.element_id AND se.company_id=re.company_id '
-            'WHERE re.company_id=? AND re.reservation_id=? ORDER BY re.id',
-            (company_id, reservation_id)).fetchall()
-        history = connection.execute(
-            'SELECT * FROM reservation_history WHERE company_id=? AND reservation_id=? ORDER BY id DESC',
-            (company_id, reservation_id)).fetchall()
-        return {'reservation': dict(record), 'elements': [dict(item) for item in elements],
-                'history': [dict(item) for item in history]}
+    """Return the master record, Elements and history for one tenant."""
+    params = {'company_id': company_id, 'reservation_id': reservation_id}
+    records = _read_rows(
+        database, 'SELECT * FROM reservations WHERE company_id=:company_id AND id=:reservation_id', params)
+    if not records:
+        return None
+    elements = _read_rows(
+        database,
+        'SELECT re.*, se.name AS element_name FROM reservation_elements re '
+        'LEFT JOIN setup_elements se ON se.id=re.element_id AND se.company_id=re.company_id '
+        'WHERE re.company_id=:company_id AND re.reservation_id=:reservation_id ORDER BY re.id',
+        params)
+    history = _read_rows(
+        database,
+        'SELECT * FROM reservation_history WHERE company_id=:company_id '
+        'AND reservation_id=:reservation_id ORDER BY id DESC', params)
+    return {'reservation': records[0], 'elements': elements, 'history': history}
 
 
 def list_reservations(database, company_id, *, state=None):
-    """List master records for the current client only."""
-    with database.connect() as connection:
-        sql = 'SELECT * FROM reservations WHERE company_id=?'
-        params = [company_id]
-        if state is not None:
-            sql += ' AND state=?'
-            params.append(state)
-        sql += ' ORDER BY created_at DESC,id DESC'
-        return [dict(row) for row in connection.execute(sql, params).fetchall()]
+    """List master records for the current tenant on either engine."""
+    sql = 'SELECT * FROM reservations WHERE company_id=:company_id'
+    params = {'company_id': company_id}
+    if state is not None:
+        sql += ' AND state=:state'
+        params['state'] = state
+    return _read_rows(database, sql + ' ORDER BY created_at DESC,id DESC', params)
