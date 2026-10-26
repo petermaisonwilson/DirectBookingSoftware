@@ -252,6 +252,20 @@ class ReservationIntegrationTests(unittest.TestCase):
             results = list(pool.map(run, actions))
         self.assertEqual(sorted(results), ['conflict', 'won'])
 
+    def test_write_transaction_owns_its_isolation(self):
+        if self.db.is_sqlite:
+            with self.db.reservation_write_transaction(self.cid) as c:
+                self.assertTrue(c.in_transaction)
+            return
+        original = self.db.engine
+        try:
+            self.db.engine = original.execution_options(isolation_level='REPEATABLE READ')
+            with self.db.reservation_write_transaction(self.cid) as c:
+                self.assertEqual(c.execute(text('SHOW transaction_isolation')).scalar_one(), 'read committed')
+            self.race([lambda: self.create(), lambda: self.create()])
+        finally:
+            self.db.engine = original
+
     def test_concurrent_creation_has_exactly_one_winner(self):
         self.race([lambda: self.create(), lambda: self.create()])
         self.assertEqual(len(list_reservations(self.db, self.cid)), 1)

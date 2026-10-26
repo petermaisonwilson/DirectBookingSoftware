@@ -172,10 +172,16 @@ class OnlineDatabase:
                 connection.execute('BEGIN IMMEDIATE')
                 yield connection
         else:
-            with self.sql_connection() as connection:
-                connection.execute(text('SELECT pg_advisory_xact_lock(:namespace, :tenant)'),
-                                   {'namespace': 302, 'tenant': int(company_id)})
-                yield connection
+            assert self.engine is not None
+            # A writer waiting for the advisory lock must see the winner's
+            # committed inventory. REPEATABLE READ could retain the snapshot
+            # taken by the lock SELECT before it waited, so own this setting
+            # explicitly rather than depending on the server default.
+            with self.engine.connect().execution_options(isolation_level='READ COMMITTED') as connection:
+                with connection.begin():
+                    connection.execute(text('SELECT pg_advisory_xact_lock(:namespace, :tenant)'),
+                                       {'namespace': 302, 'tenant': int(company_id)})
+                    yield connection
 
     @contextmanager
     def sql_connection(self) -> Iterator[Connection]:

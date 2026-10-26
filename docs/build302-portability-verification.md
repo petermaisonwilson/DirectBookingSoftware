@@ -69,13 +69,17 @@ additionally checks Setup, customers, enquiry editing/search, add-ons, hold timi
 persistent data, launcher behaviour, imports and server health.
 
 The report commit reruns these automated checks, including the final malformed-date
-cases. Its workflow result must be green before treating that commit as accepted.
+cases. A follow-up isolation regression brings the integration suite to fourteen
+tests per engine and verifies the READ COMMITTED override described below. Its workflow result must be green before treating that commit as accepted.
 
 ## Concurrency mechanism and its boundary
 
 The existing transaction design is retained: SQLite uses `BEGIN IMMEDIATE`;
 PostgreSQL uses a tenant-scoped transaction advisory lock in namespace 302.
-Validation, writes and history all happen before that transaction commits. A
+Validation, writes and history all happen before that transaction commits. PostgreSQL reservation transactions explicitly
+use READ COMMITTED, including when the engine default is REPEATABLE READ, so the
+lock acquisition cannot retain a stale pre-wait inventory snapshot. The dedicated
+isolation regression also races writers under that non-default engine setting. A
 waiting writer rechecks committed inventory and is rejected on conflict.
 
 This guarantee applies to writers using `reservation_write_transaction` and the
