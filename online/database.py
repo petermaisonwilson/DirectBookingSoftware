@@ -166,6 +166,28 @@ class OnlineDatabase:
             connection.close()
 
     @contextmanager
+    def reservation_write_connection(self):
+        """Transaction boundary for reservation writes on both database engines.
+
+        SQLite obtains its write lock before availability checks. PostgreSQL
+        serializes reservation writers per tenant via a transaction-scoped
+        advisory lock; callers must pass the company ID before reading inventory.
+        """
+        raise RuntimeError('Use reservation_write_transaction(company_id)')
+
+    @contextmanager
+    def reservation_write_transaction(self, company_id: int):
+        if self.is_sqlite:
+            with self.connect() as connection:
+                connection.execute('BEGIN IMMEDIATE')
+                yield connection
+        else:
+            with self.sql_connection() as connection:
+                connection.execute(text('SELECT pg_advisory_xact_lock(:namespace, :tenant)'),
+                                   {'namespace': 302, 'tenant': int(company_id)})
+                yield connection
+
+    @contextmanager
     def sql_connection(self) -> Iterator[Connection]:
         if self.is_sqlite:
             raise RuntimeError("SQLAlchemy connection is reserved for the PostgreSQL runtime")
