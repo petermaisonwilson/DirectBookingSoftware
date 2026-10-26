@@ -5,6 +5,7 @@ PostgreSQL: set DBS_TEST_POSTGRES_URL to a disposable migrated test database.
 The PostgreSQL URL must name a dedicated database ending in _test.
 """
 import os
+import sqlite3
 from concurrent.futures import ThreadPoolExecutor
 from pathlib import Path
 from tempfile import TemporaryDirectory
@@ -17,6 +18,7 @@ from alembic import command
 from alembic.config import Config
 from sqlalchemy import MetaData, create_engine, insert, text
 from sqlalchemy.engine import make_url
+from sqlalchemy.exc import DBAPIError
 
 from online.config import RuntimeConfig
 from online.database import OnlineDatabase
@@ -42,8 +44,30 @@ class ReservationIntegrationTests(unittest.TestCase):
             cls.url = 'sqlite:///' + str(Path(cls.temp.name) / 'reservations.sqlite')
         config = Config('alembic.ini')
         config.set_main_option('sqlalchemy.url', cls.url.replace('%', '%%'))
-        command.upgrade(config, 'head')
+        command.upgrade(config, '0009_reservation_history')
         cls.engine = create_engine(cls.url)
+        cls.metadata = MetaData()
+        cls.metadata.reflect(cls.engine)
+        # Verify additive integrity migrations preserve existing tenant data.
+        with cls.engine.begin() as c:
+            def seed(table, **values):
+                return c.execute(insert(cls.metadata.tables[table]).values(**values)).inserted_primary_key[0]
+            cid = seed('companies', name='migration-test-' + uuid4().hex, created_at=NOW)
+            eid = seed('setup_elements', company_id=cid, name='Migration pitch',
+                       element_type='Camping', pricing_method='per_night')
+            customer = seed('customer_records', company_id=cid, first_name='Existing',
+                            last_name='Customer', created_at=NOW, updated_at=NOW)
+            rid = seed('reservations', company_id=cid, customer_id=customer, reference='preserved',
+                       state='ENQUIRY_HELD', created_at=NOW, updated_at=NOW)
+            seed('reservation_elements', company_id=cid, reservation_id=rid, element_id=eid,
+                 arrival_date='2026-11-01', departure_date='2026-11-05')
+            seed('reservation_history', company_id=cid, reservation_id=rid, event_type='CREATED',
+                 actor='Existing staff', created_at=NOW)
+        command.upgrade(config, 'head')
+        with cls.engine.connect() as c:
+            assert c.execute(text('SELECT customer_id FROM reservations WHERE id=:rid'), {'rid': rid}).scalar_one() == customer
+            assert c.execute(text('SELECT element_id FROM reservation_elements WHERE reservation_id=:rid'), {'rid': rid}).scalar_one() == eid
+            assert c.execute(text('SELECT actor FROM reservation_history WHERE reservation_id=:rid'), {'rid': rid}).scalar_one() == 'Existing staff'
         cls.metadata = MetaData()
         cls.metadata.reflect(cls.engine)
         cls.db = OnlineDatabase(RuntimeConfig('test', cls.url, False, False, '127.0.0.1', 8000))
@@ -118,6 +142,72 @@ class ReservationIntegrationTests(unittest.TestCase):
                 action()
         self.assertEqual(len(self.summary(rid)['history']), 1)
         self.assertEqual(len(list_reservations(self.db, self.cid)), 1)
+
+    def test_customer_ownership_is_enforced_at_service_boundary(self):
+        customer = self.add('customer_records', company_id=self.other, first_name='Other',
+                            last_name='Tenant', created_at=NOW, updated_at=NOW)
+        with self.assertRaisesRegex(ReservationError, 'Customer'):
+            create_enquiry(self.db, self.cid, uuid4().hex, customer,
+                           [self.allocation()], NOW)
+        self.assertEqual(list_reservations(self.db, self.cid), [])
+        rid = create_enquiry(self.db, self.other, uuid4().hex, customer,
+                             [dict(self.allocation(), element_id=self.foreign)], NOW)
+        self.assertEqual(reservation_summary(self.db, self.other, rid)['reservation']['customer_id'], customer)
+
+    def test_concurrent_creation_against_reinstatement_has_one_winner(self):
+        rid = self.create()
+        change_reservation_state(self.db, self.cid, rid, 'ENQUIRY_RELEASED', NOW)
+        self.race([lambda: self.create(), lambda: change_reservation_state(
+            self.db, self.cid, rid, 'ENQUIRY_HELD', NOW)])
+        blocking = [r for r in list_reservations(self.db, self.cid) if r['state'] == 'ENQUIRY_HELD']
+        self.assertEqual(len(blocking), 1)
+
+    def test_closures_and_live_holds_block_all_central_writes(self):
+        rid = self.create()
+        change_reservation_state(self.db, self.cid, rid, 'ENQUIRY_RELEASED', NOW)
+        self.add('element_closures', company_id=self.cid, element_id=self.elements[0],
+                 start_date='2026-11-01', end_date='2026-11-05', created_at=NOW, updated_at=NOW)
+        self.add('element_holds', company_id=self.cid, element_id=self.elements[1],
+                 session_token='live', arrival_date='2026-11-01', departure_date='2026-11-05',
+                 renewal_required_at=NOW, expires_at='2999-01-01T00:00:00+00:00', created_at=NOW, updated_at=NOW)
+        self.add('element_holds', company_id=self.cid, element_id=self.elements[2],
+                 session_token='expired', arrival_date='2026-11-01', departure_date='2026-11-05',
+                 renewal_required_at=NOW, expires_at='2000-01-01T00:00:00+00:00', created_at=NOW, updated_at=NOW)
+        before = self.summary(rid)
+        for action in (lambda: self.create(), lambda: self.create([self.allocation(1)]),
+                       lambda: amend_reservation(self.db, self.cid, rid, [self.allocation(1)], NOW),
+                       lambda: change_reservation_state(self.db, self.cid, rid, 'ENQUIRY_HELD', NOW)):
+            with self.assertRaises(ReservationError):
+                action()
+        self.assertEqual(self.summary(rid), before)
+        self.create([self.allocation(2)])  # Expired holds do not block or require destructive cleanup.
+
+    def test_database_rejects_cross_tenant_references(self):
+        rid = self.create()
+        customer = self.add('customer_records', company_id=self.other, first_name='Other',
+                            last_name='Tenant', created_at=NOW, updated_at=NOW)
+        cases = [
+            ('UPDATE reservations SET customer_id=:foreign WHERE company_id=:company_id AND id=:rid', customer),
+            ('UPDATE reservation_elements SET element_id=:foreign WHERE company_id=:company_id AND reservation_id=:rid', self.foreign),
+            ('UPDATE reservation_elements SET reservation_id=:foreign WHERE company_id=:company_id AND reservation_id=:rid',
+             self.create([dict(self.allocation(), element_id=self.foreign)], company=self.other)),
+            ('UPDATE reservation_history SET reservation_id=:foreign WHERE company_id=:company_id AND reservation_id=:rid', rid),
+        ]
+        for sql, foreign in cases:
+            with self.assertRaises((DBAPIError, sqlite3.DatabaseError)):
+                with self.db.reservation_write_transaction(self.cid) as c:
+                    _execute(c, sql, {'foreign': foreign, 'company_id': self.cid, 'rid': rid})
+        self.assertEqual(self.summary(rid)['elements'][0]['element_id'], self.elements[0])
+        self.assertIsNone(self.summary(rid)['reservation']['customer_id'])
+
+    def test_history_is_append_only_in_database(self):
+        rid = self.create()
+        for sql in ("UPDATE reservation_history SET actor='changed' WHERE company_id=:company_id AND reservation_id=:rid",
+                    "DELETE FROM reservation_history WHERE company_id=:company_id AND reservation_id=:rid"):
+            with self.assertRaisesRegex((DBAPIError, sqlite3.DatabaseError), 'append-only'):
+                with self.db.reservation_write_transaction(self.cid) as c:
+                    _execute(c, sql, {'company_id': self.cid, 'rid': rid})
+        self.assertEqual(self.summary(rid)['history'][0]['actor'], 'Peter')
 
     def test_rollback_includes_elements_total_and_history(self):
         rid = self.create()

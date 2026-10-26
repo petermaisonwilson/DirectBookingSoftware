@@ -125,6 +125,12 @@ def create_reservation(connection, company_id, reference, customer_id, allocatio
         raise ReservationError('An Enquiry reference is required.')
     if not str(currency).strip() or len(str(currency)) != 3:
         raise ReservationError('A valid three-letter currency is required.')
+    if customer_id is not None:
+        customer = _execute(connection,
+            'SELECT id FROM customer_records WHERE company_id=:company_id AND id=:customer_id',
+            {'company_id': company_id, 'customer_id': customer_id}).fetchone()
+        if customer is None:
+            raise ReservationError('Customer does not belong to this client.')
     validate_allocations(connection, company_id, allocations)
     from .webv1_status_availability import _booking_conflict, _enquiry_conflict
     for item in allocations:

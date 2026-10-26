@@ -1,7 +1,7 @@
 """Atomic reservation writes and tenant-scoped reads on SQLite and PostgreSQL."""
 import json
 
-from .webv1_reservation_core import create_reservation, replace_reservation_elements, transition, _execute, _mapping
+from .webv1_reservation_core import create_reservation, replace_reservation_elements, transition, _execute, _mapping, ReservationError
 
 
 def _history(connection, company_id, reservation_id, event, when, actor, *, old=None, new=None, reason='', details=None):
@@ -13,9 +13,32 @@ def _history(connection, company_id, reservation_id, event, when, actor, *, old=
          'details': json.dumps(details or {}, separators=(',', ':')), 'when': when})
 
 
+def _check_closures_and_holds(connection, company_id, allocations):
+    """Recheck live inventory guards under the reservation write lock."""
+    from .database import iso_now
+    now = iso_now()
+    for item in allocations:
+        item = _mapping(item)
+        params = {'company_id': company_id, 'element_id': int(item['element_id']),
+                  'arrival': str(item['arrival_date']), 'departure': str(item['departure_date']),
+                  'now': now}
+        closed = _execute(connection,
+            'SELECT id FROM element_closures WHERE company_id=:company_id AND element_id=:element_id '
+            'AND date(start_date)<date(:departure) AND date(end_date)>date(:arrival) LIMIT 1', params).fetchone()
+        if closed is not None:
+            raise ReservationError('Element is closed for the selected dates.')
+        held = _execute(connection,
+            'SELECT id FROM element_holds WHERE company_id=:company_id AND element_id=:element_id '
+            'AND date(arrival_date)<date(:departure) AND date(departure_date)>date(:arrival) '
+            'AND expires_at>:now LIMIT 1', params).fetchone()
+        if held is not None:
+            raise ReservationError('Element is temporarily held in a basket.')
+
+
 def create_enquiry(database, company_id, reference, customer_id, allocations, created_at,
                    *, currency='EUR', notes='', actor='System'):
     with database.reservation_write_transaction(company_id) as connection:
+        _check_closures_and_holds(connection, company_id, allocations)
         rid = create_reservation(connection, company_id, reference, customer_id,
                                  allocations, created_at, currency=currency, notes=notes)
         _history(connection, company_id, rid, 'CREATED', created_at, actor,
@@ -25,6 +48,7 @@ def create_enquiry(database, company_id, reference, customer_id, allocations, cr
 
 def amend_reservation(database, company_id, reservation_id, allocations, updated_at, *, actor='System', reason=''):
     with database.reservation_write_transaction(company_id) as connection:
+        _check_closures_and_holds(connection, company_id, allocations)
         replace_reservation_elements(connection, company_id, reservation_id, allocations, updated_at)
         _history(connection, company_id, reservation_id, 'AMENDED', updated_at, actor,
                  reason=reason, details={'element_count': len(allocations)})
@@ -35,6 +59,12 @@ def change_reservation_state(database, company_id, reservation_id, state, update
         previous = _execute(connection,
             'SELECT state FROM reservations WHERE company_id=:company_id AND id=:reservation_id',
             {'company_id': company_id, 'reservation_id': reservation_id}).fetchone()
+        if state in ('ENQUIRY_HELD', 'CONFIRMED'):
+            allocations = _execute(connection,
+                'SELECT element_id,arrival_date,departure_date FROM reservation_elements '
+                'WHERE company_id=:company_id AND reservation_id=:reservation_id',
+                {'company_id': company_id, 'reservation_id': reservation_id}).fetchall()
+            _check_closures_and_holds(connection, company_id, allocations)
         transition(connection, company_id, reservation_id, state, updated_at)
         _history(connection, company_id, reservation_id, 'STATUS_CHANGED', updated_at, actor,
                  old=_mapping(previous)['state'] if previous else None, new=state, reason=reason)
@@ -44,8 +74,7 @@ def _read_rows(database, sql, parameters):
     """Read reservation rows through the configured database engine.
 
     SQLAlchemy uses named parameters on both SQLite and PostgreSQL. Legacy
-    SQLite feature connections are retained until the complete write path is
-    converted, rather than silently rewriting SQL.
+    SQLite uses its native connection; PostgreSQL uses SQLAlchemy text().
     """
     from sqlalchemy import text
 
