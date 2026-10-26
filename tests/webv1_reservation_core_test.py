@@ -72,6 +72,37 @@ class ReservationLifecycleTests(unittest.TestCase):
         self.assertEqual(list_reservations(database, 1, state='CONFIRMED'), [])
         engine.dispose()
 
+    def test_inventory_conflict_via_sqlalchemy_connection(self):
+        """Named-parameter inventory checks work with SQLAlchemy connections."""
+        from sqlalchemy import create_engine, text
+
+        engine = create_engine('sqlite:///:memory:')
+        with engine.begin() as connection:
+            connection.execute(text(
+                'CREATE TABLE reservations (id INTEGER, company_id INTEGER, state TEXT)'))
+            connection.execute(text(
+                'CREATE TABLE reservation_elements (reservation_id INTEGER, company_id INTEGER, '
+                'element_id INTEGER, arrival_date TEXT, departure_date TEXT)'))
+            connection.execute(text(
+                "INSERT INTO reservations VALUES (1,1,'CONFIRMED'),"
+                "(2,2,'CONFIRMED'),(3,1,'ENQUIRY_RELEASED')"))
+            connection.execute(text(
+                "INSERT INTO reservation_elements VALUES "
+                "(1,1,10,'2026-11-10','2026-11-15'),"
+                "(2,2,10,'2026-11-10','2026-11-15'),"
+                "(3,1,11,'2026-11-10','2026-11-15')"))
+            self.assertIsNotNone(inventory_conflict(
+                connection, 1, 10, '2026-11-12', '2026-11-16'))
+            self.assertIsNone(inventory_conflict(
+                connection, 1, 10, '2026-11-15', '2026-11-20'))
+            self.assertIsNone(inventory_conflict(
+                connection, 1, 10, '2026-11-12', '2026-11-16', exclude_reservation_id=1))
+            self.assertIsNone(inventory_conflict(
+                connection, 1, 11, '2026-11-12', '2026-11-16'))
+            self.assertIsNone(inventory_conflict(
+                connection, 3, 10, '2026-11-12', '2026-11-16'))
+        engine.dispose()
+
     def test_cancellation_is_terminal(self):
         self.assertFalse(allowed_transition('CANCELLED', 'CONFIRMED'))
         self.assertFalse(allowed_transition('CANCELLED', 'ENQUIRY_HELD'))
