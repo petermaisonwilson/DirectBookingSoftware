@@ -32,7 +32,8 @@ def inventory_conflict(connection, company_id, element_id, arrival, departure, e
     # sqlite3 accepts named placeholders directly; SQLAlchemy requires text().
     if hasattr(connection, 'dialect'):
         from sqlalchemy import text
-        return connection.execute(text(sql + " LIMIT 1"), params).fetchone()
+        row = connection.execute(text(sql + " LIMIT 1"), params).fetchone()
+        return None if row is None else _mapping(row)
     return connection.execute(sql + " LIMIT 1", params).fetchone()
 
 def migrated_inventory_conflict(connection, company_id, element_id, arrival, departure):
