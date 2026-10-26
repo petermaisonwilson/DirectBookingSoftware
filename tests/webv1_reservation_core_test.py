@@ -5,6 +5,38 @@ from online.webv1_reservation_core import allowed_transition, inventory_conflict
 
 
 class ReservationLifecycleTests(unittest.TestCase):
+    def test_master_reservation_read_paths_are_tenant_scoped(self):
+        from pathlib import Path
+        from tempfile import TemporaryDirectory
+        from online.database import Database
+        from online.webv1_reservation_service import reservation_summary, list_reservations
+
+        with TemporaryDirectory() as directory:
+            database = Database(Path(directory) / 'reservation-read.sqlite')
+            with database.connect() as connection:
+                connection.executescript("""
+                    CREATE TABLE reservations (
+                        id INTEGER PRIMARY KEY, company_id INTEGER, state TEXT, created_at TEXT);
+                    CREATE TABLE setup_elements (id INTEGER, company_id INTEGER, name TEXT);
+                    CREATE TABLE reservation_elements (
+                        id INTEGER, company_id INTEGER, reservation_id INTEGER, element_id INTEGER);
+                    CREATE TABLE reservation_history (
+                        id INTEGER, company_id INTEGER, reservation_id INTEGER, event_type TEXT);
+                    INSERT INTO reservations VALUES
+                        (1, 1, 'ENQUIRY_HELD', '2026-10-26'),
+                        (2, 2, 'CONFIRMED', '2026-10-26');
+                    INSERT INTO setup_elements VALUES (10,1,'Pitch A'),(20,2,'Pitch B');
+                    INSERT INTO reservation_elements VALUES (1,1,1,10),(2,2,2,20);
+                    INSERT INTO reservation_history VALUES (1,1,1,'CREATED'),(2,2,2,'CREATED');
+                """)
+            summary = reservation_summary(database, 1, 1)
+            self.assertEqual(summary['reservation']['id'], 1)
+            self.assertEqual(summary['elements'][0]['element_name'], 'Pitch A')
+            self.assertEqual(len(summary['history']), 1)
+            self.assertIsNone(reservation_summary(database, 1, 2))
+            self.assertEqual([row['id'] for row in list_reservations(database, 1)], [1])
+            self.assertEqual(list_reservations(database, 1, state='CONFIRMED'), [])
+
     def test_cancellation_is_terminal(self):
         self.assertFalse(allowed_transition('CANCELLED', 'CONFIRMED'))
         self.assertFalse(allowed_transition('CANCELLED', 'ENQUIRY_HELD'))
