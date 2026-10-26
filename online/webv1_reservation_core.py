@@ -135,11 +135,18 @@ def create_reservation(connection, company_id, reference, customer_id, allocatio
         if _enquiry_conflict(connection, company_id, element_id, arrival, departure):
             raise ReservationError('Element is already held by another Enquiry.')
     total = sum(float(item.get('total_amount') or 0) for item in allocations)
-    cursor = connection.execute(
+    insert_sql = (
         'INSERT INTO reservations (company_id,reference,customer_id,state,currency,total_amount,notes,created_at,updated_at) '
-        'VALUES (?,?,?,?,?,?,?,?,?)',
-        (company_id, reference, customer_id, state, currency, total, notes, created_at, created_at))
-    reservation_id = int(cursor.lastrowid)
+        'VALUES (:company_id,:reference,:customer_id,:state,:currency,:total_amount,:notes,:created_at,:updated_at)')
+    insert_params = {'company_id': company_id, 'reference': reference, 'customer_id': customer_id,
+                     'state': state, 'currency': currency, 'total_amount': total,
+                     'notes': notes, 'created_at': created_at, 'updated_at': created_at}
+    if hasattr(connection, 'dialect') and connection.dialect.name == 'postgresql':
+        cursor = _execute(connection, insert_sql + ' RETURNING id', insert_params)
+        reservation_id = int(cursor.scalar_one())
+    else:
+        cursor = _execute(connection, insert_sql, insert_params)
+        reservation_id = int(cursor.lastrowid)
     for item in allocations:
         connection.execute(
             'INSERT INTO reservation_elements (company_id,reservation_id,element_id,arrival_date,departure_date,'
