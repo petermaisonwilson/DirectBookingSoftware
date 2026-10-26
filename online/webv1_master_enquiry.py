@@ -273,7 +273,8 @@ def register_master_enquiry_routes(app):
                     person_override = data.get(f'element_addon_person_{element_id}_{addon_id}_{pid}', '').strip()
                     if person_override != '':
                         element_values[f'addon_person_{addon_id}_{pid}'] = person_override
-                        element_values[f'addon_selected_{addon_id}'] = '1'
+                        if person_override != '0':
+                            element_values[f'addon_selected_{addon_id}'] = '1'
             element_values['element_id'] = str(element_id)
             element_values['element_type'] = str(elements_by_id[element_id]['element_type'])
             calculation, errors, message = _calculate(database, company_id, element_values)
