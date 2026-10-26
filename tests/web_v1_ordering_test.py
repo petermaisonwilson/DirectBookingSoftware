@@ -1,4 +1,6 @@
 from __future__ import annotations
+from operational_backend import create_app
+from online.sql import execute_sql, insert_sql
 
 import sys
 import tempfile
@@ -8,7 +10,7 @@ sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
 from fastapi.testclient import TestClient
 
-from online.app import COOKIE_NAME, create_app
+from online.app import COOKIE_NAME
 from online.webv1 import register_web_v1
 
 
@@ -55,8 +57,8 @@ def main() -> None:
                 ('Ordering Infant', 'OI'),
                 ('Ordering Child U8', 'OC8'),
             ):
-                ids[name] = int(c.execute(
-                    'INSERT INTO setup_person_types(company_id,name,short_name,active,ask_age) VALUES (?,?,?,?,?)',
+                ids[name] = int(insert_sql(c,
+                    'INSERT INTO setup_person_types(company_id,name,short_name,active,ask_age) VALUES (:q141_0,:q141_1,:q141_2,:q141_3,:q141_4)',
                     (company, name, short, 1, 0),
                 ).lastrowid)
 
@@ -75,8 +77,8 @@ def main() -> None:
         assert_in_order(requirements.text, desired_names)
 
         with db.connect() as c:
-            stored = c.execute(
-                'SELECT item_id FROM setup_item_order WHERE company_id=? AND list_key=? ORDER BY position',
+            stored = execute_sql(c,
+                'SELECT item_id FROM setup_item_order WHERE company_id=:q140_0 AND list_key=:q140_1 ORDER BY position',
                 (company, 'person_types'),
             ).fetchall()
             assert [int(r['item_id']) for r in stored] == [int(x) for x in order_ids]

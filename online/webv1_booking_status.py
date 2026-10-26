@@ -1,4 +1,5 @@
 from __future__ import annotations
+from .sql import execute_sql, insert_sql, local_schema, column_rows
 
 import json
 from datetime import datetime, timedelta, timezone
@@ -50,64 +51,50 @@ ON booking_status_definitions(company_id, active, display_order, name);
 
 
 def _columns(connection, table: str) -> set[str]:
-    return {str(r['name']) for r in connection.execute(f'PRAGMA table_info({table})').fetchall()}
+    return {str(r['name']) for r in column_rows(connection, table)}
 
 
 def _seed_defaults(connection) -> None:
     now = iso_now()
-    companies = connection.execute('SELECT id FROM companies').fetchall()
+    companies = execute_sql(connection, 'SELECT id FROM companies').fetchall()
     for company in companies:
         cid = int(company['id'])
-        existing = int(connection.execute('SELECT COUNT(*) AS n FROM booking_status_definitions WHERE company_id=?', (cid,)).fetchone()['n'])
+        existing = int(execute_sql(connection, 'SELECT COUNT(*) AS n FROM booking_status_definitions WHERE company_id=:q410_0', (cid,)).fetchone()['n'])
         if existing:
             continue
         for name, short_name, colour, order_no, state, blocks, expiry in DEFAULT_STATUSES:
-            connection.execute(
-                '''INSERT INTO booking_status_definitions
-                   (company_id,name,short_name,colour,display_order,internal_state,blocks_availability,expiry_minutes,automation_config_json,active,created_at,updated_at)
-                   VALUES (?,?,?,?,?,?,?,?,?,1,?,?)''',
+            execute_sql(connection,
+                'INSERT INTO booking_status_definitions\n                   (company_id,name,short_name,colour,display_order,internal_state,blocks_availability,expiry_minutes,automation_config_json,active,created_at,updated_at)\n                   VALUES (:q397_0,:q397_1,:q397_2,:q397_3,:q397_4,:q397_5,:q397_6,:q397_7,:q397_8,1,:q397_9,:q397_10)',
                 (cid, name, short_name, colour, order_no, state, blocks, expiry, '{}', now, now),
             )
 
 
 def initialise_booking_statuses(database) -> None:
     with database.connect() as c:
-        c.executescript(SCHEMA)
+        local_schema(c, SCHEMA)
         if 'workflow_status_id' not in _columns(c, 'enquiries'):
-            c.execute('ALTER TABLE enquiries ADD COLUMN workflow_status_id INTEGER')
+            execute_sql(c, 'ALTER TABLE enquiries ADD COLUMN workflow_status_id INTEGER')
         if 'availability_expires_at' not in _columns(c, 'enquiries'):
-            c.execute('ALTER TABLE enquiries ADD COLUMN availability_expires_at TEXT')
+            execute_sql(c, 'ALTER TABLE enquiries ADD COLUMN availability_expires_at TEXT')
         if 'workflow_status_id' not in _columns(c, 'bookings'):
-            c.execute('ALTER TABLE bookings ADD COLUMN workflow_status_id INTEGER')
+            execute_sql(c, 'ALTER TABLE bookings ADD COLUMN workflow_status_id INTEGER')
         _seed_defaults(c)
         if 'system_code' not in _columns(c, 'booking_status_definitions'):
-            c.execute('ALTER TABLE booking_status_definitions ADD COLUMN system_code TEXT')
+            execute_sql(c, 'ALTER TABLE booking_status_definitions ADD COLUMN system_code TEXT')
         # Stable machine meanings for finance-driven statuses. These are assigned once
         # and survive later client edits to the visible status name/short name.
         for status_name, system_code in (('Keep as Quote','HELD'),('Enquiry / Held','HELD'),('Payment Pending','PAYMENT_PENDING'),('Deposit Paid','DEPOSIT_PAID'),('Balance Paid','BALANCE_PAID'),('On Site','ON_SITE'),('Released / Cancelled','RELEASED')):
-            c.execute('UPDATE booking_status_definitions SET system_code=? WHERE system_code IS NULL AND name=? COLLATE NOCASE', (system_code, status_name))
+            execute_sql(c, 'UPDATE booking_status_definitions SET system_code=:q398_0 WHERE system_code IS NULL AND lower(name) = lower(:q398_1)', (system_code, status_name))
         now = iso_now()
-        for company in c.execute('SELECT id FROM companies').fetchall():
+        for company in execute_sql(c, 'SELECT id FROM companies').fetchall():
             cid = int(company['id'])
-            c.execute('''INSERT OR IGNORE INTO booking_status_definitions
-                (company_id,name,short_name,colour,display_order,internal_state,blocks_availability,expiry_minutes,automation_config_json,active,created_at,updated_at)
-                VALUES (?,?,?,?,?,'RESERVED',1,NULL,'{}',1,?,?)''',
+            execute_sql(c, "INSERT INTO booking_status_definitions\n                (company_id,name,short_name,colour,display_order,internal_state,blocks_availability,expiry_minutes,automation_config_json,active,created_at,updated_at)\n                VALUES (:q399_0,:q399_1,:q399_2,:q399_3,:q399_4,'RESERVED',1,NULL,'{}',1,:q399_5,:q399_6) ON CONFLICT DO NOTHING",
                 (cid,'Payment Pending','Pending','#FFF3CD',15,now,now))
         # Restore the original Enquiry / Held label only for the untouched
         # factory status. Preserve IDs, historical references and custom labels.
-        c.execute("""UPDATE booking_status_definitions
-                     SET name='Enquiry / Held',short_name='Held',updated_at=?
-                     WHERE name='Keep as Quote' AND short_name='Quote'
-                       AND internal_state='HELD' AND system_code='HELD'
-                       AND colour='#FFE39A' AND display_order=10
-                       AND blocks_availability=1 AND expiry_minutes=10
-                       AND NOT EXISTS (
-                         SELECT 1 FROM booking_status_definitions other
-                         WHERE other.company_id=booking_status_definitions.company_id
-                           AND other.name='Enquiry / Held' COLLATE NOCASE
-                       )""", (iso_now(),))
+        execute_sql(c, "UPDATE booking_status_definitions\n                     SET name='Enquiry / Held',short_name='Held',updated_at=:q394_0\n                     WHERE name='Keep as Quote' AND short_name='Quote'\n                       AND internal_state='HELD' AND system_code='HELD'\n                       AND colour='#FFE39A' AND display_order=10\n                       AND blocks_availability=1 AND expiry_minutes=10\n                       AND NOT EXISTS (\n                         SELECT 1 FROM booking_status_definitions other\n                         WHERE other.company_id=booking_status_definitions.company_id\n                           AND lower(other.name) = lower('Enquiry / Held')\n                       )", (iso_now(),))
         # Existing historical records are deliberately not turned into fresh blocking Enquiries.
-        c.executescript('''
+        local_schema(c, '''
         DROP TRIGGER IF EXISTS webv1_default_enquiry_workflow;
         CREATE TRIGGER webv1_default_enquiry_workflow
         AFTER INSERT ON enquiries
@@ -145,29 +132,25 @@ def initialise_booking_statuses(database) -> None:
 
 
 def default_status(database, company_id: int, internal_state: str):
-    result = rows(database, '''SELECT * FROM booking_status_definitions
-                              WHERE company_id=? AND active=1 AND internal_state=?
-                              ORDER BY display_order,id LIMIT 1''', (company_id, internal_state))
+    result = rows(database, 'SELECT * FROM booking_status_definitions\n                              WHERE company_id=:q390_0 AND active=1 AND internal_state=:q390_1\n                              ORDER BY display_order,id LIMIT 1', (company_id, internal_state))
     return result[0] if result else None
 
 
 def status_by_system_code(database, company_id: int, system_code: str):
-    result = rows(database, '''SELECT * FROM booking_status_definitions
-                              WHERE company_id=? AND active=1 AND system_code=?
-                              ORDER BY id LIMIT 1''', (company_id, system_code))
+    result = rows(database, 'SELECT * FROM booking_status_definitions\n                              WHERE company_id=:q391_0 AND active=1 AND system_code=:q391_1\n                              ORDER BY id LIMIT 1', (company_id, system_code))
     return result[0] if result else None
 
 
 def status_by_id(database, company_id: int, status_id: int | None):
     if not status_id:
         return None
-    result = rows(database, 'SELECT * FROM booking_status_definitions WHERE company_id=? AND id=?', (company_id, status_id))
+    result = rows(database, 'SELECT * FROM booking_status_definitions WHERE company_id=:q392_0 AND id=:q392_1', (company_id, status_id))
     return result[0] if result else None
 
 
 def _page(database, context, message: str = '', edit: int = 0) -> str:
     cid = int(working_company(context))
-    all_rows = rows(database, 'SELECT * FROM booking_status_definitions WHERE company_id=? ORDER BY display_order,name', (cid,))
+    all_rows = rows(database, 'SELECT * FROM booking_status_definitions WHERE company_id=:q393_0 ORDER BY display_order,name', (cid,))
     current = next((r for r in all_rows if int(r['id']) == int(edit or 0)), None)
     state = str(current['internal_state']) if current else 'CONFIRMED'
     state_options = ''.join(f'<option value="{key}" {"selected" if key == state else ""}>{esc(label)}</option>' for key, label in INTERNAL_STATES)
@@ -235,15 +218,15 @@ def register_booking_status_routes(app) -> None:
         now = iso_now()
         try:
             with database.connect() as c:
-                before = c.execute('SELECT * FROM booking_status_definitions WHERE id=? AND company_id=?', (status_id, cid)).fetchone() if status_id else None
+                before = execute_sql(c, 'SELECT * FROM booking_status_definitions WHERE id=:q411_0 AND company_id=:q411_1', (status_id, cid)).fetchone() if status_id else None
                 if status_id and before is None:
                     return HTMLResponse(_page(database, context, 'Booking Status not found.'), 404)
                 if status_id:
-                    c.execute('''UPDATE booking_status_definitions SET name=?,short_name=?,colour=?,display_order=?,internal_state=?,blocks_availability=?,expiry_minutes=?,updated_at=? WHERE id=? AND company_id=?''',
+                    execute_sql(c, 'UPDATE booking_status_definitions SET name=:q404_0,short_name=:q404_1,colour=:q404_2,display_order=:q404_3,internal_state=:q404_4,blocks_availability=:q404_5,expiry_minutes=:q404_6,updated_at=:q404_7 WHERE id=:q404_8 AND company_id=:q404_9',
                               (name, short_name, colour, order_no, internal_state, blocks, expiry, now, status_id, cid))
                     saved_id = status_id
                 else:
-                    saved_id = int(c.execute('''INSERT INTO booking_status_definitions(company_id,name,short_name,colour,display_order,internal_state,blocks_availability,expiry_minutes,automation_config_json,active,created_at,updated_at) VALUES (?,?,?,?,?,?,?,?,?,1,?,?)''',
+                    saved_id = int(insert_sql(c, 'INSERT INTO booking_status_definitions(company_id,name,short_name,colour,display_order,internal_state,blocks_availability,expiry_minutes,automation_config_json,active,created_at,updated_at) VALUES (:q412_0,:q412_1,:q412_2,:q412_3,:q412_4,:q412_5,:q412_6,:q412_7,:q412_8,1,:q412_9,:q412_10)',
                                              (cid, name, short_name, colour, order_no, internal_state, blocks, expiry, json.dumps({}), now, now)).lastrowid)
         except Exception as exc:
             if 'UNIQUE' in str(exc).upper():
@@ -259,14 +242,14 @@ def register_booking_status_routes(app) -> None:
         try: status_id = int(data.get('id', ''))
         except ValueError: return RedirectResponse('/setup/booking-statuses', 303)
         with database.connect() as c:
-            before = c.execute('SELECT * FROM booking_status_definitions WHERE id=? AND company_id=?', (status_id, cid)).fetchone()
+            before = execute_sql(c, 'SELECT * FROM booking_status_definitions WHERE id=:q405_0 AND company_id=:q405_1', (status_id, cid)).fetchone()
             if before is None: return RedirectResponse('/setup/booking-statuses?message=Status+not+found', 303)
             new_active = 0 if int(before['active']) else 1
             if new_active == 0 and str(before['internal_state']) == 'HELD':
-                others = int(c.execute("SELECT COUNT(*) AS n FROM booking_status_definitions WHERE company_id=? AND active=1 AND internal_state='HELD' AND id<>?", (cid, status_id)).fetchone()['n'])
+                others = int(execute_sql(c, "SELECT COUNT(*) AS n FROM booking_status_definitions WHERE company_id=:q415_0 AND active=1 AND internal_state='HELD' AND id<>:q415_1", (cid, status_id)).fetchone()['n'])
                 if others == 0:
                     return RedirectResponse('/setup/booking-statuses?message=Keep+at+least+one+active+Held+status+so+Enquiries+can+block+availability', 303)
-            c.execute('UPDATE booking_status_definitions SET active=?,updated_at=? WHERE id=? AND company_id=?', (new_active, iso_now(), status_id, cid))
+            execute_sql(c, 'UPDATE booking_status_definitions SET active=:q400_0,updated_at=:q400_1 WHERE id=:q400_2 AND company_id=:q400_3', (new_active, iso_now(), status_id, cid))
         audit(database, context, cid, 'BOOKING_STATUS_TOGGLED', 'booking_status', status_id, dict(before), {'active': new_active})
         return RedirectResponse('/setup/booking-statuses', 303)
 
@@ -276,17 +259,17 @@ def register_booking_status_routes(app) -> None:
         try: status_id = int(data.get('id', ''))
         except ValueError: return RedirectResponse('/setup/booking-statuses', 303)
         with database.connect() as c:
-            before = c.execute('SELECT * FROM booking_status_definitions WHERE id=? AND company_id=?', (status_id, cid)).fetchone()
+            before = execute_sql(c, 'SELECT * FROM booking_status_definitions WHERE id=:q406_0 AND company_id=:q406_1', (status_id, cid)).fetchone()
             if before is None: return RedirectResponse('/setup/booking-statuses?message=Status+not+found', 303)
-            used_e = int(c.execute('SELECT COUNT(*) AS n FROM enquiries WHERE company_id=? AND workflow_status_id=?', (cid, status_id)).fetchone()['n'])
-            used_b = int(c.execute('SELECT COUNT(*) AS n FROM bookings WHERE company_id=? AND workflow_status_id=?', (cid, status_id)).fetchone()['n'])
+            used_e = int(execute_sql(c, 'SELECT COUNT(*) AS n FROM enquiries WHERE company_id=:q413_0 AND workflow_status_id=:q413_1', (cid, status_id)).fetchone()['n'])
+            used_b = int(execute_sql(c, 'SELECT COUNT(*) AS n FROM bookings WHERE company_id=:q414_0 AND workflow_status_id=:q414_1', (cid, status_id)).fetchone()['n'])
             if used_e or used_b:
                 return RedirectResponse('/setup/booking-statuses?message=That+status+is+already+used+and+cannot+be+deleted.+Deactivate+it+instead', 303)
             if str(before['internal_state']) == 'HELD':
-                others = int(c.execute("SELECT COUNT(*) AS n FROM booking_status_definitions WHERE company_id=? AND active=1 AND internal_state='HELD' AND id<>?", (cid, status_id)).fetchone()['n'])
+                others = int(execute_sql(c, "SELECT COUNT(*) AS n FROM booking_status_definitions WHERE company_id=:q416_0 AND active=1 AND internal_state='HELD' AND id<>:q416_1", (cid, status_id)).fetchone()['n'])
                 if others == 0:
                     return RedirectResponse('/setup/booking-statuses?message=Keep+at+least+one+active+Held+status+so+Enquiries+can+block+availability', 303)
-            c.execute('DELETE FROM booking_status_definitions WHERE id=? AND company_id=?', (status_id, cid))
+            execute_sql(c, 'DELETE FROM booking_status_definitions WHERE id=:q401_0 AND company_id=:q401_1', (status_id, cid))
         audit(database, context, cid, 'BOOKING_STATUS_DELETED', 'booking_status', status_id, dict(before), None)
         return RedirectResponse('/setup/booking-statuses', 303)
 
@@ -296,13 +279,13 @@ def register_booking_status_routes(app) -> None:
         try: booking_id = int(data.get('booking_id', '')); status_id = int(data.get('status_id', ''))
         except ValueError: return RedirectResponse('/availability/calendar', 303)
         with database.connect() as c:
-            booking = c.execute('SELECT * FROM bookings WHERE id=? AND company_id=?', (booking_id, cid)).fetchone()
-            status = c.execute('SELECT * FROM booking_status_definitions WHERE id=? AND company_id=? AND active=1', (status_id, cid)).fetchone()
+            booking = execute_sql(c, 'SELECT * FROM bookings WHERE id=:q407_0 AND company_id=:q407_1', (booking_id, cid)).fetchone()
+            status = execute_sql(c, 'SELECT * FROM booking_status_definitions WHERE id=:q408_0 AND company_id=:q408_1 AND active=1', (status_id, cid)).fetchone()
             if booking is None or status is None: return RedirectResponse('/availability/calendar', 303)
             # A manual status switch must never bypass the cancellation workflow.
             # Cancelled bookings are terminal; financial settlement stays accessible.
-            current = c.execute(
-                'SELECT internal_state FROM booking_status_definitions WHERE id=? AND company_id=?',
+            current = execute_sql(c,
+                'SELECT internal_state FROM booking_status_definitions WHERE id=:q409_0 AND company_id=:q409_1',
                 (booking['workflow_status_id'], cid),
             ).fetchone()
             if current is not None and str(current['internal_state']) == 'RELEASED':
@@ -310,7 +293,7 @@ def register_booking_status_routes(app) -> None:
             if str(status['internal_state']) == 'RELEASED':
                 return RedirectResponse(f'/operations/bookings/{booking_id}?message=Use+the+authorised+cancellation+procedure', 303)
             before = dict(booking)
-            c.execute('UPDATE bookings SET workflow_status_id=?,updated_at=? WHERE id=? AND company_id=?', (status_id, iso_now(), booking_id, cid))
+            execute_sql(c, 'UPDATE bookings SET workflow_status_id=:q402_0,updated_at=:q402_1 WHERE id=:q402_2 AND company_id=:q402_3', (status_id, iso_now(), booking_id, cid))
         audit(database, context, cid, 'BOOKING_STATUS_CHANGED', 'booking', booking_id, before,
               {'workflow_status_id': status_id, 'status_name': status['name'], 'internal_state': status['internal_state'], 'blocks_availability': int(status['blocks_availability'])})
         return RedirectResponse(f'/operations/bookings/{booking_id}', 303)

@@ -1,4 +1,5 @@
 from __future__ import annotations
+from .sql import execute_sql
 
 from datetime import date, timedelta
 from urllib.parse import quote_plus
@@ -61,28 +62,9 @@ def _clip_columns(start_value: str, end_value: str, visible_start: date, visible
 
 def _calendar_records(database, company_id: int, element_id: int, visible_start: date, visible_end: date, session_token: str):
     with database.connect() as c:
-        bookings = c.execute('''
-            SELECT be.arrival_date,be.departure_date,b.id AS booking_id,b.reference,b.status,
-                   c.first_name,c.last_name
-            FROM booking_elements be
-            JOIN bookings b ON b.id=be.booking_id AND b.company_id=be.company_id
-            LEFT JOIN customer_records c ON c.id=b.customer_id AND c.company_id=b.company_id
-            WHERE be.company_id=? AND be.element_id=? AND b.status<>'cancelled'
-              AND date(be.arrival_date)<date(?) AND date(be.departure_date)>date(?)
-            ORDER BY be.arrival_date
-        ''', (company_id, element_id, visible_end.isoformat(), visible_start.isoformat())).fetchall()
-        closures = c.execute('''
-            SELECT * FROM element_closures
-            WHERE company_id=? AND element_id=?
-              AND date(start_date)<date(?) AND date(end_date)>date(?)
-            ORDER BY start_date
-        ''', (company_id, element_id, visible_end.isoformat(), visible_start.isoformat())).fetchall()
-        holds = c.execute('''
-            SELECT * FROM element_holds
-            WHERE company_id=? AND element_id=? AND expires_at>?
-              AND date(arrival_date)<date(?) AND date(departure_date)>date(?)
-            ORDER BY arrival_date
-        ''', (company_id, element_id, iso_now(), visible_end.isoformat(), visible_start.isoformat())).fetchall()
+        bookings = execute_sql(c, "\n            SELECT be.arrival_date,be.departure_date,b.id AS booking_id,b.reference,b.status,\n                   c.first_name,c.last_name\n            FROM booking_elements be\n            JOIN bookings b ON b.id=be.booking_id AND b.company_id=be.company_id\n            LEFT JOIN customer_records c ON c.id=b.customer_id AND c.company_id=b.company_id\n            WHERE be.company_id=:q13_0 AND be.element_id=:q13_1 AND b.status<>'cancelled'\n              AND date(be.arrival_date)<date(:q13_2) AND date(be.departure_date)>date(:q13_3)\n            ORDER BY be.arrival_date\n        ", (company_id, element_id, visible_end.isoformat(), visible_start.isoformat())).fetchall()
+        closures = execute_sql(c, '\n            SELECT * FROM element_closures\n            WHERE company_id=:q14_0 AND element_id=:q14_1\n              AND date(start_date)<date(:q14_2) AND date(end_date)>date(:q14_3)\n            ORDER BY start_date\n        ', (company_id, element_id, visible_end.isoformat(), visible_start.isoformat())).fetchall()
+        holds = execute_sql(c, '\n            SELECT * FROM element_holds\n            WHERE company_id=:q15_0 AND element_id=:q15_1 AND expires_at>:q15_2\n              AND date(arrival_date)<date(:q15_3) AND date(departure_date)>date(:q15_4)\n            ORDER BY arrival_date\n        ', (company_id, element_id, iso_now(), visible_end.isoformat(), visible_start.isoformat())).fetchall()
     return bookings, closures, holds
 
 
@@ -119,7 +101,7 @@ def register_calendar_routes(app) -> None:
     def availability_calendar(request: Request, element_type: str = '', start: str = '', arrival: str = '', departure: str = ''):
         context, cid = _calendar_context(database, request)
         staff = str(context['role']) in {'operator', 'supervisor'}
-        type_rows = rows(database, 'SELECT name FROM setup_element_types WHERE company_id=? AND active=1 ORDER BY name COLLATE NOCASE', (cid,))
+        type_rows = rows(database, 'SELECT name FROM setup_element_types WHERE company_id=:q11_0 AND active=1 ORDER BY lower(name)', (cid,))
         types = [str(r['name']) for r in type_rows]
         selected_type = element_type if element_type in types else (types[0] if types else '')
         today = date.today()
@@ -162,7 +144,7 @@ def register_calendar_routes(app) -> None:
         body += '''<div class="card"><div style="display:flex;gap:18px;flex-wrap:wrap;align-items:center"><strong>Key:</strong><span class="legend booked">Booked</span><span class="legend closed">Closed</span><span class="legend held">Held</span><span>Available = clear</span></div></div>'''
 
         if selected_type:
-            elements = rows(database, 'SELECT * FROM setup_elements WHERE company_id=? AND active=1 AND element_type=? ORDER BY name COLLATE NOCASE', (cid, selected_type))
+            elements = rows(database, 'SELECT * FROM setup_elements WHERE company_id=:q12_0 AND active=1 AND element_type=:q12_1 ORDER BY lower(name)', (cid, selected_type))
             dates = [visible_start + timedelta(days=i) for i in range(CALENDAR_DAYS)]
             header = '<div class="cal-row cal-head"><div class="cal-name">Element</div>' + ''.join(f'<div class="cal-date"><strong>{d.strftime("%d")}</strong><small>{d.strftime("%b")}</small></div>' for d in dates) + '</div>'
             rows_html = ''
@@ -276,10 +258,10 @@ def register_calendar_routes(app) -> None:
         if str(context['role']) not in {'operator', 'supervisor'}:
             raise HTTPException(status_code=403, detail='Booking details are staff-only')
         with database.connect() as c:
-            booking = c.execute('''SELECT b.*,c.first_name,c.last_name,c.email,c.phone FROM bookings b LEFT JOIN customer_records c ON c.id=b.customer_id AND c.company_id=b.company_id WHERE b.id=? AND b.company_id=?''', (booking_id, cid)).fetchone()
+            booking = execute_sql(c, 'SELECT b.*,c.first_name,c.last_name,c.email,c.phone FROM bookings b LEFT JOIN customer_records c ON c.id=b.customer_id AND c.company_id=b.company_id WHERE b.id=:q16_0 AND b.company_id=:q16_1', (booking_id, cid)).fetchone()
             if booking is None:
                 raise HTTPException(status_code=404, detail='Booking not found')
-            elements = c.execute('''SELECT be.*,e.name AS element_name,e.element_type FROM booking_elements be JOIN setup_elements e ON e.id=be.element_id WHERE be.booking_id=? AND be.company_id=? ORDER BY be.arrival_date,e.name''', (booking_id, cid)).fetchall()
+            elements = execute_sql(c, 'SELECT be.*,e.name AS element_name,e.element_type FROM booking_elements be JOIN setup_elements e ON e.id=be.element_id WHERE be.booking_id=:q17_0 AND be.company_id=:q17_1 ORDER BY be.arrival_date,e.name', (booking_id, cid)).fetchall()
         customer = (f"{booking['first_name']} {booking['last_name']}").strip() or 'Customer'
         body = f'''<h1>Booking {esc(booking['reference'])}</h1><div class="card"><div class="grid"><div><strong>Customer</strong><p>{esc(customer)}</p></div><div><strong>Status</strong><p>{esc(booking['status'])}</p></div><div><strong>Arrival</strong><p>{_fmt(booking['arrival_date'])}</p></div><div><strong>Departure</strong><p>{_fmt(booking['departure_date'])}</p></div></div><p>Email: {esc(booking['email'])}<br>Phone: {esc(booking['phone'])}</p>'''
         if booking['enquiry_id']:

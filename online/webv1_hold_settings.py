@@ -1,4 +1,5 @@
 from __future__ import annotations
+from .sql import execute_sql, insert_sql, local_schema
 
 from datetime import timedelta
 
@@ -31,18 +32,18 @@ CREATE TABLE IF NOT EXISTS company_hold_settings (
 
 def initialise_hold_settings(database) -> None:
     with database.connect() as c:
-        c.executescript(SCHEMA)
+        local_schema(c, SCHEMA)
         now = iso_now()
-        for row in c.execute('SELECT id FROM companies WHERE active=1').fetchall():
-            c.execute(
-                'INSERT OR IGNORE INTO company_hold_settings(company_id,hold_seconds,grace_seconds,updated_at) VALUES (?,?,?,?)',
+        for row in execute_sql(c, 'SELECT id FROM companies WHERE active=1').fetchall():
+            execute_sql(c,
+                'INSERT INTO company_hold_settings(company_id,hold_seconds,grace_seconds,updated_at) VALUES (:q83_0,:q83_1,:q83_2,:q83_3) ON CONFLICT DO NOTHING',
                 (int(row['id']), DEFAULT_HOLD_SECONDS, DEFAULT_GRACE_SECONDS, now),
             )
 
 
 def hold_timing(database, company_id: int) -> tuple[int, int]:
     with database.connect() as c:
-        row = c.execute('SELECT hold_seconds,grace_seconds FROM company_hold_settings WHERE company_id=?', (company_id,)).fetchone()
+        row = execute_sql(c, 'SELECT hold_seconds,grace_seconds FROM company_hold_settings WHERE company_id=:q87_0', (company_id,)).fetchone()
     if row is None:
         return DEFAULT_HOLD_SECONDS, DEFAULT_GRACE_SECONDS
     return int(row['hold_seconds']), int(row['grace_seconds'])
@@ -63,8 +64,8 @@ def create_or_replace_hold(database, context, company_id: int, session_token: st
     # BOOKING work. It can only be changed through the explicit basket EDIT route.
     with database.connect() as c:
         legacy._purge_expired_holds(c)
-        existing = c.execute(
-            'SELECT * FROM element_holds WHERE company_id=? AND element_id=? AND session_token=?',
+        existing = execute_sql(c,
+            'SELECT * FROM element_holds WHERE company_id=:q88_0 AND element_id=:q88_1 AND session_token=:q88_2',
             (company_id, element_id, session_token),
         ).fetchone()
     if existing is not None:
@@ -79,16 +80,14 @@ def create_or_replace_hold(database, context, company_id: int, session_token: st
     expires = prompt + timedelta(seconds=grace_seconds)
     with database.connect() as c:
         legacy._purge_expired_holds(c)
-        conflict = c.execute(
-            '''SELECT id FROM element_holds WHERE company_id=? AND element_id=?
-               AND date(arrival_date)<date(?) AND date(departure_date)>date(?) AND expires_at>? LIMIT 1''',
+        conflict = execute_sql(c,
+            'SELECT id FROM element_holds WHERE company_id=:q89_0 AND element_id=:q89_1\n               AND date(arrival_date)<date(:q89_2) AND date(departure_date)>date(:q89_3) AND expires_at>:q89_4 LIMIT 1',
             (company_id, element_id, departure, arrival, iso_now()),
         ).fetchone()
         if conflict or legacy._booking_conflict(c, company_id, element_id, arrival, departure) or legacy._closure_conflict(c, company_id, element_id, arrival, departure):
             raise ValueError('That Element has just become unavailable. Please choose another.')
-        hold_id = int(c.execute(
-            '''INSERT INTO element_holds(company_id,element_id,session_token,holder_user_id,arrival_date,departure_date,renewal_required_at,expires_at,created_at,updated_at)
-               VALUES (?,?,?,?,?,?,?,?,?,?)''',
+        hold_id = int(insert_sql(c,
+            'INSERT INTO element_holds(company_id,element_id,session_token,holder_user_id,arrival_date,departure_date,renewal_required_at,expires_at,created_at,updated_at)\n               VALUES (:q90_0,:q90_1,:q90_2,:q90_3,:q90_4,:q90_5,:q90_6,:q90_7,:q90_8,:q90_9)',
             (company_id, element_id, session_token, context['user_id'], arrival, departure, prompt.isoformat(timespec='seconds'), expires.isoformat(timespec='seconds'), now.isoformat(timespec='seconds'), now.isoformat(timespec='seconds')),
         ).lastrowid)
     audit(database, context, company_id, 'ELEMENT_HOLD_SAVED', 'element_hold', hold_id, None, {
@@ -148,12 +147,10 @@ def register_hold_settings_routes(app) -> None:
         except ValueError as exc:
             return RedirectResponse('/company/hold-settings?error=' + str(exc).replace(' ', '+'), 303)
         with database.connect() as c:
-            before_row = c.execute('SELECT hold_seconds,grace_seconds FROM company_hold_settings WHERE company_id=?', (cid,)).fetchone()
+            before_row = execute_sql(c, 'SELECT hold_seconds,grace_seconds FROM company_hold_settings WHERE company_id=:q91_0', (cid,)).fetchone()
             before = dict(before_row) if before_row else {'hold_seconds': DEFAULT_HOLD_SECONDS, 'grace_seconds': DEFAULT_GRACE_SECONDS}
-            c.execute(
-                '''INSERT INTO company_hold_settings(company_id,hold_seconds,grace_seconds,updated_by_user_id,updated_at)
-                   VALUES (?,?,?,?,?)
-                   ON CONFLICT(company_id) DO UPDATE SET hold_seconds=excluded.hold_seconds,grace_seconds=excluded.grace_seconds,updated_by_user_id=excluded.updated_by_user_id,updated_at=excluded.updated_at''',
+            execute_sql(c,
+                'INSERT INTO company_hold_settings(company_id,hold_seconds,grace_seconds,updated_by_user_id,updated_at)\n                   VALUES (:q84_0,:q84_1,:q84_2,:q84_3,:q84_4)\n                   ON CONFLICT(company_id) DO UPDATE SET hold_seconds=excluded.hold_seconds,grace_seconds=excluded.grace_seconds,updated_by_user_id=excluded.updated_by_user_id,updated_at=excluded.updated_at',
                 (cid, hold_seconds, grace_seconds, context['user_id'], iso_now()),
             )
         after = {'hold_seconds': hold_seconds, 'grace_seconds': grace_seconds}
@@ -172,9 +169,9 @@ def register_hold_settings_routes(app) -> None:
         expires = prompt + timedelta(seconds=grace_seconds)
         with database.connect() as c:
             legacy._purge_expired_holds(c)
-            held = c.execute('SELECT * FROM element_holds WHERE company_id=? AND session_token=?', (cid, token)).fetchall()
-            c.execute(
-                'UPDATE element_holds SET renewal_required_at=?,expires_at=?,updated_at=? WHERE company_id=? AND session_token=?',
+            held = execute_sql(c, 'SELECT * FROM element_holds WHERE company_id=:q92_0 AND session_token=:q92_1', (cid, token)).fetchall()
+            execute_sql(c,
+                'UPDATE element_holds SET renewal_required_at=:q85_0,expires_at=:q85_1,updated_at=:q85_2 WHERE company_id=:q85_3 AND session_token=:q85_4',
                 (prompt.isoformat(timespec='seconds'), expires.isoformat(timespec='seconds'), now.isoformat(timespec='seconds'), cid, token),
             )
         audit(database, context, cid, 'ELEMENT_HOLDS_RENEWED', 'element_hold', token[:12], {'count': len(held)}, {

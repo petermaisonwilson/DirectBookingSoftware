@@ -1,4 +1,5 @@
 from __future__ import annotations
+from .sql import execute_sql, column_rows
 
 import json
 from urllib.parse import quote_plus
@@ -48,20 +49,16 @@ def _edit_history(database, company_id: int, enquiry_id: int) -> str:
     from datetime import datetime, timezone
     from zoneinfo import ZoneInfo
 
-    events=rows(database, """SELECT a.created_at,a.action,a.before_json,a.after_json,a.actor_role,
-        u.email AS actor_email FROM audit_log a
-        LEFT JOIN users u ON u.id=a.actor_user_id
-        WHERE a.company_id=? AND a.entity_type='enquiry' AND a.entity_id=?
-          ORDER BY a.id DESC""", (company_id,str(enquiry_id)))
+    events=rows(database, "SELECT a.created_at,a.action,a.before_json,a.after_json,a.actor_role,\n        u.email AS actor_email FROM audit_log a\n        LEFT JOIN users u ON u.id=a.actor_user_id\n        WHERE a.company_id=:q550_0 AND a.entity_type='enquiry' AND a.entity_id=:q550_1\n          ORDER BY a.id DESC", (company_id,str(enquiry_id)))
     # Every enquiry has a creation timestamp even if an older workflow did not
     # write a corresponding audit event. Never attribute it to an unknown user.
-    created = one(database, 'SELECT created_at FROM enquiries WHERE id=? AND company_id=?', (enquiry_id,company_id))
+    created = one(database, 'SELECT created_at FROM enquiries WHERE id=:q551_0 AND company_id=:q551_1', (enquiry_id,company_id))
     person_names={str(r['id']):str(r['name']) for r in rows(database,
-        'SELECT id,name FROM setup_person_types WHERE company_id=?',(company_id,))}
+        'SELECT id,name FROM setup_person_types WHERE company_id=:q567_0',(company_id,))}
     addon_names={str(r['id']):str(r['name']) for r in rows(database,
-        'SELECT id,name FROM setup_addons WHERE company_id=?',(company_id,))}
+        'SELECT id,name FROM setup_addons WHERE company_id=:q568_0',(company_id,))}
     element_names={str(r['id']):str(r['name']) for r in rows(database,
-        'SELECT id,name FROM setup_elements WHERE company_id=?',(company_id,))}
+        'SELECT id,name FROM setup_elements WHERE company_id=:q569_0',(company_id,))}
     def date_text(value): return esc(_fmt_day(value))
     def money(value): return f'€{float(value):.2f}'
     def count_changes(label, before, after, names):
@@ -121,20 +118,20 @@ def register_enquiry_routes(app) -> None:
     # and test harness, so keep this additive schema upgrade idempotent here as
     # well as in Alembic migration 0007.
     with database.connect() as c:
-        columns={str(r['name']) for r in c.execute("PRAGMA table_info(enquiry_elements)").fetchall()}
+        columns={str(r['name']) for r in column_rows(c, 'enquiry_elements')}
         if columns and 'recovery_state' not in columns:
-            c.execute("ALTER TABLE enquiry_elements ADD COLUMN recovery_state TEXT NOT NULL DEFAULT 'held'")
+            execute_sql(c, "ALTER TABLE enquiry_elements ADD COLUMN recovery_state TEXT NOT NULL DEFAULT 'held'")
         if columns:
-            c.execute("CREATE INDEX IF NOT EXISTS idx_enquiry_elements_recovery ON enquiry_elements(company_id,enquiry_id,recovery_state)")
+            execute_sql(c, "CREATE INDEX IF NOT EXISTS idx_enquiry_elements_recovery ON enquiry_elements(company_id,enquiry_id,recovery_state)")
 
     @app.get('/operations/enquiries', response_class=HTMLResponse)
     def enquiry_register(request: Request, q: str = '', status: str = '', arrival_from: str = '', arrival_to: str = '', enquiry_from: str = '', enquiry_to: str = ''):
         context = context_for(database, request); company_id = working_company(context)
         search=q.strip(); status_filter=status.strip().lower()
-        where=['e.company_id=?']; params=[company_id]
+        where=['e.company_id=:q553_0']; params=[company_id]
         if search:
             term=f'%{search}%'
-            where.append("(c.first_name LIKE ? COLLATE NOCASE OR c.last_name LIKE ? COLLATE NOCASE OR c.email LIKE ? COLLATE NOCASE OR c.phone LIKE ? COLLATE NOCASE OR CAST(e.id AS TEXT) LIKE ?)")
+            where.append('(lower(c.first_name) LIKE lower(:q570_0) OR lower(c.last_name) LIKE lower(:q570_1) OR lower(c.email) LIKE lower(:q570_2) OR lower(c.phone) LIKE lower(:q570_3) OR CAST(e.id AS TEXT) LIKE :q570_4)')
             params.extend([term]*5)
         holding_clause="""e.status NOT IN ('closed','converted')
             AND NOT EXISTS (SELECT 1 FROM bookings bx WHERE bx.company_id=e.company_id AND bx.enquiry_id=e.id)
@@ -147,15 +144,18 @@ def register_enquiry_routes(app) -> None:
         elif status_filter=='new': where.append("e.status='new'")
         for field,raw,operator in [('e.arrival_date',arrival_from,'>='),('e.arrival_date',arrival_to,'<='),('substr(e.created_at,1,10)',enquiry_from,'>='),('substr(e.created_at,1,10)',enquiry_to,'<=')]:
             if raw.strip():
-                where.append(f'{field}{operator}?'); params.append(raw.strip())
-        enquiries=rows(database,f"""SELECT e.*,c.first_name,c.last_name,c.email,c.phone,
-            (SELECT GROUP_CONCAT(name, ', ') FROM (SELECT COALESCE(se.name,ee.element_type,'Element') AS name FROM enquiry_elements ee LEFT JOIN setup_elements se ON se.id=ee.element_id AND se.company_id=ee.company_id WHERE ee.enquiry_id=e.id AND ee.company_id=e.company_id ORDER BY ee.sort_order,ee.id)) AS element_names,
-            (SELECT SUM(ee.provisional_total) FROM enquiry_elements ee WHERE ee.enquiry_id=e.id AND ee.company_id=e.company_id) AS elements_total,
-            (SELECT er.provisional_total FROM enquiry_requests er WHERE er.enquiry_id=e.id AND er.company_id=e.company_id) AS legacy_total,
-            (SELECT b.total_amount FROM bookings b WHERE b.company_id=e.company_id AND b.enquiry_id=e.id ORDER BY b.id DESC LIMIT 1) AS booking_total,
-            CASE WHEN {holding_clause} THEN 1 ELSE 0 END AS holding_space
-            FROM enquiries e LEFT JOIN customer_records c ON c.id=e.customer_id AND c.company_id=e.company_id
-            WHERE {' AND '.join(where)} ORDER BY e.id DESC""",tuple(params))
+                where.append(f'{field}{operator}:filter_{len(params)}'); params.append(raw.strip())
+        enquiries=rows(database,f"SELECT e.*,c.first_name,c.last_name,c.email,c.phone,\n            '' AS element_names,\n            (SELECT SUM(ee.provisional_total) FROM enquiry_elements ee WHERE ee.enquiry_id=e.id AND ee.company_id=e.company_id) AS elements_total,\n            (SELECT er.provisional_total FROM enquiry_requests er WHERE er.enquiry_id=e.id AND er.company_id=e.company_id) AS legacy_total,\n            (SELECT b.total_amount FROM bookings b WHERE b.company_id=e.company_id AND b.enquiry_id=e.id ORDER BY b.id DESC LIMIT 1) AS booking_total,\n            CASE WHEN {holding_clause} THEN 1 ELSE 0 END AS holding_space\n            FROM enquiries e LEFT JOIN customer_records c ON c.id=e.customer_id AND c.company_id=e.company_id\n            WHERE {' AND '.join(where)} ORDER BY e.id DESC",tuple(params))
+        enquiries = [dict(item) for item in enquiries]
+        names = {}
+        for item in rows(database,
+                "SELECT ee.enquiry_id,COALESCE(se.name,ee.element_type,'Element') AS name "
+                'FROM enquiry_elements ee LEFT JOIN setup_elements se '
+                'ON se.id=ee.element_id AND se.company_id=ee.company_id '
+                'WHERE ee.company_id=:company_id ORDER BY ee.enquiry_id,ee.sort_order,ee.id', (company_id,)):
+            names.setdefault(int(item['enquiry_id']), []).append(str(item['name']))
+        for item in enquiries:
+            item['element_names'] = ', '.join(names.get(int(item['id']), []))
         options=[('','All'),('new','New'),('holding','Holding Space'),('confirmed','Confirmed'),('released','Released')]
         status_options=''.join(f'<option value="{v}" {"selected" if status_filter==v else ""}>{label}</option>' for v,label in options)
         def report_status(r):
@@ -187,13 +187,13 @@ def register_enquiry_routes(app) -> None:
     @app.get('/operations/enquiries/{enquiry_id}', response_class=HTMLResponse)
     def enquiry_detail(enquiry_id: int, request: Request, saved: int = 0, convert_error: str = ''):
         context = context_for(database, request); company_id = working_company(context)
-        enquiry = one(database, '''SELECT e.*,c.first_name,c.last_name,c.email,c.phone FROM enquiries e LEFT JOIN customer_records c ON c.id=e.customer_id AND c.company_id=e.company_id WHERE e.id=? AND e.company_id=?''', (enquiry_id, company_id))
+        enquiry = one(database, 'SELECT e.*,c.first_name,c.last_name,c.email,c.phone FROM enquiries e LEFT JOIN customer_records c ON c.id=e.customer_id AND c.company_id=e.company_id WHERE e.id=:q554_0 AND e.company_id=:q554_1', (enquiry_id, company_id))
         if enquiry is None:
             return HTMLResponse(layout('Enquiry not found', '<div class="error">Enquiry not found.</div>', context), 404)
-        request_row = one(database, '''SELECT er.*,se.name AS element_name,se.pricing_method FROM enquiry_requests er LEFT JOIN setup_elements se ON se.id=er.element_id AND se.company_id=er.company_id WHERE er.enquiry_id=? AND er.company_id=?''', (enquiry_id, company_id))
-        element_rows = rows(database, '''SELECT ee.*,se.name AS element_name,se.pricing_method FROM enquiry_elements ee LEFT JOIN setup_elements se ON se.id=ee.element_id AND se.company_id=ee.company_id WHERE ee.enquiry_id=? AND ee.company_id=? ORDER BY ee.sort_order,ee.id''', (enquiry_id, company_id))
-        people = rows(database, '''SELECT ep.quantity,pt.name FROM enquiry_people ep JOIN setup_person_types pt ON pt.id=ep.person_type_id AND pt.company_id=ep.company_id WHERE ep.enquiry_id=? AND ep.company_id=? ORDER BY pt.name''', (enquiry_id, company_id))
-        addons = rows(database, '''SELECT ea.quantity,a.name FROM enquiry_addons ea JOIN setup_addons a ON a.id=ea.addon_id AND a.company_id=ea.company_id WHERE ea.enquiry_id=? AND ea.company_id=? ORDER BY a.name''', (enquiry_id, company_id))
+        request_row = one(database, 'SELECT er.*,se.name AS element_name,se.pricing_method FROM enquiry_requests er LEFT JOIN setup_elements se ON se.id=er.element_id AND se.company_id=er.company_id WHERE er.enquiry_id=:q555_0 AND er.company_id=:q555_1', (enquiry_id, company_id))
+        element_rows = rows(database, 'SELECT ee.*,se.name AS element_name,se.pricing_method FROM enquiry_elements ee LEFT JOIN setup_elements se ON se.id=ee.element_id AND se.company_id=ee.company_id WHERE ee.enquiry_id=:q556_0 AND ee.company_id=:q556_1 ORDER BY ee.sort_order,ee.id', (enquiry_id, company_id))
+        people = rows(database, 'SELECT ep.quantity,pt.name FROM enquiry_people ep JOIN setup_person_types pt ON pt.id=ep.person_type_id AND pt.company_id=ep.company_id WHERE ep.enquiry_id=:q557_0 AND ep.company_id=:q557_1 ORDER BY pt.name', (enquiry_id, company_id))
+        addons = rows(database, 'SELECT ea.quantity,a.name FROM enquiry_addons ea JOIN setup_addons a ON a.id=ea.addon_id AND a.company_id=ea.company_id WHERE ea.enquiry_id=:q558_0 AND ea.company_id=:q558_1 ORDER BY a.name', (enquiry_id, company_id))
         customer_link = f'<a href="/operations/customers/{int(enquiry["customer_id"])}">{esc(_customer_name(enquiry))}</a>' if enquiry['customer_id'] is not None else esc(_customer_name(enquiry))
         notice = '<div class="ok">Enquiry saved.</div>' if saved else ''
         if convert_error: notice += f'<div class="error">{esc(convert_error)}</div>'
@@ -201,10 +201,10 @@ def register_enquiry_routes(app) -> None:
             element_cards=[]; grand_total=0.0
             for erow in element_rows:
                 eeid=int(erow['id'])
-                epeople=rows(database, '''SELECT ep.quantity,pt.name FROM enquiry_element_people ep JOIN setup_person_types pt ON pt.id=ep.person_type_id AND pt.company_id=ep.company_id WHERE ep.enquiry_element_id=? AND ep.company_id=? ORDER BY pt.name''', (eeid,company_id))
-                eaddons=rows(database, '''SELECT ea.quantity,a.name FROM enquiry_element_addons ea JOIN setup_addons a ON a.id=ea.addon_id AND a.company_id=ea.company_id WHERE ea.enquiry_element_id=? AND ea.company_id=? ORDER BY a.name''', (eeid,company_id))
+                epeople=rows(database, 'SELECT ep.quantity,pt.name FROM enquiry_element_people ep JOIN setup_person_types pt ON pt.id=ep.person_type_id AND pt.company_id=ep.company_id WHERE ep.enquiry_element_id=:q576_0 AND ep.company_id=:q576_1 ORDER BY pt.name', (eeid,company_id))
+                eaddons=rows(database, 'SELECT ea.quantity,a.name FROM enquiry_element_addons ea JOIN setup_addons a ON a.id=ea.addon_id AND a.company_id=ea.company_id WHERE ea.enquiry_element_id=:q577_0 AND ea.company_id=:q577_1 ORDER BY a.name', (eeid,company_id))
                 if not eaddons:
-                    eaddons=rows(database, '''SELECT ea.quantity,a.name FROM enquiry_addons ea JOIN setup_addons a ON a.id=ea.addon_id AND a.company_id=ea.company_id WHERE ea.enquiry_id=? AND ea.company_id=? AND (ea.enquiry_element_id=? OR ea.enquiry_element_id IS NULL) ORDER BY a.name''', (enquiry_id,company_id,eeid))
+                    eaddons=rows(database, 'SELECT ea.quantity,a.name FROM enquiry_addons ea JOIN setup_addons a ON a.id=ea.addon_id AND a.company_id=ea.company_id WHERE ea.enquiry_id=:q582_0 AND ea.company_id=:q582_1 AND (ea.enquiry_element_id=:q582_2 OR ea.enquiry_element_id IS NULL) ORDER BY a.name', (enquiry_id,company_id,eeid))
                 people_text=', '.join(f'{esc(r["name"])} × {int(r["quantity"])}' for r in epeople) or '—'
                 addons_text=', '.join(f'{esc(r["name"])} × {int(r["quantity"])}' for r in eaddons) or '—'
                 subtotal=float(erow['provisional_total'] or 0); grand_total+=subtotal
@@ -217,9 +217,7 @@ def register_enquiry_routes(app) -> None:
                         # "Held again" is a recovery state, not the normal state
                         # of a newly-created Enquiry.  Only an Enquiry with an
                         # actual reopen lifecycle event has reacquired its space.
-                        reopened = one(database, '''SELECT 1 FROM audit_log
-                            WHERE company_id=? AND entity_type='enquiry' AND entity_id=?
-                              AND action='ENQUIRY_REOPENED' LIMIT 1''',
+                        reopened = one(database, "SELECT 1 FROM audit_log\n                            WHERE company_id=:q584_0 AND entity_type='enquiry' AND entity_id=:q584_1\n                              AND action='ENQUIRY_REOPENED' LIMIT 1",
                             (company_id, str(enquiry_id)))
                         hold_label = 'AVAILABLE — HELD AGAIN' if reopened else 'HOLDING SPACE'
                         recovery_html = f'<p><strong style="color:#267326">{hold_label}</strong></p>'
@@ -252,14 +250,14 @@ def register_enquiry_routes(app) -> None:
     async def release_enquiry(enquiry_id: int, request: Request):
         context = context_for(database, request); company_id = int(working_company(context))
         data = await form_data(request); require_csrf(context, data)
-        enquiry = one(database, 'SELECT * FROM enquiries WHERE id=? AND company_id=?', (enquiry_id, company_id))
+        enquiry = one(database, 'SELECT * FROM enquiries WHERE id=:q559_0 AND company_id=:q559_1', (enquiry_id, company_id))
         if enquiry is None:
             return RedirectResponse('/operations/enquiries', 303)
         if str(enquiry['status']) == 'converted':
             return RedirectResponse('/operations/enquiries', 303)
         if str(enquiry['status']) != 'closed':
             with database.connect() as c:
-                c.execute("UPDATE enquiries SET status='closed',updated_at=? WHERE id=? AND company_id=?", (iso_now(), enquiry_id, company_id))
+                execute_sql(c, "UPDATE enquiries SET status='closed',updated_at=:q578_0 WHERE id=:q578_1 AND company_id=:q578_2", (iso_now(), enquiry_id, company_id))
             audit(database, context, company_id, 'ENQUIRY_RELEASED', 'enquiry', enquiry_id, before={'status': enquiry['status']}, after={'status': 'closed', 'availability_released': True})
         return RedirectResponse('/operations/enquiries', 303)
 
@@ -267,12 +265,12 @@ def register_enquiry_routes(app) -> None:
     async def reopen_enquiry(enquiry_id: int, request: Request):
         context = context_for(database, request); company_id = int(working_company(context))
         data = await form_data(request); require_csrf(context, data)
-        enquiry = one(database, 'SELECT * FROM enquiries WHERE id=? AND company_id=?', (enquiry_id, company_id))
+        enquiry = one(database, 'SELECT * FROM enquiries WHERE id=:q560_0 AND company_id=:q560_1', (enquiry_id, company_id))
         if enquiry is None or str(enquiry['status']) != 'closed':
             return RedirectResponse('/operations/enquiries', 303)
-        elements=rows(database,'SELECT * FROM enquiry_elements WHERE enquiry_id=? AND company_id=? ORDER BY sort_order,id',(enquiry_id,company_id))
+        elements=rows(database,'SELECT * FROM enquiry_elements WHERE enquiry_id=:q561_0 AND company_id=:q561_1 ORDER BY sort_order,id',(enquiry_id,company_id))
         if not elements:
-            legacy=one(database,'SELECT element_id,element_type FROM enquiry_requests WHERE enquiry_id=? AND company_id=?',(enquiry_id,company_id))
+            legacy=one(database,'SELECT element_id,element_type FROM enquiry_requests WHERE enquiry_id=:q571_0 AND company_id=:q571_1',(enquiry_id,company_id))
             if legacy is None or legacy['element_id'] is None or not enquiry['arrival_date'] or not enquiry['departure_date']:
                 return RedirectResponse(f'/operations/enquiries/{enquiry_id}?convert_error=Availability+must+be+rechecked+before+this+Enquiry+can+be+reopened',303)
             state=availability_state(database,company_id,int(legacy['element_id']),str(enquiry['arrival_date']),str(enquiry['departure_date']),exclude_enquiry_id=enquiry_id)
@@ -282,7 +280,7 @@ def register_enquiry_routes(app) -> None:
                 from .webv1_reservation_core import migrated_inventory_conflict
                 if migrated_inventory_conflict(c, company_id, int(legacy['element_id']), str(enquiry['arrival_date']), str(enquiry['departure_date'])):
                     return RedirectResponse(f'/operations/enquiries/{enquiry_id}?convert_error=Cannot+reopen:+the+original+Element+is+no+longer+available',303)
-                c.execute("UPDATE enquiries SET status='new',updated_at=? WHERE id=? AND company_id=?",(iso_now(),enquiry_id,company_id))
+                execute_sql(c, "UPDATE enquiries SET status='new',updated_at=:q579_0 WHERE id=:q579_1 AND company_id=:q579_2",(iso_now(),enquiry_id,company_id))
             audit(database,context,company_id,'ENQUIRY_REOPENED','enquiry',enquiry_id,before={'status':'closed'},after={'status':'new','availability_rechecked':True,'legacy_single_element':True})
             return RedirectResponse(f'/operations/enquiries/{enquiry_id}?saved=1',303)
         available_ids=[]; missing_ids=[]
@@ -297,11 +295,11 @@ def register_enquiry_routes(app) -> None:
                 if eeid in available_ids and migrated_inventory_conflict(c, company_id, int(element['element_id']), str(element['arrival_date']), str(element['departure_date'])):
                     available_ids.remove(eeid)
                     missing_ids.append(eeid)
-            c.execute("UPDATE enquiries SET status='new',updated_at=? WHERE id=? AND company_id=?",(now,enquiry_id,company_id))
+            execute_sql(c, "UPDATE enquiries SET status='new',updated_at=:q572_0 WHERE id=:q572_1 AND company_id=:q572_2",(now,enquiry_id,company_id))
             for eeid in available_ids:
-                c.execute("UPDATE enquiry_elements SET recovery_state='held',updated_at=? WHERE id=? AND company_id=?",(now,eeid,company_id))
+                execute_sql(c, "UPDATE enquiry_elements SET recovery_state='held',updated_at=:q580_0 WHERE id=:q580_1 AND company_id=:q580_2",(now,eeid,company_id))
             for eeid in missing_ids:
-                c.execute("UPDATE enquiry_elements SET recovery_state='needs_replacement',updated_at=? WHERE id=? AND company_id=?",(now,eeid,company_id))
+                execute_sql(c, "UPDATE enquiry_elements SET recovery_state='needs_replacement',updated_at=:q581_0 WHERE id=:q581_1 AND company_id=:q581_2",(now,eeid,company_id))
         audit(database,context,company_id,'ENQUIRY_REOPENED','enquiry',enquiry_id,before={'status':'closed'},after={'status':'new','availability_rechecked':True,'elements_reheld':available_ids,'elements_needing_replacement':missing_ids})
         message='Enquiry+reopened.' if not missing_ids else f'Enquiry+partly+reopened:+{len(available_ids)}+Element(s)+held,+{len(missing_ids)}+require+replacement.'
         return RedirectResponse(f'/operations/enquiries/{enquiry_id}?convert_error={message}',303)
@@ -310,8 +308,8 @@ def register_enquiry_routes(app) -> None:
     async def replace_recovery_element(enquiry_id:int,enquiry_element_id:int,request:Request):
         context=context_for(database,request); company_id=int(working_company(context))
         data=await form_data(request); require_csrf(context,data)
-        enquiry=one(database,"SELECT * FROM enquiries WHERE id=? AND company_id=? AND status='new'",(enquiry_id,company_id))
-        old=one(database,"SELECT * FROM enquiry_elements WHERE id=? AND enquiry_id=? AND company_id=?",(enquiry_element_id,enquiry_id,company_id))
+        enquiry=one(database,"SELECT * FROM enquiries WHERE id=:q562_0 AND company_id=:q562_1 AND status='new'",(enquiry_id,company_id))
+        old=one(database,'SELECT * FROM enquiry_elements WHERE id=:q563_0 AND enquiry_id=:q563_1 AND company_id=:q563_2',(enquiry_element_id,enquiry_id,company_id))
         if enquiry is None or old is None or str(old['recovery_state'] or 'held')!='needs_replacement':
             return JSONResponse({'ok':False,'error':'That Enquiry Element is not awaiting replacement.'},status_code=409)
         try:
@@ -321,13 +319,13 @@ def register_enquiry_routes(app) -> None:
         state=availability_state(database,company_id,element_id,arrival,departure,exclude_enquiry_id=enquiry_id)
         if not state.get('available'):
             return JSONResponse({'ok':False,'error':state.get('reason') or 'That Element is no longer available.'},status_code=409)
-        chosen=one(database,'SELECT * FROM setup_elements WHERE id=? AND company_id=? AND active=1',(element_id,company_id))
+        chosen=one(database,'SELECT * FROM setup_elements WHERE id=:q564_0 AND company_id=:q564_1 AND active=1',(element_id,company_id))
         if chosen is None or str(chosen['element_type'])!=str(old['element_type']):
             return JSONResponse({'ok':False,'error':'Choose a replacement from the same Element Type.'},status_code=409)
         values={'arrival_date':arrival,'departure_date':departure,'party_size':str(int(old['party_size'] or 0)),'source':'Availability','notes':'','element_type':str(old['element_type']),'element_id':str(element_id)}
-        for p in rows(database,'SELECT person_type_id,quantity FROM enquiry_element_people WHERE enquiry_element_id=? AND company_id=?',(enquiry_element_id,company_id)):
+        for p in rows(database,'SELECT person_type_id,quantity FROM enquiry_element_people WHERE enquiry_element_id=:q565_0 AND company_id=:q565_1',(enquiry_element_id,company_id)):
             values[f'person_{int(p["person_type_id"])}']=str(int(p['quantity'] or 0))
-        for a in rows(database,'SELECT addon_id,quantity FROM enquiry_element_addons WHERE enquiry_element_id=? AND company_id=?',(enquiry_element_id,company_id)):
+        for a in rows(database,'SELECT addon_id,quantity FROM enquiry_element_addons WHERE enquiry_element_id=:q566_0 AND company_id=:q566_1',(enquiry_element_id,company_id)):
             if int(a['quantity'] or 0)>0:
                 values[f'addon_{int(a["addon_id"])}']=str(int(a['quantity'])); values[f'addon_selected_{int(a["addon_id"])}']='1'; values[f'addon_when_{int(a["addon_id"])}']='every_day'
         calculation,_,error=_calculate(database,company_id,values)
@@ -339,10 +337,10 @@ def register_enquiry_routes(app) -> None:
             from .webv1_reservation_core import migrated_inventory_conflict
             if migrated_inventory_conflict(c, company_id, element_id, arrival, departure):
                 return JSONResponse({'ok':False,'error':'That Element is allocated to a central reservation.'},status_code=409)
-            c.execute("UPDATE enquiry_elements SET element_id=?,arrival_date=?,departure_date=?,provisional_total=?,pricing_snapshot_json=?,recovery_state='held',updated_at=? WHERE id=? AND enquiry_id=? AND company_id=?",(element_id,arrival,departure,float(calculation['total']),snap,now,enquiry_element_id,enquiry_id,company_id))
-            bounds=c.execute("SELECT MIN(arrival_date) a,MAX(departure_date) d,SUM(COALESCE(party_size,0)) p FROM enquiry_elements WHERE enquiry_id=? AND company_id=?",(enquiry_id,company_id)).fetchone()
-            c.execute("UPDATE enquiries SET arrival_date=?,departure_date=?,party_size=?,updated_at=? WHERE id=? AND company_id=?",(bounds['a'],bounds['d'],int(bounds['p'] or 0),now,enquiry_id,company_id))
-            unresolved=int(c.execute("SELECT COUNT(*) n FROM enquiry_elements WHERE enquiry_id=? AND company_id=? AND recovery_state='needs_replacement'",(enquiry_id,company_id)).fetchone()['n'])
+            execute_sql(c, "UPDATE enquiry_elements SET element_id=:q573_0,arrival_date=:q573_1,departure_date=:q573_2,provisional_total=:q573_3,pricing_snapshot_json=:q573_4,recovery_state='held',updated_at=:q573_5 WHERE id=:q573_6 AND enquiry_id=:q573_7 AND company_id=:q573_8",(element_id,arrival,departure,float(calculation['total']),snap,now,enquiry_element_id,enquiry_id,company_id))
+            bounds=execute_sql(c, 'SELECT MIN(arrival_date) a,MAX(departure_date) d,SUM(COALESCE(party_size,0)) p FROM enquiry_elements WHERE enquiry_id=:q583_0 AND company_id=:q583_1',(enquiry_id,company_id)).fetchone()
+            execute_sql(c, 'UPDATE enquiries SET arrival_date=:q574_0,departure_date=:q574_1,party_size=:q574_2,updated_at=:q574_3 WHERE id=:q574_4 AND company_id=:q574_5',(bounds['a'],bounds['d'],int(bounds['p'] or 0),now,enquiry_id,company_id))
+            unresolved=int(execute_sql(c, "SELECT COUNT(*) n FROM enquiry_elements WHERE enquiry_id=:q585_0 AND company_id=:q585_1 AND recovery_state='needs_replacement'",(enquiry_id,company_id)).fetchone()['n'])
         audit(database,context,company_id,'ENQUIRY_ELEMENT_REPLACED','enquiry',enquiry_id,before={'enquiry_element_id':enquiry_element_id,'element_id':int(old['element_id']),'arrival_date':old['arrival_date'],'departure_date':old['departure_date']},after={'enquiry_element_id':enquiry_element_id,'element_id':element_id,'arrival_date':arrival,'departure_date':departure,'remaining_replacements':unresolved})
         return JSONResponse({'ok':True,'enquiry_id':enquiry_id,'remaining_replacements':unresolved})
 

@@ -1,4 +1,5 @@
 from __future__ import annotations
+from .sql import execute_sql, local_schema, column_rows
 
 import json
 from datetime import date
@@ -23,13 +24,13 @@ CREATE TABLE IF NOT EXISTS hold_requirement_addons (hold_id INTEGER NOT NULL,com
 
 
 def _ensure_column(connection, table, column, definition):
-    if column not in {str(r['name']) for r in connection.execute(f'PRAGMA table_info({table})').fetchall()}:
-        connection.execute(f'ALTER TABLE {table} ADD COLUMN {column} {definition}')
+    if column not in {str(r['name']) for r in column_rows(connection, table)}:
+        execute_sql(connection, f'ALTER TABLE {table} ADD COLUMN {column} {definition}')
 
 
 def initialise_booking_requirements(database):
     with database.connect() as c:
-        c.executescript(REQUIREMENTS_SCHEMA)
+        local_schema(c, REQUIREMENTS_SCHEMA)
         _ensure_column(c, 'setup_person_types', 'ask_age', 'INTEGER NOT NULL DEFAULT 0')
         _ensure_column(c, 'setup_addons', 'ask_before_availability', 'INTEGER NOT NULL DEFAULT 0')
         _ensure_column(c, 'setup_person_limits', 'min_count', 'INTEGER NOT NULL DEFAULT 0')
@@ -37,8 +38,8 @@ def initialise_booking_requirements(database):
         _ensure_column(c, 'booking_requirement_sessions', 'departure_date', "TEXT NOT NULL DEFAULT ''")
         _ensure_column(c, 'booking_requirement_sessions', 'lead_name', "TEXT NOT NULL DEFAULT ''")
         _ensure_column(c, 'element_holds', 'lead_name', "TEXT NOT NULL DEFAULT ''")
-        c.execute('DELETE FROM hold_requirement_people WHERE hold_id NOT IN (SELECT id FROM element_holds)')
-        c.execute('DELETE FROM hold_requirement_addons WHERE hold_id NOT IN (SELECT id FROM element_holds)')
+        execute_sql(c, 'DELETE FROM hold_requirement_people WHERE hold_id NOT IN (SELECT id FROM element_holds)')
+        execute_sql(c, 'DELETE FROM hold_requirement_addons WHERE hold_id NOT IN (SELECT id FROM element_holds)')
 
 
 def _session_context(database, request):
@@ -54,13 +55,13 @@ def _session_context(database, request):
 def _saved_requirements(database, cid, token):
     people = {
         int(r['person_type_id']): {'quantity': int(r['quantity']), 'ages': json.loads(r['ages_json'] or '[]')}
-        for r in rows(database, 'SELECT * FROM booking_requirement_people WHERE company_id=? AND session_token=?', (cid, token))
+        for r in rows(database, 'SELECT * FROM booking_requirement_people WHERE company_id=:q331_0 AND session_token=:q331_1', (cid, token))
     }
     addons = {
         int(r['addon_id']): int(r['quantity'])
-        for r in rows(database, 'SELECT * FROM booking_requirement_addons WHERE company_id=? AND session_token=?', (cid, token))
+        for r in rows(database, 'SELECT * FROM booking_requirement_addons WHERE company_id=:q332_0 AND session_token=:q332_1', (cid, token))
     }
-    saved = one(database, 'SELECT ready,arrival_date,departure_date FROM booking_requirement_sessions WHERE company_id=? AND session_token=?', (cid, token))
+    saved = one(database, 'SELECT ready,arrival_date,departure_date FROM booking_requirement_sessions WHERE company_id=:q308_0 AND session_token=:q308_1', (cid, token))
     ready = bool(saved and int(saved['ready'] or 0))
     arrival = str(saved['arrival_date'] or '') if saved else ''
     departure = str(saved['departure_date'] or '') if saved else ''
@@ -68,36 +69,30 @@ def _saved_requirements(database, cid, token):
 
 
 def _saved_lead_name(database, cid, token):
-    saved = one(database, 'SELECT lead_name FROM booking_requirement_sessions WHERE company_id=? AND session_token=?', (cid, token))
+    saved = one(database, 'SELECT lead_name FROM booking_requirement_sessions WHERE company_id=:q309_0 AND session_token=:q309_1', (cid, token))
     return str(saved['lead_name'] or '') if saved else ''
 
 
 def _load_hold_requirements_into_working(database, cid: int, token: str, hold_id: int) -> bool:
     with database.connect() as c:
-        hold = c.execute(
-            '''SELECT id,arrival_date,departure_date,lead_name FROM element_holds
-               WHERE id=? AND company_id=? AND session_token=? AND expires_at>?''',
+        hold = execute_sql(c,
+            'SELECT id,arrival_date,departure_date,lead_name FROM element_holds\n               WHERE id=:q341_0 AND company_id=:q341_1 AND session_token=:q341_2 AND expires_at>:q341_3',
             (hold_id, cid, token, iso_now()),
         ).fetchone()
         if hold is None:
             return False
-        c.execute('DELETE FROM booking_requirement_people WHERE company_id=? AND session_token=?', (cid, token))
-        c.execute('DELETE FROM booking_requirement_addons WHERE company_id=? AND session_token=?', (cid, token))
-        c.execute(
-            '''INSERT INTO booking_requirement_people(session_token,company_id,person_type_id,quantity,ages_json)
-               SELECT ?,company_id,person_type_id,quantity,ages_json FROM hold_requirement_people WHERE hold_id=?''',
+        execute_sql(c, 'DELETE FROM booking_requirement_people WHERE company_id=:q319_0 AND session_token=:q319_1', (cid, token))
+        execute_sql(c, 'DELETE FROM booking_requirement_addons WHERE company_id=:q320_0 AND session_token=:q320_1', (cid, token))
+        execute_sql(c,
+            'INSERT INTO booking_requirement_people(session_token,company_id,person_type_id,quantity,ages_json)\n               SELECT :q321_0,company_id,person_type_id,quantity,ages_json FROM hold_requirement_people WHERE hold_id=:q321_1',
             (token, hold_id),
         )
-        c.execute(
-            '''INSERT INTO booking_requirement_addons(session_token,company_id,addon_id,quantity)
-               SELECT ?,company_id,addon_id,quantity FROM hold_requirement_addons WHERE hold_id=?''',
+        execute_sql(c,
+            'INSERT INTO booking_requirement_addons(session_token,company_id,addon_id,quantity)\n               SELECT :q322_0,company_id,addon_id,quantity FROM hold_requirement_addons WHERE hold_id=:q322_1',
             (token, hold_id),
         )
-        c.execute(
-            '''INSERT INTO booking_requirement_sessions(session_token,company_id,ready,arrival_date,departure_date,lead_name,updated_at)
-               VALUES (?,?,1,?,?,?,CURRENT_TIMESTAMP)
-               ON CONFLICT(session_token,company_id) DO UPDATE SET ready=1,arrival_date=excluded.arrival_date,
-               departure_date=excluded.departure_date,lead_name=excluded.lead_name,updated_at=CURRENT_TIMESTAMP''',
+        execute_sql(c,
+            'INSERT INTO booking_requirement_sessions(session_token,company_id,ready,arrival_date,departure_date,lead_name,updated_at)\n               VALUES (:q323_0,:q323_1,1,:q323_2,:q323_3,:q323_4,CURRENT_TIMESTAMP)\n               ON CONFLICT(session_token,company_id) DO UPDATE SET ready=1,arrival_date=excluded.arrival_date,\n               departure_date=excluded.departure_date,lead_name=excluded.lead_name,updated_at=CURRENT_TIMESTAMP',
             (token, cid, str(hold['arrival_date']), str(hold['departure_date']), str(hold['lead_name'] or '')),
         )
     return True
@@ -113,28 +108,22 @@ def _fmt_user_date(value):
 def _held_element_type(database, cid: int, token: str, hold_id: int) -> str:
     if not hold_id:
         return ''
-    item = one(database, '''SELECT e.element_type FROM element_holds h
-                            JOIN setup_elements e ON e.id=h.element_id AND e.company_id=h.company_id
-                            WHERE h.id=? AND h.company_id=? AND h.session_token=? AND h.expires_at>?''', (hold_id, cid, token, iso_now()))
+    item = one(database, 'SELECT e.element_type FROM element_holds h\n                            JOIN setup_elements e ON e.id=h.element_id AND e.company_id=h.company_id\n                            WHERE h.id=:q310_0 AND h.company_id=:q310_1 AND h.session_token=:q310_2 AND h.expires_at>:q310_3', (hold_id, cid, token, iso_now()))
     return str(item['element_type']) if item else ''
 
 
 def _relevant_person_ids_for_type(database, cid: int, element_type: str, year: int) -> set[int]:
     if not element_type:
         return {int(r['id']) for r in person_type_rows(database, cid, active_only=True)}
-    return {int(r['person_type_id']) for r in rows(database, '''SELECT DISTINCT l.person_type_id
-        FROM setup_person_limits l JOIN setup_elements e ON e.id=l.element_id AND e.company_id=l.company_id
-        JOIN setup_person_types p ON p.id=l.person_type_id AND p.company_id=l.company_id
-        WHERE l.company_id=? AND l.year=? AND e.element_type=? AND e.active=1 AND p.active=1
-        AND (l.max_count>0 OR l.min_count>0)''', (cid, year, element_type))}
+    return {int(r['person_type_id']) for r in rows(database, 'SELECT DISTINCT l.person_type_id\n        FROM setup_person_limits l JOIN setup_elements e ON e.id=l.element_id AND e.company_id=l.company_id\n        JOIN setup_person_types p ON p.id=l.person_type_id AND p.company_id=l.company_id\n        WHERE l.company_id=:q333_0 AND l.year=:q333_1 AND e.element_type=:q333_2 AND e.active=1 AND p.active=1\n        AND (l.max_count>0 OR l.min_count>0)', (cid, year, element_type))}
 
 
 def _relevant_addon_ids_for_type(database, cid: int, element_type: str, year: int) -> set[int]:
     if not element_type:
-        return {int(r['id']) for r in rows(database, 'SELECT id FROM setup_addons WHERE company_id=? AND active=1 AND ask_before_availability=1', (cid,))}
+        return {int(r['id']) for r in rows(database, 'SELECT id FROM setup_addons WHERE company_id=:q342_0 AND active=1 AND ask_before_availability=1', (cid,))}
     result: set[int] = set()
-    elements = rows(database, 'SELECT * FROM setup_elements WHERE company_id=? AND active=1 AND element_type=?', (cid, element_type))
-    addons = rows(database, 'SELECT id FROM setup_addons WHERE company_id=? AND active=1 AND ask_before_availability=1', (cid,))
+    elements = rows(database, 'SELECT * FROM setup_elements WHERE company_id=:q311_0 AND active=1 AND element_type=:q311_1', (cid, element_type))
+    addons = rows(database, 'SELECT id FROM setup_addons WHERE company_id=:q312_0 AND active=1 AND ask_before_availability=1', (cid,))
     for addon in addons:
         aid = int(addon['id'])
         if any(_addon_rule(database, cid, year, element, aid).get('allowed') for element in elements):
@@ -144,11 +133,11 @@ def _relevant_addon_ids_for_type(database, cid: int, element_type: str, year: in
 
 def _person_cap_map(database, cid: int) -> dict[str, dict[str, dict[str, int]]]:
     result: dict[str, dict[str, dict[str, int]]] = {}
-    for yr in rows(database, 'SELECT year FROM setup_years WHERE company_id=? ORDER BY year', (cid,)):
+    for yr in rows(database, 'SELECT year FROM setup_years WHERE company_id=:q313_0 ORDER BY year', (cid,)):
         year = int(yr['year'])
-        for element in rows(database, 'SELECT id,element_type FROM setup_elements WHERE company_id=? AND active=1', (cid,)):
+        for element in rows(database, 'SELECT id,element_type FROM setup_elements WHERE company_id=:q324_0 AND active=1', (cid,)):
             bucket = result.setdefault(str(element['element_type']), {}).setdefault(str(year), {})
-            for limit in rows(database, 'SELECT person_type_id,max_count FROM setup_person_limits WHERE company_id=? AND year=? AND element_id=?', (cid, year, int(element['id']))):
+            for limit in rows(database, 'SELECT person_type_id,max_count FROM setup_person_limits WHERE company_id=:q334_0 AND year=:q334_1 AND element_id=:q334_2', (cid, year, int(element['id']))):
                 key = str(int(limit['person_type_id']))
                 bucket[key] = max(int(bucket.get(key, 0)), int(limit['max_count'] or 0))
     return result
@@ -156,8 +145,8 @@ def _person_cap_map(database, cid: int) -> dict[str, dict[str, dict[str, int]]]:
 
 def _person_type_map(database, cid: int) -> dict[str, list[int]]:
     mapping: dict[str, list[int]] = {}
-    years = [int(r['year']) for r in rows(database, 'SELECT year FROM setup_years WHERE company_id=?', (cid,))]
-    types = [str(r['name']) for r in rows(database, 'SELECT name FROM setup_element_types WHERE company_id=? AND active=1', (cid,))]
+    years = [int(r['year']) for r in rows(database, 'SELECT year FROM setup_years WHERE company_id=:q335_0', (cid,))]
+    types = [str(r['name']) for r in rows(database, 'SELECT name FROM setup_element_types WHERE company_id=:q336_0 AND active=1', (cid,))]
     for typ in types:
         ids: set[int] = set()
         for year in years:
@@ -168,8 +157,8 @@ def _person_type_map(database, cid: int) -> dict[str, list[int]]:
 
 def _requirements_page(database, context, cid, token, message='', edit_hold: int = 0, selected_element_type: str = ''):
     people_rows = person_type_rows(database, cid, active_only=True)
-    addon_rows = rows(database, 'SELECT * FROM setup_addons WHERE company_id=? AND active=1 AND ask_before_availability=1 ORDER BY name COLLATE NOCASE', (cid,))
-    element_types = [str(r['name']) for r in rows(database, 'SELECT name FROM setup_element_types WHERE company_id=? AND active=1 ORDER BY name COLLATE NOCASE', (cid,))]
+    addon_rows = rows(database, 'SELECT * FROM setup_addons WHERE company_id=:q314_0 AND active=1 AND ask_before_availability=1 ORDER BY lower(name)', (cid,))
+    element_types = [str(r['name']) for r in rows(database, 'SELECT name FROM setup_element_types WHERE company_id=:q337_0 AND active=1 ORDER BY lower(name)', (cid,))]
     if edit_hold and not selected_element_type:
         selected_element_type = _held_element_type(database, cid, token, edit_hold)
     if selected_element_type not in element_types:
@@ -177,12 +166,10 @@ def _requirements_page(database, context, cid, token, message='', edit_hold: int
     saved_people, saved_addons, _, saved_arrival, saved_departure = _saved_requirements(database, cid, token)
     saved_lead_name = _saved_lead_name(database, cid, token)
     with database.connect() as c:
-        basket_count = int(c.execute('SELECT COUNT(*) AS n FROM element_holds WHERE company_id=? AND session_token=? AND expires_at>?', (cid, token, iso_now())).fetchone()['n'])
+        basket_count = int(execute_sql(c, 'SELECT COUNT(*) AS n FROM element_holds WHERE company_id=:q345_0 AND session_token=:q345_1 AND expires_at>:q345_2', (cid, token, iso_now())).fetchone()['n'])
     additional_element = basket_count > 0 and not edit_hold
-    if additional_element and not saved_lead_name and one(database, 'SELECT ready FROM booking_requirement_sessions WHERE company_id=? AND session_token=?', (cid, token)) is None:
-        first_hold = one(database, '''SELECT lead_name FROM element_holds
-            WHERE company_id=? AND session_token=? AND expires_at>?
-            ORDER BY created_at,id LIMIT 1''', (cid, token, iso_now()))
+    if additional_element and not saved_lead_name and one(database, 'SELECT ready FROM booking_requirement_sessions WHERE company_id=:q338_0 AND session_token=:q338_1', (cid, token)) is None:
+        first_hold = one(database, 'SELECT lead_name FROM element_holds\n            WHERE company_id=:q325_0 AND session_token=:q325_1 AND expires_at>:q325_2\n            ORDER BY created_at,id LIMIT 1', (cid, token, iso_now()))
         saved_lead_name = str(first_hold['lead_name'] or '') if first_hold else ''
     surname_label = 'Next Guest Surname (if different)' if additional_element else 'Lead Passenger Name'
     surname_help = ''
@@ -223,14 +210,12 @@ def _requirements_page(database, context, cid, token, message='', edit_hold: int
 def _element_reasons(database, cid, year, element, people, addons):
     reasons = []
     total = sum(int(v.get('quantity', 0)) for v in people.values())
-    occupancy = one(database, 'SELECT max_total FROM setup_occupancy WHERE company_id=? AND year=? AND element_id=?', (cid, year, int(element['id'])))
+    occupancy = one(database, 'SELECT max_total FROM setup_occupancy WHERE company_id=:q315_0 AND year=:q315_1 AND element_id=:q315_2', (cid, year, int(element['id'])))
     if occupancy is None:
         reasons.append('occupancy setup incomplete')
     elif total > int(occupancy['max_total']):
         reasons.append(f'maximum occupancy {int(occupancy["max_total"])}')
-    limits = rows(database, '''SELECT l.person_type_id,l.min_count,l.max_count,p.name FROM setup_person_limits l
-        LEFT JOIN setup_person_types p ON p.id=l.person_type_id AND p.company_id=l.company_id
-        WHERE l.company_id=? AND l.year=? AND l.element_id=?''', (cid, year, int(element['id'])))
+    limits = rows(database, 'SELECT l.person_type_id,l.min_count,l.max_count,p.name FROM setup_person_limits l\n        LEFT JOIN setup_person_types p ON p.id=l.person_type_id AND p.company_id=l.company_id\n        WHERE l.company_id=:q316_0 AND l.year=:q316_1 AND l.element_id=:q316_2', (cid, year, int(element['id'])))
     for limit in limits:
         pid = int(limit['person_type_id']); qty = int(people.get(pid, {}).get('quantity', 0)); minimum = int(limit['min_count'] or 0); maximum = int(limit['max_count']); name = str(limit['name'] or 'Person type')
         if qty < minimum:
@@ -240,7 +225,7 @@ def _element_reasons(database, cid, year, element, people, addons):
     for aid, qty in addons.items():
         qty = int(qty)
         if qty <= 0: continue
-        addon = one(database, 'SELECT name FROM setup_addons WHERE company_id=? AND id=?', (cid, aid)); rule = _addon_rule(database, cid, year, element, aid); name = str(addon['name']) if addon else 'Requirement'
+        addon = one(database, 'SELECT name FROM setup_addons WHERE company_id=:q326_0 AND id=:q326_1', (cid, aid)); rule = _addon_rule(database, cid, year, element, aid); name = str(addon['name']) if addon else 'Requirement'
         if not rule['allowed']: reasons.append(f'no {name}')
         elif rule['max'] is not None and qty > int(rule['max']): reasons.append(f'{name} max {int(rule["max"])}')
     return reasons
@@ -248,13 +233,9 @@ def _element_reasons(database, cid, year, element, people, addons):
 
 def _snapshot_hold_requirements(database, cid, token, hold_id):
     with database.connect() as c:
-        c.execute('DELETE FROM hold_requirement_people WHERE hold_id=?', (hold_id,)); c.execute('DELETE FROM hold_requirement_addons WHERE hold_id=?', (hold_id,))
-        c.execute('''INSERT INTO hold_requirement_people(hold_id,company_id,person_type_id,quantity,ages_json)
-                     SELECT ?,company_id,person_type_id,quantity,ages_json FROM booking_requirement_people
-                     WHERE company_id=? AND session_token=?''', (hold_id, cid, token))
-        c.execute('''INSERT INTO hold_requirement_addons(hold_id,company_id,addon_id,quantity)
-                     SELECT ?,company_id,addon_id,quantity FROM booking_requirement_addons
-                     WHERE company_id=? AND session_token=?''', (hold_id, cid, token))
+        execute_sql(c, 'DELETE FROM hold_requirement_people WHERE hold_id=:q327_0', (hold_id,)); execute_sql(c, 'DELETE FROM hold_requirement_addons WHERE hold_id=:q328_0', (hold_id,))
+        execute_sql(c, 'INSERT INTO hold_requirement_people(hold_id,company_id,person_type_id,quantity,ages_json)\n                     SELECT :q329_0,company_id,person_type_id,quantity,ages_json FROM booking_requirement_people\n                     WHERE company_id=:q329_1 AND session_token=:q329_2', (hold_id, cid, token))
+        execute_sql(c, 'INSERT INTO hold_requirement_addons(hold_id,company_id,addon_id,quantity)\n                     SELECT :q330_0,company_id,addon_id,quantity FROM booking_requirement_addons\n                     WHERE company_id=:q330_1 AND session_token=:q330_2', (hold_id, cid, token))
 
 
 def register_booking_requirement_routes(app):
@@ -272,16 +253,16 @@ def register_booking_requirement_routes(app):
     async def person_age_toggle(request: Request):
         context = context_for(database, request); cid = int(working_company(context)); data = await form_data(request); require_csrf(context, data); pid = int(data.get('person_type_id', '0') or 0)
         with database.connect() as c:
-            row = c.execute('SELECT ask_age FROM setup_person_types WHERE company_id=? AND id=?', (cid, pid)).fetchone()
+            row = execute_sql(c, 'SELECT ask_age FROM setup_person_types WHERE company_id=:q343_0 AND id=:q343_1', (cid, pid)).fetchone()
             if row is None: raise HTTPException(status_code=404, detail='Person Type not found')
-            old = int(row['ask_age'] or 0); new = 0 if old else 1; c.execute('UPDATE setup_person_types SET ask_age=? WHERE company_id=? AND id=?', (new, cid, pid))
+            old = int(row['ask_age'] or 0); new = 0 if old else 1; execute_sql(c, 'UPDATE setup_person_types SET ask_age=:q339_0 WHERE company_id=:q339_1 AND id=:q339_2', (new, cid, pid))
         audit(database, context, cid, 'PERSON_TYPE_AGE_QUESTION_CHANGED', 'person_type', pid, {'ask_age': old}, {'ask_age': new}); return RedirectResponse('/setup/person-types', 303)
 
     @app.post('/setup/addons/requirement-toggle')
     async def addon_requirement_toggle(request: Request):
         context = context_for(database, request); cid = int(working_company(context)); data = await form_data(request); require_csrf(context, data); aid = int(data.get('addon_id', '0') or 0)
         with database.connect() as c:
-            row = c.execute('SELECT ask_before_availability FROM setup_addons WHERE company_id=? AND id=?', (cid, aid)).fetchone()
+            row = execute_sql(c, 'SELECT ask_before_availability FROM setup_addons WHERE company_id=:q344_0 AND id=:q344_1', (cid, aid)).fetchone()
             if row is None: raise HTTPException(status_code=404, detail='Feature / Extra not found')
-            old = int(row['ask_before_availability'] or 0); new = 0 if old else 1; c.execute('UPDATE setup_addons SET ask_before_availability=? WHERE company_id=? AND id=?', (new, cid, aid))
+            old = int(row['ask_before_availability'] or 0); new = 0 if old else 1; execute_sql(c, 'UPDATE setup_addons SET ask_before_availability=:q340_0 WHERE company_id=:q340_1 AND id=:q340_2', (new, cid, aid))
         audit(database, context, cid, 'ADDON_AVAILABILITY_QUESTION_CHANGED', 'addon', aid, {'ask_before_availability': old}, {'ask_before_availability': new}); return RedirectResponse('/setup/addons', 303)

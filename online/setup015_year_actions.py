@@ -1,4 +1,5 @@
 from __future__ import annotations
+from .sql import execute_sql
 
 from fastapi import Request
 from fastapi.responses import HTMLResponse, RedirectResponse
@@ -17,13 +18,13 @@ def _copy_person_minima(database, company_id: int, source_year: int | None, targ
     if source_year is None:
         return
     with database.connect() as c:
-        minima = c.execute(
-            'SELECT element_id,person_type_id,min_count FROM setup_person_limits WHERE company_id=? AND year=?',
+        minima = execute_sql(c,
+            'SELECT element_id,person_type_id,min_count FROM setup_person_limits WHERE company_id=:q94_0 AND year=:q94_1',
             (company_id, source_year),
         ).fetchall()
         for row in minima:
-            c.execute(
-                'UPDATE setup_person_limits SET min_count=? WHERE company_id=? AND year=? AND element_id=? AND person_type_id=?',
+            execute_sql(c,
+                'UPDATE setup_person_limits SET min_count=:q93_0 WHERE company_id=:q93_1 AND year=:q93_2 AND element_id=:q93_3 AND person_type_id=:q93_4',
                 (row['min_count'], company_id, target_year, row['element_id'], row['person_type_id']),
             )
 

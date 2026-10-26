@@ -1,4 +1,5 @@
 from __future__ import annotations
+from .sql import execute_sql, local_schema, column_rows
 
 from fastapi import HTTPException, Request
 
@@ -55,42 +56,37 @@ def initialise_setup015(database) -> None:
     from .setup014_core import initialise_setup014
     initialise_setup014(database)
     with database.connect() as connection:
-        connection.executescript(BUILD015_SCHEMA)
-        person_type_columns = {str(r['name']) for r in connection.execute('PRAGMA table_info(setup_person_types)').fetchall()}
+        local_schema(connection, BUILD015_SCHEMA)
+        person_type_columns = {str(r['name']) for r in column_rows(connection, 'setup_person_types')}
         if 'ask_age' not in person_type_columns:
-            connection.execute('ALTER TABLE setup_person_types ADD COLUMN ask_age INTEGER NOT NULL DEFAULT 0')
-        columns = {str(r['name']) for r in connection.execute('PRAGMA table_info(setup_person_limits)').fetchall()}
+            execute_sql(connection, 'ALTER TABLE setup_person_types ADD COLUMN ask_age INTEGER NOT NULL DEFAULT 0')
+        columns = {str(r['name']) for r in column_rows(connection, 'setup_person_limits')}
         if 'min_count' not in columns:
-            connection.execute('ALTER TABLE setup_person_limits ADD COLUMN min_count INTEGER NOT NULL DEFAULT 0')
-        connection.execute(
-            """
-            INSERT OR IGNORE INTO setup_element_types(company_id, name, active)
-            SELECT DISTINCT company_id, TRIM(element_type), 1
-            FROM setup_elements
-            WHERE TRIM(element_type) <> ''
-            """
+            execute_sql(connection, 'ALTER TABLE setup_person_limits ADD COLUMN min_count INTEGER NOT NULL DEFAULT 0')
+        execute_sql(connection,
+            "\n            INSERT INTO setup_element_types(company_id, name, active)\n            SELECT DISTINCT company_id, TRIM(element_type), 1\n            FROM setup_elements\n            WHERE TRIM(element_type) <> ''\n             ON CONFLICT DO NOTHING"
         )
 
 
 def copy_previous_year(database, company_id: int, target_year: int) -> int:
     source_year = copy_previous_year014(database, company_id, target_year)
     with database.connect() as connection:
-        prices = connection.execute(
-            "SELECT element_id,person_type_id,rate FROM setup_person_prices WHERE company_id=? AND year=?",
+        prices = execute_sql(connection,
+            'SELECT element_id,person_type_id,rate FROM setup_person_prices WHERE company_id=:q548_0 AND year=:q548_1',
             (company_id, source_year),
         ).fetchall()
         for row in prices:
-            connection.execute(
-                "INSERT INTO setup_person_prices(company_id,year,element_id,person_type_id,rate) VALUES (?,?,?,?,?)",
+            execute_sql(connection,
+                'INSERT INTO setup_person_prices(company_id,year,element_id,person_type_id,rate) VALUES (:q546_0,:q546_1,:q546_2,:q546_3,:q546_4)',
                 (company_id, target_year, row["element_id"], row["person_type_id"], row["rate"]),
             )
-        minima = connection.execute(
-            "SELECT element_id,person_type_id,min_count FROM setup_person_limits WHERE company_id=? AND year=?",
+        minima = execute_sql(connection,
+            'SELECT element_id,person_type_id,min_count FROM setup_person_limits WHERE company_id=:q549_0 AND year=:q549_1',
             (company_id, source_year),
         ).fetchall()
         for row in minima:
-            connection.execute(
-                "UPDATE setup_person_limits SET min_count=? WHERE company_id=? AND year=? AND element_id=? AND person_type_id=?",
+            execute_sql(connection,
+                'UPDATE setup_person_limits SET min_count=:q547_0 WHERE company_id=:q547_1 AND year=:q547_2 AND element_id=:q547_3 AND person_type_id=:q547_4',
                 (row["min_count"], company_id, target_year, row["element_id"], row["person_type_id"]),
             )
     return source_year

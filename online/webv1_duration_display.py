@@ -87,10 +87,7 @@ def install_duration_display(app) -> None:
         # on the calendar, so show only the useful stay length here.
         if path == '/availability/calendar-v2':
             hold_map = {}
-            for r in rows(database, '''SELECT h.id,h.arrival_date,h.departure_date,e.pricing_method
-                                      FROM element_holds h
-                                      JOIN setup_elements e ON e.id=h.element_id AND e.company_id=h.company_id
-                                      WHERE h.company_id=? AND h.session_token=? AND h.expires_at>datetime('now')''',
+            for r in rows(database, "SELECT h.id,h.arrival_date,h.departure_date,e.pricing_method\n                                      FROM element_holds h\n                                      JOIN setup_elements e ON e.id=h.element_id AND e.company_id=h.company_id\n                                      WHERE h.company_id=:q645_0 AND h.session_token=:q645_1 AND h.expires_at>datetime('now')",
                           (company_id, token)):
                 hold_map[str(int(r['id']))] = _progress_label(r['arrival_date'], r['departure_date'], r['pricing_method'])
             script = f'''<style id="duration-display-style">.duration-summary{{display:block;color:#4f5d6b;font-size:11px;line-height:1.25;margin-top:3px}}</style>
@@ -107,11 +104,7 @@ def install_duration_display(app) -> None:
 
         elif path.startswith('/operations/bookings/') and path.rstrip('/').split('/')[-1].isdigit():
             booking_id = int(path.rstrip('/').split('/')[-1])
-            items = rows(database, '''SELECT be.arrival_date,be.departure_date,se.name AS element_name,se.element_type,
-                                             COALESCE(NULLIF(be.pricing_method_snapshot,''),se.pricing_method) AS pricing_method
-                                      FROM booking_elements be
-                                      JOIN setup_elements se ON se.id=be.element_id AND se.company_id=be.company_id
-                                      WHERE be.company_id=? AND be.booking_id=? ORDER BY be.id''', (company_id, booking_id))
+            items = rows(database, "SELECT be.arrival_date,be.departure_date,se.name AS element_name,se.element_type,\n                                             COALESCE(NULLIF(be.pricing_method_snapshot,''),se.pricing_method) AS pricing_method\n                                      FROM booking_elements be\n                                      JOIN setup_elements se ON se.id=be.element_id AND se.company_id=be.company_id\n                                      WHERE be.company_id=:q646_0 AND be.booking_id=:q646_1 ORDER BY be.id", (company_id, booking_id))
             for item in items:
                 old = f'''<strong>{item['element_name']}</strong> ({item['element_type']}) — {_fmt(item['arrival_date'])} to {_fmt(item['departure_date'])}'''
                 new = f'''<strong>{item['element_name']}</strong> ({item['element_type']}) — {_label(item['arrival_date'], item['departure_date'], item['pricing_method'])}'''
@@ -119,11 +112,7 @@ def install_duration_display(app) -> None:
 
         elif path.startswith('/operations/enquiries/') and path.rstrip('/').split('/')[-1].isdigit():
             enquiry_id = int(path.rstrip('/').split('/')[-1])
-            item = rows(database, '''SELECT e.arrival_date,e.departure_date,se.pricing_method
-                                     FROM enquiries e
-                                     LEFT JOIN enquiry_requests er ON er.enquiry_id=e.id AND er.company_id=e.company_id
-                                     LEFT JOIN setup_elements se ON se.id=er.element_id AND se.company_id=er.company_id
-                                     WHERE e.company_id=? AND e.id=? LIMIT 1''', (company_id, enquiry_id))
+            item = rows(database, 'SELECT e.arrival_date,e.departure_date,se.pricing_method\n                                     FROM enquiries e\n                                     LEFT JOIN enquiry_requests er ON er.enquiry_id=e.id AND er.company_id=e.company_id\n                                     LEFT JOIN setup_elements se ON se.id=er.element_id AND se.company_id=er.company_id\n                                     WHERE e.company_id=:q647_0 AND e.id=:q647_1 LIMIT 1', (company_id, enquiry_id))
             if item and item[0]['arrival_date'] and item[0]['departure_date'] and item[0]['pricing_method']:
                 r = item[0]
                 marker = f'''<strong>Departure:</strong> {_fmt(r['departure_date'])}'''

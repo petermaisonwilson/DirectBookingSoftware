@@ -1,4 +1,6 @@
 from __future__ import annotations
+from operational_backend import create_app
+from online.sql import execute_sql, insert_sql
 
 import sys
 import tempfile
@@ -7,7 +9,7 @@ from pathlib import Path
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
 from fastapi.testclient import TestClient
-from online.app import COOKIE_NAME, create_app
+from online.app import COOKIE_NAME
 from online.webv1 import register_web_v1
 
 
@@ -26,32 +28,32 @@ def main():
         db = app.state.database
         client = TestClient(app)
         with db.connect() as c:
-            company = int(c.execute("SELECT id FROM companies WHERE name='Forest View Campsite'").fetchone()['id'])
-            c.execute("INSERT INTO setup_element_types(company_id,name) VALUES (?,?)", (company, 'Pitch'))
-            element = int(c.execute("INSERT INTO setup_elements(company_id,name,element_type,pricing_method,base_price) VALUES (?,?,?,?,?)", (company, 'Pitch P', 'Pitch', 'Per night', 0)).lastrowid)
-            adult = int(c.execute("INSERT INTO setup_person_types(company_id,name,short_name) VALUES (?,?,?)", (company, 'Adult', 'Adult')).lastrowid)
-            child = int(c.execute("INSERT INTO setup_person_types(company_id,name,short_name) VALUES (?,?,?)", (company, 'Child under 16', 'ChildU16')).lastrowid)
-            breakfast = int(c.execute("INSERT INTO setup_addons(company_id,name,pricing_method) VALUES (?,?,?)", (company, 'Breakfast', 'Per quantity per day')).lastrowid)
-            dogs = int(c.execute("INSERT INTO setup_addons(company_id,name,pricing_method) VALUES (?,?,?)", (company, 'Dogs', 'Per quantity')).lastrowid)
-            c.execute("INSERT INTO setup_years(company_id,year) VALUES (?,2026)", (company,))
-            season = int(c.execute("INSERT INTO setup_seasons(company_id,year,name,start_date,end_date) VALUES (?,?,?,?,?)", (company, 2026, 'All Year', '2026-01-01', '2026-12-31')).lastrowid)
-            c.execute("INSERT INTO setup_element_rates(company_id,year,element_id,season_id,rate) VALUES (?,?,?,?,?)", (company, 2026, element, season, 25))
-            c.execute("INSERT INTO setup_occupancy(company_id,year,element_id,max_total) VALUES (?,?,?,?)", (company, 2026, element, 4))
+            company = int(execute_sql(c, "SELECT id FROM companies WHERE name='Forest View Campsite'").fetchone()['id'])
+            execute_sql(c, 'INSERT INTO setup_element_types(company_id,name) VALUES (:q119_0,:q119_1)', (company, 'Pitch'))
+            element = int(insert_sql(c, 'INSERT INTO setup_elements(company_id,name,element_type,pricing_method,base_price) VALUES (:q131_0,:q131_1,:q131_2,:q131_3,:q131_4)', (company, 'Pitch P', 'Pitch', 'Per night', 0)).lastrowid)
+            adult = int(insert_sql(c, 'INSERT INTO setup_person_types(company_id,name,short_name) VALUES (:q132_0,:q132_1,:q132_2)', (company, 'Adult', 'Adult')).lastrowid)
+            child = int(insert_sql(c, 'INSERT INTO setup_person_types(company_id,name,short_name) VALUES (:q133_0,:q133_1,:q133_2)', (company, 'Child under 16', 'ChildU16')).lastrowid)
+            breakfast = int(insert_sql(c, 'INSERT INTO setup_addons(company_id,name,pricing_method) VALUES (:q134_0,:q134_1,:q134_2)', (company, 'Breakfast', 'Per quantity per day')).lastrowid)
+            dogs = int(insert_sql(c, 'INSERT INTO setup_addons(company_id,name,pricing_method) VALUES (:q135_0,:q135_1,:q135_2)', (company, 'Dogs', 'Per quantity')).lastrowid)
+            execute_sql(c, 'INSERT INTO setup_years(company_id,year) VALUES (:q120_0,2026)', (company,))
+            season = int(insert_sql(c, 'INSERT INTO setup_seasons(company_id,year,name,start_date,end_date) VALUES (:q136_0,:q136_1,:q136_2,:q136_3,:q136_4)', (company, 2026, 'All Year', '2026-01-01', '2026-12-31')).lastrowid)
+            execute_sql(c, 'INSERT INTO setup_element_rates(company_id,year,element_id,season_id,rate) VALUES (:q121_0,:q121_1,:q121_2,:q121_3,:q121_4)', (company, 2026, element, season, 25))
+            execute_sql(c, 'INSERT INTO setup_occupancy(company_id,year,element_id,max_total) VALUES (:q122_0,:q122_1,:q122_2,:q122_3)', (company, 2026, element, 4))
             for pid, rate in ((adult, 5), (child, 3)):
-                c.execute("INSERT INTO setup_person_limits(company_id,year,element_id,person_type_id,max_count) VALUES (?,?,?,?,?)", (company, 2026, element, pid, 4))
-                c.execute("INSERT INTO setup_person_prices(company_id,year,element_id,person_type_id,rate) VALUES (?,?,?,?,?)", (company, 2026, element, pid, rate))
-            c.execute("INSERT INTO setup_type_addons(company_id,year,element_type,addon_id,allowed,min_qty,max_qty,rate) VALUES (?,?,?,?,?,?,?,?)", (company, 2026, 'Pitch', breakfast, 1, 1, 4, 99))
-            c.execute("INSERT INTO setup_type_addons(company_id,year,element_type,addon_id,allowed,min_qty,max_qty,rate) VALUES (?,?,?,?,?,?,?,?)", (company, 2026, 'Pitch', dogs, 0, 0, 0, 0))
+                execute_sql(c, 'INSERT INTO setup_person_limits(company_id,year,element_id,person_type_id,max_count) VALUES (:q129_0,:q129_1,:q129_2,:q129_3,:q129_4)', (company, 2026, element, pid, 4))
+                execute_sql(c, 'INSERT INTO setup_person_prices(company_id,year,element_id,person_type_id,rate) VALUES (:q130_0,:q130_1,:q130_2,:q130_3,:q130_4)', (company, 2026, element, pid, rate))
+            execute_sql(c, 'INSERT INTO setup_type_addons(company_id,year,element_type,addon_id,allowed,min_qty,max_qty,rate) VALUES (:q123_0,:q123_1,:q123_2,:q123_3,:q123_4,:q123_5,:q123_6,:q123_7)', (company, 2026, 'Pitch', breakfast, 1, 1, 4, 99))
+            execute_sql(c, 'INSERT INTO setup_type_addons(company_id,year,element_type,addon_id,allowed,min_qty,max_qty,rate) VALUES (:q124_0,:q124_1,:q124_2,:q124_3,:q124_4,:q124_5,:q124_6,:q124_7)', (company, 2026, 'Pitch', dogs, 0, 0, 0, 0))
             now = '2026-08-23T12:00:00+00:00'
-            customer = int(c.execute("INSERT INTO customer_records(company_id,first_name,last_name,email,phone,created_at,updated_at) VALUES (?,?,?,?,?,?,?)", (company, 'Picker', 'Test', 'picker@test.invalid', '', now, now)).lastrowid)
+            customer = int(insert_sql(c, 'INSERT INTO customer_records(company_id,first_name,last_name,email,phone,created_at,updated_at) VALUES (:q137_0,:q137_1,:q137_2,:q137_3,:q137_4,:q137_5,:q137_6)', (company, 'Picker', 'Test', 'picker@test.invalid', '', now, now)).lastrowid)
         from online.webv1_addon_when import initialise_addon_when
         from online.webv1_addon_person import initialise_addon_person
         initialise_addon_when(db); initialise_addon_person(db)
         with db.connect() as c:
-            c.execute("UPDATE setup_addon_when_options SET active=1 WHERE company_id=? AND addon_id=?", (company, breakfast))
-            c.execute("UPDATE setup_addon_person_pricing SET pricing_mode='person_type' WHERE company_id=? AND addon_id=?", (company, breakfast))
-            c.execute("INSERT INTO setup_addon_person_rates(company_id,addon_id,year,person_type_id,rate) VALUES (?,?,?,?,?)", (company, breakfast, 2026, adult, 10))
-            c.execute("INSERT INTO setup_addon_person_rates(company_id,addon_id,year,person_type_id,rate) VALUES (?,?,?,?,?)", (company, breakfast, 2026, child, 6))
+            execute_sql(c, 'UPDATE setup_addon_when_options SET active=1 WHERE company_id=:q125_0 AND addon_id=:q125_1', (company, breakfast))
+            execute_sql(c, "UPDATE setup_addon_person_pricing SET pricing_mode='person_type' WHERE company_id=:q126_0 AND addon_id=:q126_1", (company, breakfast))
+            execute_sql(c, 'INSERT INTO setup_addon_person_rates(company_id,addon_id,year,person_type_id,rate) VALUES (:q127_0,:q127_1,:q127_2,:q127_3,:q127_4)', (company, breakfast, 2026, adult, 10))
+            execute_sql(c, 'INSERT INTO setup_addon_person_rates(company_id,addon_id,year,person_type_id,rate) VALUES (:q128_0,:q128_1,:q128_2,:q128_3,:q128_4)', (company, breakfast, 2026, child, 6))
 
         login(client, 'operator@forestview.test', 'Operator013!')
         csrf = csrf_for(client, db)
@@ -82,7 +84,7 @@ def main():
         assert saved.status_code == 303
         enquiry_id = int(saved.headers['location'].split('/')[3].split('?')[0])
         with db.connect() as c:
-            selected = c.execute('SELECT addon_id FROM enquiry_selected_addons WHERE enquiry_id=? AND addon_id=?', (enquiry_id, breakfast)).fetchone()
+            selected = execute_sql(c, 'SELECT addon_id FROM enquiry_selected_addons WHERE enquiry_id=:q138_0 AND addon_id=:q138_1', (enquiry_id, breakfast)).fetchone()
             assert selected is not None
 
         client.post('/logout', follow_redirects=False)

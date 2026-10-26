@@ -16,7 +16,7 @@ def register_element_availability_page(app) -> None:
     def elements_with_availability(request: Request, edit: int = 0, saved: int = 0, message: str = ''):
         context = context_for(database, request); cid = working_company(context)
         html = _elements_page(database, context, message=message, edit=edit, saved=saved)
-        for row in rows(database, 'SELECT * FROM setup_elements WHERE company_id=? ORDER BY element_type,name', (cid,)):
+        for row in rows(database, 'SELECT * FROM setup_elements WHERE company_id=:q183_0 ORDER BY element_type,name', (cid,)):
             iid = int(row['id']); link = f'<a href="/setup/elements?edit={iid}">Edit</a>'
             availability = f'<a href="/setup/elements/availability?element_id={iid}">Availability</a>'
             toggle = _confirm_form(context, '/setup/maintenance/catalog/toggle', {'kind': 'element', 'id': iid}, 'Deactivate' if row['active'] else 'Reactivate', secondary=True)

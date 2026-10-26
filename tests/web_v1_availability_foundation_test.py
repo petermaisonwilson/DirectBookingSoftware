@@ -1,4 +1,6 @@
 from __future__ import annotations
+from operational_backend import create_app
+from online.sql import execute_sql, insert_sql
 
 import sys
 import tempfile
@@ -8,7 +10,7 @@ from pathlib import Path
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
 from fastapi.testclient import TestClient
-from online.app import COOKIE_NAME, create_app
+from online.app import COOKIE_NAME
 from online.database import iso_now
 from online.webv1 import register_web_v1
 
@@ -29,7 +31,7 @@ def main() -> None:
         client = TestClient(app); login(client)
         ctx = context(client, db); csrf = str(ctx['csrf_token']); token = client.cookies.get(COOKIE_NAME)
         with db.connect() as c:
-            company = int(c.execute("SELECT id FROM companies WHERE name='Forest View Campsite'").fetchone()['id'])
+            company = int(execute_sql(c, "SELECT id FROM companies WHERE name='Forest View Campsite'").fetchone()['id'])
 
         # Create a self-contained Element Type, two Elements, one year and two Add-ons.
         assert client.post('/setup/element-types', data={'csrf': csrf, 'name': 'Camping', 'id': ''}, follow_redirects=False).status_code == 303
@@ -39,37 +41,37 @@ def main() -> None:
         assert client.post('/setup/maintenance/catalog/save', data={'csrf': csrf, 'kind': 'addon', 'id': '', 'name': 'Electric hook up', 'pricing_method': 'Per night'}, follow_redirects=False).status_code == 303
         assert client.post('/setup/maintenance/catalog/save', data={'csrf': csrf, 'kind': 'addon', 'id': '', 'name': 'Breakfast', 'pricing_method': 'Per quantity'}, follow_redirects=False).status_code == 303
         with db.connect() as c:
-            p1 = int(c.execute("SELECT id FROM setup_elements WHERE company_id=? AND name='Pitch 1'", (company,)).fetchone()['id'])
-            p2 = int(c.execute("SELECT id FROM setup_elements WHERE company_id=? AND name='Pitch 2'", (company,)).fetchone()['id'])
-            electric = int(c.execute("SELECT id FROM setup_addons WHERE company_id=? AND name='Electric hook up'", (company,)).fetchone()['id'])
-            breakfast = int(c.execute("SELECT id FROM setup_addons WHERE company_id=? AND name='Breakfast'", (company,)).fetchone()['id'])
+            p1 = int(execute_sql(c, "SELECT id FROM setup_elements WHERE company_id=:q236_0 AND name='Pitch 1'", (company,)).fetchone()['id'])
+            p2 = int(execute_sql(c, "SELECT id FROM setup_elements WHERE company_id=:q237_0 AND name='Pitch 2'", (company,)).fetchone()['id'])
+            electric = int(execute_sql(c, "SELECT id FROM setup_addons WHERE company_id=:q238_0 AND name='Electric hook up'", (company,)).fetchone()['id'])
+            breakfast = int(execute_sql(c, "SELECT id FROM setup_addons WHERE company_id=:q239_0 AND name='Breakfast'", (company,)).fetchone()['id'])
             # Pitch 1 inherits Electric=Y and Breakfast=Y; Pitch 2 explicitly disables Electric.
-            c.execute('INSERT OR REPLACE INTO setup_type_addons VALUES (?,?,?,?,?,?,?,?)', (company, 2035, 'Camping', electric, 1, 1, 1, 5.0))
-            c.execute('INSERT OR REPLACE INTO setup_type_addons VALUES (?,?,?,?,?,?,?,?)', (company, 2035, 'Camping', breakfast, 1, 0, 10, 8.0))
-            c.execute('INSERT OR REPLACE INTO setup_element_addons VALUES (?,?,?,?,?,?,?,?)', (company, 2035, p2, electric, 'N', None, None, None))
+            execute_sql(c, 'INSERT INTO setup_type_addons VALUES (:q222_0,:q222_1,:q222_2,:q222_3,:q222_4,:q222_5,:q222_6,:q222_7) ON CONFLICT(company_id,year,element_type,addon_id) DO UPDATE SET allowed=excluded.allowed,min_qty=excluded.min_qty,max_qty=excluded.max_qty,rate=excluded.rate', (company, 2035, 'Camping', electric, 1, 1, 1, 5.0))
+            execute_sql(c, 'INSERT INTO setup_type_addons VALUES (:q223_0,:q223_1,:q223_2,:q223_3,:q223_4,:q223_5,:q223_6,:q223_7) ON CONFLICT(company_id,year,element_type,addon_id) DO UPDATE SET allowed=excluded.allowed,min_qty=excluded.min_qty,max_qty=excluded.max_qty,rate=excluded.rate', (company, 2035, 'Camping', breakfast, 1, 0, 10, 8.0))
+            execute_sql(c, 'INSERT INTO setup_element_addons VALUES (:q224_0,:q224_1,:q224_2,:q224_3,:q224_4,:q224_5,:q224_6,:q224_7) ON CONFLICT(company_id,year,element_id,addon_id) DO UPDATE SET state=excluded.state,min_qty=excluded.min_qty,max_qty=excluded.max_qty,rate=excluded.rate', (company, 2035, p2, electric, 'N', None, None, None))
 
             # Availability now deliberately requires complete setup. Give both test pitches
             # valid Seasonal Pricing, occupancy, person limits and explicit person prices.
-            seasons = c.execute('SELECT id FROM setup_seasons WHERE company_id=? AND year=?', (company, 2035)).fetchall()
-            people = c.execute('SELECT id FROM setup_person_types WHERE company_id=? AND active=1', (company,)).fetchall()
+            seasons = execute_sql(c, 'SELECT id FROM setup_seasons WHERE company_id=:q228_0 AND year=:q228_1', (company, 2035)).fetchall()
+            people = execute_sql(c, 'SELECT id FROM setup_person_types WHERE company_id=:q229_0 AND active=1', (company,)).fetchall()
             for element_id in (p1, p2):
                 for season in seasons:
-                    c.execute(
-                        'INSERT OR REPLACE INTO setup_element_rates(company_id,year,element_id,season_id,rate) VALUES (?,?,?,?,?)',
+                    execute_sql(c,
+                        'INSERT INTO setup_element_rates(company_id,year,element_id,season_id,rate) VALUES (:q230_0,:q230_1,:q230_2,:q230_3,:q230_4) ON CONFLICT(company_id,year,element_id,season_id) DO UPDATE SET rate=excluded.rate',
                         (company, 2035, element_id, int(season['id']), 25.0),
                     )
-                c.execute(
-                    'INSERT OR REPLACE INTO setup_occupancy(company_id,year,element_id,max_total) VALUES (?,?,?,?)',
+                execute_sql(c,
+                    'INSERT INTO setup_occupancy(company_id,year,element_id,max_total) VALUES (:q227_0,:q227_1,:q227_2,:q227_3) ON CONFLICT(company_id,year,element_id) DO UPDATE SET max_total=excluded.max_total',
                     (company, 2035, element_id, 6),
                 )
                 for person in people:
                     pid = int(person['id'])
-                    c.execute(
-                        'INSERT OR REPLACE INTO setup_person_limits(company_id,year,element_id,person_type_id,max_count) VALUES (?,?,?,?,?)',
+                    execute_sql(c,
+                        'INSERT INTO setup_person_limits(company_id,year,element_id,person_type_id,max_count) VALUES (:q231_0,:q231_1,:q231_2,:q231_3,:q231_4) ON CONFLICT(company_id,year,element_id,person_type_id) DO UPDATE SET max_count=excluded.max_count,min_count=excluded.min_count',
                         (company, 2035, element_id, pid, 6),
                     )
-                    c.execute(
-                        'INSERT OR REPLACE INTO setup_person_prices(company_id,year,element_id,person_type_id,rate) VALUES (?,?,?,?,?)',
+                    execute_sql(c,
+                        'INSERT INTO setup_person_prices(company_id,year,element_id,person_type_id,rate) VALUES (:q232_0,:q232_1,:q232_2,:q232_3,:q232_4) ON CONFLICT(company_id,year,element_id,person_type_id) DO UPDATE SET rate=excluded.rate',
                         (company, 2035, element_id, pid, 0.0),
                     )
 
@@ -100,9 +102,9 @@ def main() -> None:
         # Existing booking makes Pitch 1 unavailable and prevents a conflicting closure.
         now = iso_now()
         with db.connect() as c:
-            customer = int(c.execute("INSERT INTO customer_records(company_id,first_name,last_name,email,phone,created_at,updated_at) VALUES (?,?,?,?,?,?,?)", (company, 'Booked', 'Guest', 'booked@example.test', '', now, now)).lastrowid)
-            booking = int(c.execute("INSERT INTO bookings(company_id,reference,customer_id,status,arrival_date,departure_date,currency,total_amount,pricing_snapshot_json,notes,created_at,updated_at) VALUES (?,?,?,?,?,?,?,?,?,?,?,?)", (company, 'BK2035-001', customer, 'confirmed', '2035-08-01', '2035-08-04', 'EUR', 75, '{}', '', now, now)).lastrowid)
-            c.execute("INSERT INTO booking_elements(company_id,booking_id,element_id,arrival_date,departure_date,pricing_method_snapshot,unit_price_snapshot,total_amount,pricing_snapshot_json) VALUES (?,?,?,?,?,?,?,?,?)", (company, booking, p1, '2035-08-01', '2035-08-04', 'Per night', 25, 75, '{}'))
+            customer = int(insert_sql(c, 'INSERT INTO customer_records(company_id,first_name,last_name,email,phone,created_at,updated_at) VALUES (:q233_0,:q233_1,:q233_2,:q233_3,:q233_4,:q233_5,:q233_6)', (company, 'Booked', 'Guest', 'booked@example.test', '', now, now)).lastrowid)
+            booking = int(insert_sql(c, 'INSERT INTO bookings(company_id,reference,customer_id,status,arrival_date,departure_date,currency,total_amount,pricing_snapshot_json,notes,created_at,updated_at) VALUES (:q234_0,:q234_1,:q234_2,:q234_3,:q234_4,:q234_5,:q234_6,:q234_7,:q234_8,:q234_9,:q234_10,:q234_11)', (company, 'BK2035-001', customer, 'confirmed', '2035-08-01', '2035-08-04', 'EUR', 75, '{}', '', now, now)).lastrowid)
+            execute_sql(c, 'INSERT INTO booking_elements(company_id,booking_id,element_id,arrival_date,departure_date,pricing_method_snapshot,unit_price_snapshot,total_amount,pricing_snapshot_json) VALUES (:q225_0,:q225_1,:q225_2,:q225_3,:q225_4,:q225_5,:q225_6,:q225_7,:q225_8)', (company, booking, p1, '2035-08-01', '2035-08-04', 'Per night', 25, 75, '{}'))
         booked_search = client.get('/availability/search', params={'element_type': 'Camping', 'arrival': '2035-08-02', 'departure': '2035-08-03'}).json()['elements']
         assert [e['name'] for e in booked_search] == ['Pitch 2']
         blocked_closure = client.post('/setup/elements/availability/save', data={'csrf': csrf, 'element_id': str(p1), 'id': '', 'start_date': '2035-08-02', 'end_date': '2035-08-05', 'reason': 'Maintenance'}, follow_redirects=False)
@@ -125,7 +127,7 @@ def main() -> None:
         past_prompt = (datetime.now(timezone.utc) - timedelta(seconds=1)).isoformat(timespec='seconds')
         future_expiry = (datetime.now(timezone.utc) + timedelta(seconds=45)).isoformat(timespec='seconds')
         with db.connect() as c:
-            c.execute('UPDATE element_holds SET renewal_required_at=?,expires_at=? WHERE company_id=? AND session_token=?', (past_prompt, future_expiry, company, token))
+            execute_sql(c, 'UPDATE element_holds SET renewal_required_at=:q226_0,expires_at=:q226_1 WHERE company_id=:q226_2 AND session_token=:q226_3', (past_prompt, future_expiry, company, token))
         status = client.get('/availability/holds').json()['holds']
         assert len(status) == 1 and status[0]['element_name'] == 'Pitch 1' and status[0]['needs_confirmation'] is True
         renewed = client.post('/availability/holds/renew', data={'csrf': csrf})
@@ -142,7 +144,7 @@ def main() -> None:
         assert client.get('/availability/search', params={'element_type': 'Camping', 'arrival': '2036-01-01', 'departure': '2036-01-03'}).json()['elements'] == []
 
         with db.connect() as c:
-            actions = {str(r['action']) for r in c.execute('SELECT action FROM audit_log WHERE company_id=?', (company,)).fetchall()}
+            actions = {str(r['action']) for r in execute_sql(c, 'SELECT action FROM audit_log WHERE company_id=:q240_0', (company,)).fetchall()}
         assert {'ELEMENT_CLOSURE_SAVED', 'ELEMENT_HOLD_SAVED', 'ELEMENT_HOLDS_RENEWED', 'ELEMENT_HOLDS_RELEASED'}.issubset(actions)
 
     print('Direct Booking Web V1 availability foundation test: passed')

@@ -1,4 +1,6 @@
 from __future__ import annotations
+from operational_backend import create_app
+from online.sql import execute_sql, insert_sql
 
 import sys
 import tempfile
@@ -8,7 +10,7 @@ sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
 from fastapi.testclient import TestClient
 
-from online.app import COOKIE_NAME, create_app
+from online.app import COOKIE_NAME
 from online.database import iso_now
 from online.webv1 import register_web_v1
 
@@ -43,29 +45,29 @@ def main() -> None:
         assert 'age is requested only where the Client has enabled' in start.text and 'Ask for age' in start.text
 
         with db.connect() as c:
-            c.execute("INSERT OR IGNORE INTO setup_element_types(company_id,name,active) VALUES (?,?,1)", (company, 'Current Camping'))
-            c.execute("INSERT OR IGNORE INTO setup_element_types(company_id,name,active) VALUES (?,?,1)", (company, 'Current Fishing'))
-            pitch_one = int(c.execute("INSERT INTO setup_elements(company_id,name,element_type,pricing_method,base_price,active) VALUES (?,?,?,?,?,1)", (company, 'Current Pitch 1', 'Current Camping', 'Per night', 0)).lastrowid)
-            pitch_two = int(c.execute("INSERT INTO setup_elements(company_id,name,element_type,pricing_method,base_price,active) VALUES (?,?,?,?,?,1)", (company, 'Current Pitch 2', 'Current Camping', 'Per night', 0)).lastrowid)
-            peg = int(c.execute("INSERT INTO setup_elements(company_id,name,element_type,pricing_method,base_price,active) VALUES (?,?,?,?,?,1)", (company, 'Current Peg A', 'Current Fishing', 'Per day', 0)).lastrowid)
-            c.execute("INSERT OR IGNORE INTO setup_years(company_id,year) VALUES (?,?)", (company, 2035))
-            season = int(c.execute("INSERT INTO setup_seasons(company_id,year,name,start_date,end_date) VALUES (?,?,?,?,?)", (company, 2035, 'Current Season', '2035-01-01', '2035-12-31')).lastrowid)
+            execute_sql(c, 'INSERT INTO setup_element_types(company_id,name,active) VALUES (:q378_0,:q378_1,1) ON CONFLICT DO NOTHING', (company, 'Current Camping'))
+            execute_sql(c, 'INSERT INTO setup_element_types(company_id,name,active) VALUES (:q379_0,:q379_1,1) ON CONFLICT DO NOTHING', (company, 'Current Fishing'))
+            pitch_one = int(insert_sql(c, 'INSERT INTO setup_elements(company_id,name,element_type,pricing_method,base_price,active) VALUES (:q386_0,:q386_1,:q386_2,:q386_3,:q386_4,1)', (company, 'Current Pitch 1', 'Current Camping', 'Per night', 0)).lastrowid)
+            pitch_two = int(insert_sql(c, 'INSERT INTO setup_elements(company_id,name,element_type,pricing_method,base_price,active) VALUES (:q387_0,:q387_1,:q387_2,:q387_3,:q387_4,1)', (company, 'Current Pitch 2', 'Current Camping', 'Per night', 0)).lastrowid)
+            peg = int(insert_sql(c, 'INSERT INTO setup_elements(company_id,name,element_type,pricing_method,base_price,active) VALUES (:q388_0,:q388_1,:q388_2,:q388_3,:q388_4,1)', (company, 'Current Peg A', 'Current Fishing', 'Per day', 0)).lastrowid)
+            execute_sql(c, 'INSERT INTO setup_years(company_id,year) VALUES (:q380_0,:q380_1) ON CONFLICT DO NOTHING', (company, 2035))
+            season = int(insert_sql(c, 'INSERT INTO setup_seasons(company_id,year,name,start_date,end_date) VALUES (:q389_0,:q389_1,:q389_2,:q389_3,:q389_4)', (company, 2035, 'Current Season', '2035-01-01', '2035-12-31')).lastrowid)
             for element_id in (pitch_one, pitch_two, peg):
-                c.execute('INSERT INTO setup_element_rates(company_id,year,element_id,season_id,rate) VALUES (?,?,?,?,?)', (company, 2035, element_id, season, 25.0))
+                execute_sql(c, 'INSERT INTO setup_element_rates(company_id,year,element_id,season_id,rate) VALUES (:q383_0,:q383_1,:q383_2,:q383_3,:q383_4)', (company, 2035, element_id, season, 25.0))
             for element_id in (pitch_one, pitch_two):
-                c.execute('INSERT INTO setup_occupancy(company_id,year,element_id,max_total) VALUES (?,?,?,?)', (company, 2035, element_id, 6))
-            adult = int(c.execute("INSERT INTO setup_person_types(company_id,name,short_name,active,ask_age) VALUES (?,?,?,?,?)", (company, 'Current Adult', 'CA', 1, 0)).lastrowid)
-            child = int(c.execute("INSERT INTO setup_person_types(company_id,name,short_name,active,ask_age) VALUES (?,?,?,?,?)", (company, 'Current Child U12', 'CC', 1, 1)).lastrowid)
-            people = c.execute('SELECT id FROM setup_person_types WHERE company_id=? AND active=1', (company,)).fetchall()
+                execute_sql(c, 'INSERT INTO setup_occupancy(company_id,year,element_id,max_total) VALUES (:q384_0,:q384_1,:q384_2,:q384_3)', (company, 2035, element_id, 6))
+            adult = int(insert_sql(c, 'INSERT INTO setup_person_types(company_id,name,short_name,active,ask_age) VALUES (:q390_0,:q390_1,:q390_2,:q390_3,:q390_4)', (company, 'Current Adult', 'CA', 1, 0)).lastrowid)
+            child = int(insert_sql(c, 'INSERT INTO setup_person_types(company_id,name,short_name,active,ask_age) VALUES (:q391_0,:q391_1,:q391_2,:q391_3,:q391_4)', (company, 'Current Child U12', 'CC', 1, 1)).lastrowid)
+            people = execute_sql(c, 'SELECT id FROM setup_person_types WHERE company_id=:q392_0 AND active=1', (company,)).fetchall()
             # TEST DATA ONLY: Fishing Peg A permits one Adult, proving Setup caps
             # control both entry and final Element selection.
-            c.execute('INSERT OR REPLACE INTO setup_person_limits(company_id,year,element_id,person_type_id,max_count) VALUES (?,?,?,?,?)', (company, 2035, peg, adult, 1))
+            execute_sql(c, 'INSERT INTO setup_person_limits(company_id,year,element_id,person_type_id,max_count) VALUES (:q381_0,:q381_1,:q381_2,:q381_3,:q381_4) ON CONFLICT(company_id,year,element_id,person_type_id) DO UPDATE SET max_count=excluded.max_count,min_count=excluded.min_count', (company, 2035, peg, adult, 1))
             for element_id in (pitch_one, pitch_two):
                 for person in people:
                     pid = int(person['id'])
                     max_count = 0 if pid == child and element_id == pitch_one else 6
-                    c.execute('INSERT OR REPLACE INTO setup_person_limits(company_id,year,element_id,person_type_id,max_count) VALUES (?,?,?,?,?)', (company, 2035, element_id, pid, max_count))
-                    c.execute('INSERT OR REPLACE INTO setup_person_prices(company_id,year,element_id,person_type_id,rate) VALUES (?,?,?,?,?)', (company, 2035, element_id, pid, 0.0))
+                    execute_sql(c, 'INSERT INTO setup_person_limits(company_id,year,element_id,person_type_id,max_count) VALUES (:q393_0,:q393_1,:q393_2,:q393_3,:q393_4) ON CONFLICT(company_id,year,element_id,person_type_id) DO UPDATE SET max_count=excluded.max_count,min_count=excluded.min_count', (company, 2035, element_id, pid, max_count))
+                    execute_sql(c, 'INSERT INTO setup_person_prices(company_id,year,element_id,person_type_id,rate) VALUES (:q394_0,:q394_1,:q394_2,:q394_3,:q394_4) ON CONFLICT(company_id,year,element_id,person_type_id) DO UPDATE SET rate=excluded.rate', (company, 2035, element_id, pid, 0.0))
 
         for name, kind, group in (
             ('Current Motorhome', 'Feature', 'Vehicle Type'),
@@ -76,12 +78,12 @@ def main() -> None:
             assert response.status_code == 303
 
         with db.connect() as c:
-            motorhome = int(c.execute('SELECT id FROM setup_addons WHERE company_id=? AND name=?', (company, 'Current Motorhome')).fetchone()['id'])
-            caravan = int(c.execute('SELECT id FROM setup_addons WHERE company_id=? AND name=?', (company, 'Current Caravan')).fetchone()['id'])
-            pets = int(c.execute('SELECT id FROM setup_addons WHERE company_id=? AND name=?', (company, 'Current Pets')).fetchone()['id'])
-            assert int(c.execute('SELECT ask_before_availability FROM setup_addons WHERE id=?', (pets,)).fetchone()['ask_before_availability']) == 1
+            motorhome = int(execute_sql(c, 'SELECT id FROM setup_addons WHERE company_id=:q406_0 AND name=:q406_1', (company, 'Current Motorhome')).fetchone()['id'])
+            caravan = int(execute_sql(c, 'SELECT id FROM setup_addons WHERE company_id=:q407_0 AND name=:q407_1', (company, 'Current Caravan')).fetchone()['id'])
+            pets = int(execute_sql(c, 'SELECT id FROM setup_addons WHERE company_id=:q408_0 AND name=:q408_1', (company, 'Current Pets')).fetchone()['id'])
+            assert int(execute_sql(c, 'SELECT ask_before_availability FROM setup_addons WHERE id=:q422_0', (pets,)).fetchone()['ask_before_availability']) == 1
             for aid in (motorhome, caravan, pets):
-                c.execute('''INSERT OR REPLACE INTO setup_type_addons(company_id,year,element_type,addon_id,allowed,min_qty,max_qty,rate) VALUES (?,?,?,?,?,?,?,?)''', (company, 2035, 'Current Camping', aid, 1, 0, 1, 0.0))
+                execute_sql(c, 'INSERT INTO setup_type_addons(company_id,year,element_type,addon_id,allowed,min_qty,max_qty,rate) VALUES (:q385_0,:q385_1,:q385_2,:q385_3,:q385_4,:q385_5,:q385_6,:q385_7) ON CONFLICT(company_id,year,element_type,addon_id) DO UPDATE SET allowed=excluded.allowed,min_qty=excluded.min_qty,max_qty=excluded.max_qty,rate=excluded.rate', (company, 2035, 'Current Camping', aid, 1, 0, 1, 0.0))
 
         # TEST DATA ONLY: once Fishing is chosen, the Adult input exposes
         # the Setup maximum and the server refuses a value above it.
@@ -105,9 +107,9 @@ def main() -> None:
         assert saved.status_code == 303 and saved.headers['location'].startswith('/availability/calendar-v2?arrival=2035-07-10')
 
         with db.connect() as c:
-            session = c.execute('SELECT lead_name FROM booking_requirement_sessions WHERE session_token=? AND company_id=?', (token, company)).fetchone()
+            session = execute_sql(c, 'SELECT lead_name FROM booking_requirement_sessions WHERE session_token=:q395_0 AND company_id=:q395_1', (token, company)).fetchone()
             assert session is not None and session['lead_name'] == 'Smith'
-            age_row = c.execute('SELECT quantity,ages_json FROM booking_requirement_people WHERE session_token=? AND company_id=? AND person_type_id=?', (token, company, child)).fetchone()
+            age_row = execute_sql(c, 'SELECT quantity,ages_json FROM booking_requirement_people WHERE session_token=:q396_0 AND company_id=:q396_1 AND person_type_id=:q396_2', (token, company, child)).fetchone()
             assert age_row is not None and int(age_row['quantity']) == 1 and str(age_row['ages_json']) == '[6]'
 
         camping = client.get('/availability/calendar-v2', params={'element_type': 'Current Camping', 'start': '2035-07-06', 'arrival': '2035-07-10', 'departure': '2035-07-13'})
@@ -120,18 +122,18 @@ def main() -> None:
         assert hold_response.status_code == 200
         smith_hold = int(hold_response.json()['hold']['id'])
         with db.connect() as c:
-            assert c.execute('SELECT lead_name FROM element_holds WHERE id=?', (smith_hold,)).fetchone()['lead_name'] == 'Smith'
+            assert execute_sql(c, 'SELECT lead_name FROM element_holds WHERE id=:q409_0', (smith_hold,)).fetchone()['lead_name'] == 'Smith'
 
         # Exact production sequence: hold exists -> calendar/progress renders it ->
         # immediate basket review must retain and display the same hold.
         with db.connect() as c:
-            before_review = c.execute('SELECT id,company_id,session_token,expires_at FROM element_holds WHERE id=?', (smith_hold,)).fetchone()
+            before_review = execute_sql(c, 'SELECT id,company_id,session_token,expires_at FROM element_holds WHERE id=:q397_0', (smith_hold,)).fetchone()
             assert before_review is not None and int(before_review['company_id']) == company and str(before_review['session_token']) == token
         immediate_review = client.get('/availability/basket/review')
         assert immediate_review.status_code == 200 and 'Your basket is empty.' not in immediate_review.text
         assert 'Current Pitch 2' in immediate_review.text and 'Smith' in immediate_review.text
         with db.connect() as c:
-            after_review = c.execute('SELECT id,company_id,session_token,expires_at FROM element_holds WHERE id=?', (smith_hold,)).fetchone()
+            after_review = execute_sql(c, 'SELECT id,company_id,session_token,expires_at FROM element_holds WHERE id=:q398_0', (smith_hold,)).fetchone()
             assert after_review is not None and int(after_review['company_id']) == company and str(after_review['session_token']) == token
 
         held_calendar = client.get('/availability/calendar-v2', params={'element_type': 'Current Camping', 'start': '2035-07-06', 'arrival': '2035-07-10', 'departure': '2035-07-13'})
@@ -159,7 +161,7 @@ def main() -> None:
         fresh_page = client.get('/availability/start')
         assert 'name="lead_name" placeholder="SURNAME" required value=""' in fresh_page.text
         with db.connect() as c:
-            assert c.execute('SELECT lead_name FROM element_holds WHERE id=?', (smith_hold,)).fetchone()['lead_name'] == 'Smith'
+            assert execute_sql(c, 'SELECT lead_name FROM element_holds WHERE id=:q410_0', (smith_hold,)).fetchone()['lead_name'] == 'Smith'
 
         # Jones family is independent and holds Pitch 1.
         jones_saved = client.post('/availability/requirements-v3', data={
@@ -199,10 +201,10 @@ def main() -> None:
         })
         assert completed_edit.status_code == 200
         with db.connect() as c:
-            smith_child = c.execute('SELECT quantity,ages_json FROM hold_requirement_people WHERE hold_id=? AND person_type_id=?', (smith_hold, child)).fetchone()
-            smith_pets = c.execute('SELECT quantity FROM hold_requirement_addons WHERE hold_id=? AND addon_id=?', (smith_hold, pets)).fetchone()
-            jones_child = c.execute('SELECT quantity FROM hold_requirement_people WHERE hold_id=? AND person_type_id=?', (jones_hold, child)).fetchone()
-            jones_motorhome = c.execute('SELECT quantity FROM hold_requirement_addons WHERE hold_id=? AND addon_id=?', (jones_hold, motorhome)).fetchone()
+            smith_child = execute_sql(c, 'SELECT quantity,ages_json FROM hold_requirement_people WHERE hold_id=:q399_0 AND person_type_id=:q399_1', (smith_hold, child)).fetchone()
+            smith_pets = execute_sql(c, 'SELECT quantity FROM hold_requirement_addons WHERE hold_id=:q400_0 AND addon_id=:q400_1', (smith_hold, pets)).fetchone()
+            jones_child = execute_sql(c, 'SELECT quantity FROM hold_requirement_people WHERE hold_id=:q401_0 AND person_type_id=:q401_1', (jones_hold, child)).fetchone()
+            jones_motorhome = execute_sql(c, 'SELECT quantity FROM hold_requirement_addons WHERE hold_id=:q402_0 AND addon_id=:q402_1', (jones_hold, motorhome)).fetchone()
             assert smith_child is not None and int(smith_child['quantity']) == 2 and str(smith_child['ages_json']) == '[7, 10]'
             assert smith_pets is not None and int(smith_pets['quantity']) == 1
             assert jones_child is not None and int(jones_child['quantity']) == 0
@@ -229,18 +231,18 @@ def main() -> None:
         removed = client.post('/availability/basket/remove-view', data={'csrf': csrf, 'hold_id': str(smith_hold), 'return_to': '/availability/basket/review'}, follow_redirects=False)
         assert removed.status_code == 303
         with db.connect() as c:
-            assert c.execute('SELECT COUNT(*) AS n FROM element_holds WHERE id=?', (smith_hold,)).fetchone()['n'] == 0
-            assert c.execute('SELECT COUNT(*) AS n FROM hold_requirement_people WHERE hold_id=?', (smith_hold,)).fetchone()['n'] == 0
-            assert c.execute('SELECT COUNT(*) AS n FROM hold_requirement_addons WHERE hold_id=?', (smith_hold,)).fetchone()['n'] == 0
-            assert c.execute('SELECT lead_name FROM element_holds WHERE id=?', (jones_hold,)).fetchone()['lead_name'] == 'Jones'
+            assert execute_sql(c, 'SELECT COUNT(*) AS n FROM element_holds WHERE id=:q411_0', (smith_hold,)).fetchone()['n'] == 0
+            assert execute_sql(c, 'SELECT COUNT(*) AS n FROM hold_requirement_people WHERE hold_id=:q412_0', (smith_hold,)).fetchone()['n'] == 0
+            assert execute_sql(c, 'SELECT COUNT(*) AS n FROM hold_requirement_addons WHERE hold_id=:q413_0', (smith_hold,)).fetchone()['n'] == 0
+            assert execute_sql(c, 'SELECT lead_name FROM element_holds WHERE id=:q414_0', (jones_hold,)).fetchone()['lead_name'] == 'Jones'
 
         # RELEASE clears the remaining hold and its snapshots in one operation.
         released = client.post('/availability/holds/release', data={'csrf': csrf})
         assert released.status_code == 200 and released.json()['released'] == 1
         with db.connect() as c:
-            assert c.execute('SELECT COUNT(*) AS n FROM element_holds WHERE id=?', (jones_hold,)).fetchone()['n'] == 0
-            assert c.execute('SELECT COUNT(*) AS n FROM hold_requirement_people WHERE hold_id=?', (jones_hold,)).fetchone()['n'] == 0
-            assert c.execute('SELECT COUNT(*) AS n FROM hold_requirement_addons WHERE hold_id=?', (jones_hold,)).fetchone()['n'] == 0
+            assert execute_sql(c, 'SELECT COUNT(*) AS n FROM element_holds WHERE id=:q415_0', (jones_hold,)).fetchone()['n'] == 0
+            assert execute_sql(c, 'SELECT COUNT(*) AS n FROM hold_requirement_people WHERE hold_id=:q416_0', (jones_hold,)).fetchone()['n'] == 0
+            assert execute_sql(c, 'SELECT COUNT(*) AS n FROM hold_requirement_addons WHERE hold_id=:q417_0', (jones_hold,)).fetchone()['n'] == 0
 
         # Automatic expiry is a separate lifecycle test, so start with fresh working requirements.
         reset_for_expiry = client.post('/availability/new-booking', data={'csrf': csrf}, follow_redirects=False)
@@ -249,13 +251,13 @@ def main() -> None:
         assert expiry_hold_response.status_code == 200
         expiry_hold = int(expiry_hold_response.json()['hold']['id'])
         with db.connect() as c:
-            c.execute('UPDATE element_holds SET renewal_required_at=?,expires_at=? WHERE id=?', ('2000-01-01T00:00:00+00:00', '2000-01-01T00:00:01+00:00', expiry_hold))
+            execute_sql(c, 'UPDATE element_holds SET renewal_required_at=:q382_0,expires_at=:q382_1 WHERE id=:q382_2', ('2000-01-01T00:00:00+00:00', '2000-01-01T00:00:01+00:00', expiry_hold))
         expired_status = client.get('/availability/basket')
         assert expired_status.status_code == 200 and expired_status.json()['items'] == []
         # GET/polling is read-only: expiry makes the hold immediately invisible but
         # must not delete lifecycle data merely because a page or monitor was opened.
         with db.connect() as c:
-            assert c.execute('SELECT COUNT(*) AS n FROM element_holds WHERE id=?', (expiry_hold,)).fetchone()['n'] == 1
+            assert execute_sql(c, 'SELECT COUNT(*) AS n FROM element_holds WHERE id=:q418_0', (expiry_hold,)).fetchone()['n'] == 1
         expired_requirements = client.get('/availability/start')
         assert expired_requirements.status_code == 200
         assert "fetch('/availability/basket'" not in expired_requirements.text
@@ -263,16 +265,16 @@ def main() -> None:
         expired_cleanup = client.post('/availability/holds/renew', data={'csrf': csrf})
         assert expired_cleanup.status_code == 200 and expired_cleanup.json()['count'] == 0
         with db.connect() as c:
-            assert c.execute('SELECT COUNT(*) AS n FROM element_holds WHERE id=?', (expiry_hold,)).fetchone()['n'] == 0
-            assert c.execute('SELECT COUNT(*) AS n FROM hold_requirement_people WHERE hold_id=?', (expiry_hold,)).fetchone()['n'] == 0
-            assert c.execute('SELECT COUNT(*) AS n FROM hold_requirement_addons WHERE hold_id=?', (expiry_hold,)).fetchone()['n'] == 0
+            assert execute_sql(c, 'SELECT COUNT(*) AS n FROM element_holds WHERE id=:q419_0', (expiry_hold,)).fetchone()['n'] == 0
+            assert execute_sql(c, 'SELECT COUNT(*) AS n FROM hold_requirement_people WHERE hold_id=:q420_0', (expiry_hold,)).fetchone()['n'] == 0
+            assert execute_sql(c, 'SELECT COUNT(*) AS n FROM hold_requirement_addons WHERE hold_id=:q421_0', (expiry_hold,)).fetchone()['n'] == 0
 
         # Bulk popup feature resolution must match canonical per-element
         # inheritance, including type defaults, individual overrides and hiding.
         from online.webv1_addon_popup import popup_addons_for_element, popup_addons_for_elements
         with db.connect() as c:
-            popup_elements = c.execute(
-                'SELECT * FROM setup_elements WHERE company_id=? AND id IN (?,?,?)',
+            popup_elements = execute_sql(c,
+                'SELECT * FROM setup_elements WHERE company_id=:q403_0 AND id IN (:q403_1,:q403_2,:q403_3)',
                 (company, pitch_one, pitch_two, peg),
             ).fetchall()
         popup_bulk = popup_addons_for_elements(db, company, 2035, popup_elements)
@@ -302,8 +304,8 @@ def main() -> None:
         restart = client.get('/availability/calendar', follow_redirects=False)
         assert restart.status_code == 303 and restart.headers['location'] == '/availability/start'
         with db.connect() as c:
-            ready = c.execute('SELECT ready,lead_name FROM booking_requirement_sessions WHERE session_token=? AND company_id=?', (token, company)).fetchone()
-            people_left = c.execute('SELECT COUNT(*) AS n FROM booking_requirement_people WHERE session_token=? AND company_id=?', (token, company)).fetchone()
+            ready = execute_sql(c, 'SELECT ready,lead_name FROM booking_requirement_sessions WHERE session_token=:q404_0 AND company_id=:q404_1', (token, company)).fetchone()
+            people_left = execute_sql(c, 'SELECT COUNT(*) AS n FROM booking_requirement_people WHERE session_token=:q405_0 AND company_id=:q405_1', (token, company)).fetchone()
             assert ready is not None and int(ready['ready']) == 0 and str(ready['lead_name']) == ''
             assert int(people_left['n']) == 0
 

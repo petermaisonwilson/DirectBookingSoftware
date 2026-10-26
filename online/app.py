@@ -10,6 +10,7 @@ from fastapi.responses import HTMLResponse, RedirectResponse
 
 from . import BUILD, BUILD_VERSION
 from .database import OnlineDatabase
+from .config import RuntimeConfig
 from .security import verify_password
 from .webv1_hold_warning_ui import hold_warning_markup
 
@@ -97,10 +98,9 @@ def layout(title: str, body: str, context=None, *, monitor_holds: bool = False) 
 {support}<main>{body}</main>{hold_warning}</body></html>"""
 
 
-def create_app(db_path: str | Path | None = None, *, seed_demo: bool = True) -> FastAPI:
-    path = Path(db_path or os.environ.get("DIRECTBOOKING_DB", "online_data/direct_booking_online_dev.db"))
-    database = OnlineDatabase(path)
-    database.initialise(seed_demo=seed_demo)
+def create_app(db_path: str | Path | RuntimeConfig | None = None, *, seed_demo: bool | None = None) -> FastAPI:
+    database = OnlineDatabase(db_path) if db_path is not None else OnlineDatabase()
+    database.initialise(seed_demo=database.config.seed_demo if seed_demo is None else seed_demo)
     app = FastAPI(title=f"DBS Online Build {BUILD} {BUILD_VERSION}")
     app.state.database = database
 

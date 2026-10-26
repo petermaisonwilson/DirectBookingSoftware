@@ -1,4 +1,5 @@
 from __future__ import annotations
+from .sql import execute_sql
 
 from datetime import date
 from urllib.parse import quote_plus
@@ -29,8 +30,8 @@ def register_flexible_season_routes(app) -> None:
             )
         name = data.get('name', '').strip()
         with database.connect() as c:
-            before = c.execute(
-                'SELECT * FROM setup_seasons WHERE company_id=? AND id=?', (cid, sid)
+            before = execute_sql(c,
+                'SELECT * FROM setup_seasons WHERE company_id=:q756_0 AND id=:q756_1', (cid, sid)
             ).fetchone()
             if before is None:
                 return RedirectResponse(
@@ -51,10 +52,8 @@ def register_flexible_season_routes(app) -> None:
                     ),
                     303,
                 )
-            c.execute(
-                '''UPDATE setup_seasons
-                   SET name=?,start_date=?,end_date=?
-                   WHERE company_id=? AND id=?''',
+            execute_sql(c,
+                'UPDATE setup_seasons\n                   SET name=:q755_0,start_date=:q755_1,end_date=:q755_2\n                   WHERE company_id=:q755_3 AND id=:q755_4',
                 (name, start.isoformat(), end.isoformat(), cid, sid),
             )
         # Existing Enquiries and Bookings retain their frozen price snapshots.

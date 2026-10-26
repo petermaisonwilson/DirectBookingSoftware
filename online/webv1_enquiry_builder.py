@@ -1,4 +1,5 @@
 from __future__ import annotations
+from .sql import lock_inventory, execute_sql, insert_sql, column_rows
 
 import json
 from contextlib import nullcontext
@@ -22,11 +23,11 @@ def _customer_name(row) -> str:
 
 
 def _customer(database, company_id: int, customer_id: int):
-    return one(database, 'SELECT * FROM customer_records WHERE id=? AND company_id=? AND active=1', (customer_id, company_id))
+    return one(database, 'SELECT * FROM customer_records WHERE id=:q95_0 AND company_id=:q95_1 AND active=1', (customer_id, company_id))
 
 
 def _enquiry(database, company_id: int, enquiry_id: int):
-    return one(database, '''SELECT e.*,c.first_name,c.last_name,c.email,c.phone FROM enquiries e LEFT JOIN customer_records c ON c.id=e.customer_id AND c.company_id=e.company_id WHERE e.id=? AND e.company_id=?''', (enquiry_id, company_id))
+    return one(database, 'SELECT e.*,c.first_name,c.last_name,c.email,c.phone FROM enquiries e LEFT JOIN customer_records c ON c.id=e.customer_id AND c.company_id=e.company_id WHERE e.id=:q96_0 AND e.company_id=:q96_1', (enquiry_id, company_id))
 
 
 def _int_or_zero(value) -> int:
@@ -35,11 +36,11 @@ def _int_or_zero(value) -> int:
 
 
 def _setup_payload(database, company_id: int):
-    types = rows(database, 'SELECT name FROM setup_element_types WHERE company_id=? AND active=1 ORDER BY name COLLATE NOCASE', (company_id,))
-    elements = rows(database, 'SELECT * FROM setup_elements WHERE company_id=? AND active=1 ORDER BY element_type,name COLLATE NOCASE', (company_id,))
-    people = rows(database, 'SELECT * FROM setup_person_types WHERE company_id=? AND active=1 ORDER BY name COLLATE NOCASE', (company_id,))
-    addons = rows(database, 'SELECT * FROM setup_addons WHERE company_id=? AND active=1 ORDER BY name COLLATE NOCASE', (company_id,))
-    years = rows(database, 'SELECT year FROM setup_years WHERE company_id=? ORDER BY year', (company_id,))
+    types = rows(database, 'SELECT name FROM setup_element_types WHERE company_id=:q97_0 AND active=1 ORDER BY lower(name)', (company_id,))
+    elements = rows(database, 'SELECT * FROM setup_elements WHERE company_id=:q98_0 AND active=1 ORDER BY element_type,lower(name)', (company_id,))
+    people = rows(database, 'SELECT * FROM setup_person_types WHERE company_id=:q99_0 AND active=1 ORDER BY lower(name)', (company_id,))
+    addons = rows(database, 'SELECT * FROM setup_addons WHERE company_id=:q100_0 AND active=1 ORDER BY lower(name)', (company_id,))
+    years = rows(database, 'SELECT year FROM setup_years WHERE company_id=:q101_0 ORDER BY year', (company_id,))
     element_json = [{'id': int(e['id']), 'name': str(e['name']), 'type': str(e['element_type'])} for e in elements]
     people_json = [{'id': int(p['id']), 'name': str(p['name']), 'short': str(p['short_name'] or p['name'])[:8]} for p in people]
     addon_json = [{'id': int(a['id']), 'name': str(a['name'])} for a in addons]
@@ -53,7 +54,7 @@ def _setup_payload(database, company_id: int):
                 rule = _addon_rule(database, company_id, year, element, int(addon['id']))
                 rule_map[ykey][ekey][str(int(addon['id']))] = {'allowed': bool(rule['allowed']), 'source': str(rule['source']), 'min': rule['min'], 'max': rule['max'], 'rate': rule['rate']}
             for person in people:
-                price = one(database, 'SELECT rate FROM setup_person_prices WHERE company_id=? AND year=? AND element_id=? AND person_type_id=?', (company_id, year, element['id'], person['id']))
+                price = one(database, 'SELECT rate FROM setup_person_prices WHERE company_id=:q127_0 AND year=:q127_1 AND element_id=:q127_2 AND person_type_id=:q127_3', (company_id, year, element['id'], person['id']))
                 if price is not None: person_rate_map[ykey][ekey][str(int(person['id']))] = float(price['rate'])
     addon_modes, addon_person_rate_map = addon_person_payload(database, company_id, addons, years)
     return types, elements, people, addons, element_json, people_json, addon_json, rule_map, person_rate_map, when_payload(database, company_id, addons), addon_modes, addon_person_rate_map
@@ -65,7 +66,7 @@ def _saved_values(database, company_id: int, enquiry) -> dict[str, str]:
     # Enquiry Element (and its own people/add-ons) rather than the legacy
     # enquiry-wide compatibility rows.  This prevents a held Enquiry opening
     # with zero people or apparently missing Add-ons.
-    element_row = one(database, 'SELECT * FROM enquiry_elements WHERE enquiry_id=? AND company_id=? ORDER BY sort_order,id LIMIT 1', (enquiry['id'], company_id))
+    element_row = one(database, 'SELECT * FROM enquiry_elements WHERE enquiry_id=:q102_0 AND company_id=:q102_1 ORDER BY sort_order,id LIMIT 1', (enquiry['id'], company_id))
     eeid = None
     if element_row:
         eeid = int(element_row['id'])
@@ -75,29 +76,29 @@ def _saved_values(database, company_id: int, enquiry) -> dict[str, str]:
         values['element_type'] = str(element_row['element_type'] or '')
         values['element_id'] = '' if element_row['element_id'] is None else str(int(element_row['element_id']))
     else:
-        request_row = one(database, 'SELECT * FROM enquiry_requests WHERE enquiry_id=? AND company_id=?', (enquiry['id'], company_id))
+        request_row = one(database, 'SELECT * FROM enquiry_requests WHERE enquiry_id=:q109_0 AND company_id=:q109_1', (enquiry['id'], company_id))
         if request_row:
             values['element_type'] = str(request_row['element_type'] or '')
             values['element_id'] = '' if request_row['element_id'] is None else str(int(request_row['element_id']))
-    people_sql = 'SELECT person_type_id,quantity FROM enquiry_element_people WHERE enquiry_element_id=? AND company_id=?' if eeid else 'SELECT person_type_id,quantity FROM enquiry_people WHERE enquiry_id=? AND company_id=?'
+    people_sql = 'SELECT person_type_id,quantity FROM enquiry_element_people WHERE enquiry_element_id=:q103_0 AND company_id=:q103_1' if eeid else 'SELECT person_type_id,quantity FROM enquiry_people WHERE enquiry_id=:q104_0 AND company_id=:q104_1'
     for row in rows(database, people_sql, ((eeid if eeid else enquiry['id']), company_id)):
         values[f'person_{int(row["person_type_id"])}'] = str(int(row['quantity']))
     selected_days: set[int] = set()
     if eeid:
         # Element-specific enquiry storage is intentionally separate from the
         # older enquiry-wide add-on tables.
-        for row in rows(database, 'SELECT addon_id,quantity FROM enquiry_element_addons WHERE enquiry_element_id=? AND company_id=?', (eeid, company_id)):
+        for row in rows(database, 'SELECT addon_id,quantity FROM enquiry_element_addons WHERE enquiry_element_id=:q110_0 AND company_id=:q110_1', (eeid, company_id)):
             aid=int(row['addon_id']); values[f'addon_{aid}']=str(int(row['quantity'])); values[f'addon_selected_{aid}']='1'; values[f'addon_when_{aid}']='every_day'
     else:
-        for row in rows(database, 'SELECT addon_id,service_date,quantity FROM enquiry_addon_days WHERE enquiry_id=? AND company_id=?', (enquiry['id'], company_id)):
+        for row in rows(database, 'SELECT addon_id,service_date,quantity FROM enquiry_addon_days WHERE enquiry_id=:q111_0 AND company_id=:q111_1', (enquiry['id'], company_id)):
             aid=int(row['addon_id']); selected_days.add(aid); values[f'addon_day_{aid}_{row["service_date"]}']=str(int(row['quantity']))
-        for row in rows(database, 'SELECT addon_id,person_type_id,quantity FROM enquiry_addon_people WHERE enquiry_id=? AND company_id=?', (enquiry['id'], company_id)):
+        for row in rows(database, 'SELECT addon_id,person_type_id,quantity FROM enquiry_addon_people WHERE enquiry_id=:q112_0 AND company_id=:q112_1', (enquiry['id'], company_id)):
             values[f'addon_person_{int(row["addon_id"])}_{int(row["person_type_id"])}']=str(int(row['quantity']))
-        for row in rows(database, 'SELECT addon_id,person_type_id,service_date,quantity FROM enquiry_addon_person_days WHERE enquiry_id=? AND company_id=?', (enquiry['id'], company_id)):
+        for row in rows(database, 'SELECT addon_id,person_type_id,service_date,quantity FROM enquiry_addon_person_days WHERE enquiry_id=:q113_0 AND company_id=:q113_1', (enquiry['id'], company_id)):
             aid=int(row['addon_id']); selected_days.add(aid); values[f'addon_day_person_{aid}_{int(row["person_type_id"])}_{row["service_date"]}']=str(int(row['quantity']))
-        for row in rows(database, 'SELECT addon_id,quantity FROM enquiry_addons WHERE enquiry_id=? AND company_id=?', (enquiry['id'], company_id)):
+        for row in rows(database, 'SELECT addon_id,quantity FROM enquiry_addons WHERE enquiry_id=:q114_0 AND company_id=:q114_1', (enquiry['id'], company_id)):
             aid=int(row['addon_id']); values[f'addon_{aid}']=str(int(row['quantity'])); values[f'addon_when_{aid}']='selected_days' if aid in selected_days else 'every_day'; values[f'addon_selected_{aid}']='1'
-        for row in rows(database, 'SELECT addon_id FROM enquiry_selected_addons WHERE enquiry_id=? AND company_id=? ORDER BY sort_order,addon_id', (enquiry['id'], company_id)):
+        for row in rows(database, 'SELECT addon_id FROM enquiry_selected_addons WHERE enquiry_id=:q115_0 AND company_id=:q115_1 ORDER BY sort_order,addon_id', (enquiry['id'], company_id)):
             values[f'addon_selected_{int(row["addon_id"])}']='1'
     return values
 
@@ -121,14 +122,14 @@ def _selected_days_amount(method: str, rate: float, day_quantities: dict[str, in
 
 def _calculate(database, company_id: int, values: dict[str, str]):
     selected_type = values.get('element_type', '').strip(); element_id = _int_or_zero(values.get('element_id'))
-    element = one(database, 'SELECT * FROM setup_elements WHERE company_id=? AND id=? AND active=1 AND element_type=?', (company_id, element_id, selected_type))
+    element = one(database, 'SELECT * FROM setup_elements WHERE company_id=:q105_0 AND id=:q105_1 AND active=1 AND element_type=:q105_2', (company_id, element_id, selected_type))
     if element is None: return None, set(), 'Choose a specific Element before calculating a provisional price.'
     start, end, date_error = _validate_dates(values)
     if date_error: return None, {'arrival_date', 'departure_date'}, date_error
     if start is None or end is None: return None, {'arrival_date', 'departure_date'}, 'Arrival and Departure dates are required to calculate a provisional price.'
     if start.year != (end - timedelta(days=1)).year: return None, {'arrival_date', 'departure_date'}, 'The current proven pricing engine requires the stay to remain within one pricing year.'
     year = start.year; nights = (end - start).days; service_dates = stay_dates(start.isoformat(), end.isoformat())
-    people = rows(database, 'SELECT * FROM setup_person_types WHERE company_id=? AND active=1 ORDER BY name COLLATE NOCASE', (company_id,))
+    people = rows(database, 'SELECT * FROM setup_person_types WHERE company_id=:q106_0 AND active=1 ORDER BY lower(name)', (company_id,))
     people_counts: dict[int, int] = {}; people_total = 0; errors: set[str] = set(); person_names = {int(p['id']): str(p['name']) for p in people}
     for person in people:
         key = f'person_{int(person["id"])}'
@@ -137,11 +138,11 @@ def _calculate(database, company_id: int, values: dict[str, str]):
         people_counts[int(person['id'])] = qty; people_total += qty
     if people_total <= 0: errors.update(f'person_{int(p["id"])}' for p in people); return None, errors, 'Enter at least one person.'
     if errors: return None, errors, 'Correct every highlighted Person quantity.'
-    occupancy = one(database, 'SELECT max_total FROM setup_occupancy WHERE company_id=? AND year=? AND element_id=?', (company_id, year, element_id))
+    occupancy = one(database, 'SELECT max_total FROM setup_occupancy WHERE company_id=:q107_0 AND year=:q107_1 AND element_id=:q107_2', (company_id, year, element_id))
     if occupancy is None: return None, set(), 'Occupancy Setup is incomplete for this Element and year.'
     if people_total > int(occupancy['max_total']): errors.update(f'person_{int(p["id"])}' for p in people)
     for person in people:
-        limit = one(database, 'SELECT max_count FROM setup_person_limits WHERE company_id=? AND year=? AND element_id=? AND person_type_id=?', (company_id, year, element_id, person['id']))
+        limit = one(database, 'SELECT max_count FROM setup_person_limits WHERE company_id=:q116_0 AND year=:q116_1 AND element_id=:q116_2 AND person_type_id=:q116_3', (company_id, year, element_id, person['id']))
         if limit is None or people_counts[int(person['id'])] > int(limit['max_count']): errors.add(f'person_{int(person["id"])}')
     if errors: return None, errors, 'The selected people exceed the configured occupancy rules for this Element.'
     nightly_rates=[]; season_names=[]
@@ -151,12 +152,12 @@ def _calculate(database, company_id: int, values: dict[str, str]):
         nightly_rates.append(rate); season_names.append(str(season['name']))
     element_amount=_price_element(element['pricing_method'],nightly_rates,people_total); unique_seasons=', '.join(dict.fromkeys(season_names)); lines=[{'item':str(element['name']),'rule':f'{element["pricing_method"]}; season(s): {unique_seasons}','amount':element_amount}]; total=element_amount
     for person in people:
-        qty=people_counts[int(person['id'])]; price=one(database,'SELECT rate FROM setup_person_prices WHERE company_id=? AND year=? AND element_id=? AND person_type_id=?',(company_id,year,element_id,person['id']))
+        qty=people_counts[int(person['id'])]; price=one(database,'SELECT rate FROM setup_person_prices WHERE company_id=:q117_0 AND year=:q117_1 AND element_id=:q117_2 AND person_type_id=:q117_3',(company_id,year,element_id,person['id']))
         if price is None: return None,{f'person_{int(person["id"])}'},'Person pricing Setup is incomplete for this Element and year.'
         if qty:
             rate=float(price['rate']); amount=_price_person(element['pricing_method'],rate,qty,nights); lines.append({'item':str(person['name']),'rule':f'{qty} × €{rate:.2f}; follows Element pricing method {element["pricing_method"]}','amount':amount}); total+=amount
     addon_counts={}; addon_days={}; addon_people={}; addon_person_days={}; addon_when={}; addon_errors=set(); selected_ids=[]
-    addons=rows(database,'SELECT * FROM setup_addons WHERE company_id=? AND active=1 ORDER BY name COLLATE NOCASE',(company_id,))
+    addons=rows(database,'SELECT * FROM setup_addons WHERE company_id=:q108_0 AND active=1 ORDER BY lower(name)',(company_id,))
     for addon in addons:
         aid=int(addon['id']); key=f'addon_{aid}'; active_when={str(r['option_code']) for r in when_options(database,company_id,aid)}; when_code=values.get(f'addon_when_{aid}','').strip()
         if when_code not in active_when: when_code='every_day' if 'every_day' in active_when else (next(iter(active_when),'every_day'))
@@ -252,7 +253,7 @@ def _form_page(database, context, customer, values: dict[str,str], *, enquiry_id
     edit_notice = '<div class="ok"><strong>Current space remains held while you edit.</strong> Nothing changes until you save. If the proposed Element or dates are unavailable, the existing hold is kept.</div>' if enquiry_id else ''
     current_summary = ''
     if enquiry_id:
-        enquiry_element_count = int(one(database, 'SELECT COUNT(*) AS n FROM enquiry_elements WHERE enquiry_id=? AND company_id=?', (enquiry_id, company_id))['n'])
+        enquiry_element_count = int(one(database, 'SELECT COUNT(*) AS n FROM enquiry_elements WHERE enquiry_id=:q128_0 AND company_id=:q128_1', (enquiry_id, company_id))['n'])
         if enquiry_element_count > 1:
             return layout(title, f'''<h1>{esc(title)}</h1><p><a href="{back}">← Back</a></p><div class="error"><strong>This Enquiry contains {enquiry_element_count} Elements.</strong><br>This editor changes one held Element at a time, so DBS will not open a single-Element editor that could accidentally overwrite part of a multi-Element Enquiry. Return to the Enquiry and choose the Element you want to change.</div>''', context)
         element_name = next((str(e['name']) for e in elements if int(e['id']) == selected_element_id), 'Element not yet selected')
@@ -330,63 +331,63 @@ def _save(database, context, company_id:int, customer_id:int, values:dict[str,st
     created=enquiry_id is None
     with (nullcontext(locked_connection) if locked_connection is not None else database.connect()) as c:
         if locked_connection is None:
-            c.execute('BEGIN IMMEDIATE')
+            lock_inventory(c, company_id)
         if element_id and values.get('arrival_date') and values.get('departure_date'):
             from .webv1_reservation_core import migrated_inventory_conflict
             if migrated_inventory_conflict(c, company_id, element_id, values['arrival_date'], values['departure_date']):
                 raise ValueError('This Element is allocated to a central reservation.')
-        if created: enquiry_id=int(c.execute('''INSERT INTO enquiries(company_id,customer_id,status,source,arrival_date,departure_date,party_size,notes,created_at,updated_at) VALUES (?,?,?,?,?,?,?,?,?,?)''',(company_id,customer_id,'new',values.get('source',''),values.get('arrival_date') or None,values.get('departure_date') or None,party_size,values.get('notes',''),now,now)).lastrowid)
-        else: c.execute('UPDATE enquiries SET source=?,arrival_date=?,departure_date=?,party_size=?,notes=?,updated_at=? WHERE id=? AND company_id=?',(values.get('source',''),values.get('arrival_date') or None,values.get('departure_date') or None,party_size,values.get('notes',''),now,enquiry_id,company_id))
-        for table in ('enquiry_people','enquiry_addons','enquiry_addon_days','enquiry_addon_people','enquiry_addon_person_days','enquiry_selected_addons'): c.execute(f'DELETE FROM {table} WHERE enquiry_id=? AND company_id=?',(enquiry_id,company_id))
-        if selected_type: c.execute('''INSERT INTO enquiry_requests(enquiry_id,company_id,element_type,element_id,provisional_total,pricing_snapshot_json,updated_at) VALUES (?,?,?,?,?,?,?) ON CONFLICT(enquiry_id) DO UPDATE SET element_type=excluded.element_type,element_id=excluded.element_id,provisional_total=excluded.provisional_total,pricing_snapshot_json=excluded.pricing_snapshot_json,updated_at=excluded.updated_at''',(enquiry_id,company_id,selected_type,element_id,provisional_total,snapshot_json,now))
-        else: c.execute('DELETE FROM enquiry_requests WHERE enquiry_id=? AND company_id=?',(enquiry_id,company_id))
+        if created: enquiry_id=int(insert_sql(c, 'INSERT INTO enquiries(company_id,customer_id,status,source,arrival_date,departure_date,party_size,notes,created_at,updated_at) VALUES (:q134_0,:q134_1,:q134_2,:q134_3,:q134_4,:q134_5,:q134_6,:q134_7,:q134_8,:q134_9)',(company_id,customer_id,'new',values.get('source',''),values.get('arrival_date') or None,values.get('departure_date') or None,party_size,values.get('notes',''),now,now)).lastrowid)
+        else: execute_sql(c, 'UPDATE enquiries SET source=:q121_0,arrival_date=:q121_1,departure_date=:q121_2,party_size=:q121_3,notes=:q121_4,updated_at=:q121_5 WHERE id=:q121_6 AND company_id=:q121_7',(values.get('source',''),values.get('arrival_date') or None,values.get('departure_date') or None,party_size,values.get('notes',''),now,enquiry_id,company_id))
+        for table in ('enquiry_people','enquiry_addons','enquiry_addon_days','enquiry_addon_people','enquiry_addon_person_days','enquiry_selected_addons'): execute_sql(c, f'DELETE FROM {table} WHERE enquiry_id=:q151_0 AND company_id=:q151_1',(enquiry_id,company_id))
+        if selected_type: execute_sql(c, 'INSERT INTO enquiry_requests(enquiry_id,company_id,element_type,element_id,provisional_total,pricing_snapshot_json,updated_at) VALUES (:q122_0,:q122_1,:q122_2,:q122_3,:q122_4,:q122_5,:q122_6) ON CONFLICT(enquiry_id) DO UPDATE SET element_type=excluded.element_type,element_id=excluded.element_id,provisional_total=excluded.provisional_total,pricing_snapshot_json=excluded.pricing_snapshot_json,updated_at=excluded.updated_at',(enquiry_id,company_id,selected_type,element_id,provisional_total,snapshot_json,now))
+        else: execute_sql(c, 'DELETE FROM enquiry_requests WHERE enquiry_id=:q123_0 AND company_id=:q123_1',(enquiry_id,company_id))
         if calculation:
             for pid,qty in calculation['people_counts'].items():
-                if qty:c.execute('INSERT INTO enquiry_people(enquiry_id,company_id,person_type_id,quantity) VALUES (?,?,?,?)',(enquiry_id,company_id,pid,qty))
-            for order,aid in enumerate(calculation['selected_addons'],1): c.execute('INSERT INTO enquiry_selected_addons(enquiry_id,company_id,addon_id,sort_order) VALUES (?,?,?,?)',(enquiry_id,company_id,aid,order))
+                if qty:execute_sql(c, 'INSERT INTO enquiry_people(enquiry_id,company_id,person_type_id,quantity) VALUES (:q135_0,:q135_1,:q135_2,:q135_3)',(enquiry_id,company_id,pid,qty))
+            for order,aid in enumerate(calculation['selected_addons'],1): execute_sql(c, 'INSERT INTO enquiry_selected_addons(enquiry_id,company_id,addon_id,sort_order) VALUES (:q129_0,:q129_1,:q129_2,:q129_3)',(enquiry_id,company_id,aid,order))
             for aid,qty in calculation['addon_counts'].items():
-                if qty:c.execute('INSERT INTO enquiry_addons(enquiry_id,company_id,addon_id,quantity) VALUES (?,?,?,?)',(enquiry_id,company_id,aid,qty))
+                if qty:execute_sql(c, 'INSERT INTO enquiry_addons(enquiry_id,company_id,addon_id,quantity) VALUES (:q136_0,:q136_1,:q136_2,:q136_3)',(enquiry_id,company_id,aid,qty))
             for aid,daily in calculation['addon_days'].items():
                 for d,qty in daily.items():
-                    if qty:c.execute('INSERT INTO enquiry_addon_days(enquiry_id,company_id,addon_id,service_date,quantity) VALUES (?,?,?,?,?)',(enquiry_id,company_id,aid,d,qty))
+                    if qty:execute_sql(c, 'INSERT INTO enquiry_addon_days(enquiry_id,company_id,addon_id,service_date,quantity) VALUES (:q140_0,:q140_1,:q140_2,:q140_3,:q140_4)',(enquiry_id,company_id,aid,d,qty))
             for aid,pp in calculation['addon_people'].items():
                 for pid,qty in pp.items():
-                    if qty:c.execute('INSERT INTO enquiry_addon_people(enquiry_id,company_id,addon_id,person_type_id,quantity) VALUES (?,?,?,?,?)',(enquiry_id,company_id,aid,pid,qty))
+                    if qty:execute_sql(c, 'INSERT INTO enquiry_addon_people(enquiry_id,company_id,addon_id,person_type_id,quantity) VALUES (:q141_0,:q141_1,:q141_2,:q141_3,:q141_4)',(enquiry_id,company_id,aid,pid,qty))
             for aid,bydate in calculation['addon_person_days'].items():
                 for d,pp in bydate.items():
                     for pid,qty in pp.items():
-                        if qty:c.execute('INSERT INTO enquiry_addon_person_days(enquiry_id,company_id,addon_id,person_type_id,service_date,quantity) VALUES (?,?,?,?,?,?)',(enquiry_id,company_id,aid,pid,d,qty))
+                        if qty:execute_sql(c, 'INSERT INTO enquiry_addon_person_days(enquiry_id,company_id,addon_id,person_type_id,service_date,quantity) VALUES (:q147_0,:q147_1,:q147_2,:q147_3,:q147_4,:q147_5)',(enquiry_id,company_id,aid,pid,d,qty))
         # Commit enquiry-wide and authoritative per-Element requirements together.
         # A failure in either representation must roll back the entire save.
         if selected_type and element_id and calculation:
-            existing=c.execute('SELECT id FROM enquiry_elements WHERE enquiry_id=? AND company_id=? ORDER BY sort_order,id LIMIT 1',(enquiry_id,company_id)).fetchone()
+            existing=execute_sql(c, 'SELECT id FROM enquiry_elements WHERE enquiry_id=:q137_0 AND company_id=:q137_1 ORDER BY sort_order,id LIMIT 1',(enquiry_id,company_id)).fetchone()
             if existing is None:
-                eeid=int(c.execute('''INSERT INTO enquiry_elements(enquiry_id,company_id,element_type,element_id,arrival_date,departure_date,lead_name,party_size,provisional_total,pricing_snapshot_json,sort_order,created_at,updated_at) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?)''',(enquiry_id,company_id,selected_type,element_id,values.get('arrival_date') or '',values.get('departure_date') or '','',party_size,provisional_total,snapshot_json,1,now,now)).lastrowid)
+                eeid=int(insert_sql(c, 'INSERT INTO enquiry_elements(enquiry_id,company_id,element_type,element_id,arrival_date,departure_date,lead_name,party_size,provisional_total,pricing_snapshot_json,sort_order,created_at,updated_at) VALUES (:q142_0,:q142_1,:q142_2,:q142_3,:q142_4,:q142_5,:q142_6,:q142_7,:q142_8,:q142_9,:q142_10,:q142_11,:q142_12)',(enquiry_id,company_id,selected_type,element_id,values.get('arrival_date') or '',values.get('departure_date') or '','',party_size,provisional_total,snapshot_json,1,now,now)).lastrowid)
             else:
-                eeid=int(existing['id']);c.execute('''UPDATE enquiry_elements SET element_type=?,element_id=?,arrival_date=?,departure_date=?,party_size=?,provisional_total=?,pricing_snapshot_json=?,updated_at=? WHERE id=? AND company_id=?''',(selected_type,element_id,values.get('arrival_date') or '',values.get('departure_date') or '',party_size,provisional_total,snapshot_json,now,eeid,company_id))
+                eeid=int(existing['id']);execute_sql(c, 'UPDATE enquiry_elements SET element_type=:q130_0,element_id=:q130_1,arrival_date=:q130_2,departure_date=:q130_3,party_size=:q130_4,provisional_total=:q130_5,pricing_snapshot_json=:q130_6,updated_at=:q130_7 WHERE id=:q130_8 AND company_id=:q130_9',(selected_type,element_id,values.get('arrival_date') or '',values.get('departure_date') or '',party_size,provisional_total,snapshot_json,now,eeid,company_id))
             for table in ('enquiry_people','enquiry_addons','enquiry_addon_days','enquiry_addon_people','enquiry_addon_person_days','enquiry_selected_addons'):
-                cols={str(r['name']) for r in c.execute(f'PRAGMA table_info({table})').fetchall()}
-                if 'enquiry_element_id' in cols:c.execute(f'UPDATE {table} SET enquiry_element_id=? WHERE enquiry_id=? AND company_id=? AND enquiry_element_id IS NULL',(eeid,enquiry_id,company_id))
+                cols={str(r['name']) for r in column_rows(c, table)}
+                if 'enquiry_element_id' in cols:execute_sql(c, f'UPDATE {table} SET enquiry_element_id=:q153_0 WHERE enquiry_id=:q153_1 AND company_id=:q153_2 AND enquiry_element_id IS NULL',(eeid,enquiry_id,company_id))
             # Keep the authoritative per-element requirement tables in sync.
             # The legacy enquiry-wide rows remain compatibility data only.
             for table in ('enquiry_element_people','enquiry_element_addons','enquiry_element_addon_days','enquiry_element_addon_people','enquiry_element_addon_person_days','enquiry_element_selected_addons'):
-                c.execute(f'DELETE FROM {table} WHERE enquiry_element_id=? AND company_id=?',(eeid,company_id))
+                execute_sql(c, f'DELETE FROM {table} WHERE enquiry_element_id=:q152_0 AND company_id=:q152_1',(eeid,company_id))
             for pid,qty in calculation['people_counts'].items():
-                if qty:c.execute('INSERT INTO enquiry_element_people(enquiry_element_id,company_id,person_type_id,quantity) VALUES (?,?,?,?)',(eeid,company_id,pid,qty))
+                if qty:execute_sql(c, 'INSERT INTO enquiry_element_people(enquiry_element_id,company_id,person_type_id,quantity) VALUES (:q138_0,:q138_1,:q138_2,:q138_3)',(eeid,company_id,pid,qty))
             for order,aid in enumerate(calculation['selected_addons'],1):
-                c.execute('INSERT INTO enquiry_element_selected_addons(enquiry_element_id,company_id,addon_id,sort_order) VALUES (?,?,?,?)',(eeid,company_id,aid,order))
+                execute_sql(c, 'INSERT INTO enquiry_element_selected_addons(enquiry_element_id,company_id,addon_id,sort_order) VALUES (:q131_0,:q131_1,:q131_2,:q131_3)',(eeid,company_id,aid,order))
             for aid,qty in calculation['addon_counts'].items():
-                if qty:c.execute('INSERT INTO enquiry_element_addons(enquiry_element_id,company_id,addon_id,quantity) VALUES (?,?,?,?)',(eeid,company_id,aid,qty))
+                if qty:execute_sql(c, 'INSERT INTO enquiry_element_addons(enquiry_element_id,company_id,addon_id,quantity) VALUES (:q139_0,:q139_1,:q139_2,:q139_3)',(eeid,company_id,aid,qty))
             for aid,daily in calculation['addon_days'].items():
                 for d,qty in daily.items():
-                    if qty:c.execute('INSERT INTO enquiry_element_addon_days(enquiry_element_id,company_id,addon_id,service_date,quantity) VALUES (?,?,?,?,?)',(eeid,company_id,aid,d,qty))
+                    if qty:execute_sql(c, 'INSERT INTO enquiry_element_addon_days(enquiry_element_id,company_id,addon_id,service_date,quantity) VALUES (:q143_0,:q143_1,:q143_2,:q143_3,:q143_4)',(eeid,company_id,aid,d,qty))
             for aid,pp in calculation['addon_people'].items():
                 for pid,qty in pp.items():
-                    if qty:c.execute('INSERT INTO enquiry_element_addon_people(enquiry_element_id,company_id,addon_id,person_type_id,quantity) VALUES (?,?,?,?,?)',(eeid,company_id,aid,pid,qty))
+                    if qty:execute_sql(c, 'INSERT INTO enquiry_element_addon_people(enquiry_element_id,company_id,addon_id,person_type_id,quantity) VALUES (:q144_0,:q144_1,:q144_2,:q144_3,:q144_4)',(eeid,company_id,aid,pid,qty))
             for aid,bydate in calculation['addon_person_days'].items():
                 for d,pp in bydate.items():
                     for pid,qty in pp.items():
-                        if qty:c.execute('INSERT INTO enquiry_element_addon_person_days(enquiry_element_id,company_id,addon_id,person_type_id,service_date,quantity) VALUES (?,?,?,?,?,?)',(eeid,company_id,aid,pid,d,qty))
+                        if qty:execute_sql(c, 'INSERT INTO enquiry_element_addon_person_days(enquiry_element_id,company_id,addon_id,person_type_id,service_date,quantity) VALUES (:q148_0,:q148_1,:q148_2,:q148_3,:q148_4,:q148_5)',(eeid,company_id,aid,pid,d,qty))
     if created:
         audit(database,context,company_id,'ENQUIRY_CREATED','enquiry',enquiry_id,after={'customer_id':customer_id,'element_type':selected_type,'element_id':element_id,'provisional_total':provisional_total})
     else:
@@ -396,11 +397,11 @@ def _save(database, context, company_id:int, customer_id:int, values:dict[str,st
         # At this point the authoritative row has already been saved, so use
         # the caller-supplied pre-save snapshot when present.
         before_data = values.get('__audit_before') if isinstance(values.get('__audit_before'),dict) else None
-        after_data={'customer_id':customer_id,'element_type':selected_type,'element_id':element_id,'arrival_date':values.get('arrival_date') or None,'departure_date':values.get('departure_date') or None,'party_size':party_size,'people':{str(x['person_type_id']):int(x['quantity']) for x in (locked_connection.execute('SELECT person_type_id,quantity FROM enquiry_element_people WHERE enquiry_element_id=(SELECT id FROM enquiry_elements WHERE enquiry_id=? AND company_id=? ORDER BY sort_order,id LIMIT 1) AND company_id=?',(enquiry_id,company_id,company_id)).fetchall() if locked_connection is not None else rows(database,'SELECT person_type_id,quantity FROM enquiry_element_people WHERE enquiry_element_id=(SELECT id FROM enquiry_elements WHERE enquiry_id=? AND company_id=? ORDER BY sort_order,id LIMIT 1) AND company_id=?',(enquiry_id,company_id,company_id)))},'addons':{str(x['addon_id']):int(x['quantity']) for x in (locked_connection.execute('SELECT addon_id,quantity FROM enquiry_element_addons WHERE enquiry_element_id=(SELECT id FROM enquiry_elements WHERE enquiry_id=? AND company_id=? ORDER BY sort_order,id LIMIT 1) AND company_id=?',(enquiry_id,company_id,company_id)).fetchall() if locked_connection is not None else rows(database,'SELECT addon_id,quantity FROM enquiry_element_addons WHERE enquiry_element_id=(SELECT id FROM enquiry_elements WHERE enquiry_id=? AND company_id=? ORDER BY sort_order,id LIMIT 1) AND company_id=?',(enquiry_id,company_id,company_id)))},'provisional_total':provisional_total}
+        after_data={'customer_id':customer_id,'element_type':selected_type,'element_id':element_id,'arrival_date':values.get('arrival_date') or None,'departure_date':values.get('departure_date') or None,'party_size':party_size,'people':{str(x['person_type_id']):int(x['quantity']) for x in (execute_sql(locked_connection, 'SELECT person_type_id,quantity FROM enquiry_element_people WHERE enquiry_element_id=(SELECT id FROM enquiry_elements WHERE enquiry_id=:q149_0 AND company_id=:q149_1 ORDER BY sort_order,id LIMIT 1) AND company_id=:q149_2',(enquiry_id,company_id,company_id)).fetchall() if locked_connection is not None else rows(database,'SELECT person_type_id,quantity FROM enquiry_element_people WHERE enquiry_element_id=(SELECT id FROM enquiry_elements WHERE enquiry_id=:q145_0 AND company_id=:q145_1 ORDER BY sort_order,id LIMIT 1) AND company_id=:q145_2',(enquiry_id,company_id,company_id)))},'addons':{str(x['addon_id']):int(x['quantity']) for x in (execute_sql(locked_connection, 'SELECT addon_id,quantity FROM enquiry_element_addons WHERE enquiry_element_id=(SELECT id FROM enquiry_elements WHERE enquiry_id=:q150_0 AND company_id=:q150_1 ORDER BY sort_order,id LIMIT 1) AND company_id=:q150_2',(enquiry_id,company_id,company_id)).fetchall() if locked_connection is not None else rows(database,'SELECT addon_id,quantity FROM enquiry_element_addons WHERE enquiry_element_id=(SELECT id FROM enquiry_elements WHERE enquiry_id=:q146_0 AND company_id=:q146_1 ORDER BY sort_order,id LIMIT 1) AND company_id=:q146_2',(enquiry_id,company_id,company_id)))},'provisional_total':provisional_total}
         if locked_connection is None:
             audit(database,context,company_id,'ENQUIRY_UPDATED','enquiry',enquiry_id,before=before_data,after=after_data)
         else:
-            locked_connection.execute('''INSERT INTO audit_log(company_id,actor_user_id,actor_role,acting_company_id,action,entity_type,entity_id,before_json,after_json,created_at) VALUES (?,?,?,?,?,?,?,?,?,?)''',
+            execute_sql(locked_connection, 'INSERT INTO audit_log(company_id,actor_user_id,actor_role,acting_company_id,action,entity_type,entity_id,before_json,after_json,created_at) VALUES (:q124_0,:q124_1,:q124_2,:q124_3,:q124_4,:q124_5,:q124_6,:q124_7,:q124_8,:q124_9)',
                 (company_id,context['user_id'],context['role'],context['acting_company_id'],'ENQUIRY_UPDATED','enquiry',str(enquiry_id),json.dumps(before_data,sort_keys=True) if before_data is not None else None,json.dumps(after_data,sort_keys=True),iso_now()))
     return int(enquiry_id)
 
@@ -422,7 +423,7 @@ def register_enquiry_builder_routes(app)->None:
             try:
                 if int(basic['party_size'])<1:raise ValueError
             except ValueError:return HTMLResponse(_form_page(database,context,customer,values,errors={'party_size'},message='Party size must be a whole number of at least 1.'),400)
-        if basic['element_type'] and one(database,'SELECT id FROM setup_element_types WHERE company_id=? AND active=1 AND name=? COLLATE NOCASE',(cid,basic['element_type'])) is None:return HTMLResponse(_form_page(database,context,customer,values,message='Choose a valid Element Type.'),400)
+        if basic['element_type'] and one(database,'SELECT id FROM setup_element_types WHERE company_id=:q132_0 AND active=1 AND lower(name) = lower(:q132_1)',(cid,basic['element_type'])) is None:return HTMLResponse(_form_page(database,context,customer,values,message='Choose a valid Element Type.'),400)
         calculation=None; action=data.get('action','save')
         if action=='calculate' or _int_or_zero(basic['element_id']):
             calculation,calc_errors,calc_message=_calculate(database,cid,values)
@@ -438,7 +439,7 @@ def register_enquiry_builder_routes(app)->None:
         context=context_for(database,request); cid=working_company(context); enquiry=_enquiry(database,cid,enquiry_id)
         if enquiry is None:return HTMLResponse(layout('Enquiry not found','<div class="error">Enquiry not found.</div>',context),404)
         if str(enquiry['status'] or '').lower() == 'converted':
-            booking=one(database,'SELECT id,reference FROM bookings WHERE company_id=? AND enquiry_id=? ORDER BY id DESC LIMIT 1',(cid,enquiry_id))
+            booking=one(database,'SELECT id,reference FROM bookings WHERE company_id=:q125_0 AND enquiry_id=:q125_1 ORDER BY id DESC LIMIT 1',(cid,enquiry_id))
             destination=f'/operations/bookings/{int(booking["id"])}' if booking is not None else f'/operations/enquiries/{enquiry_id}'
             return RedirectResponse(destination,303)
         return _form_page(database,context,_customer(database,cid,int(enquiry['customer_id'])),_saved_values(database,cid,enquiry),enquiry_id=enquiry_id)
@@ -447,10 +448,10 @@ def register_enquiry_builder_routes(app)->None:
         context=context_for(database,request); cid=working_company(context); enquiry=_enquiry(database,cid,enquiry_id)
         if enquiry is None:return HTMLResponse(layout('Enquiry not found','<div class="error">Enquiry not found.</div>',context),404)
         if str(enquiry['status'] or '').lower() == 'converted':
-            booking=one(database,'SELECT id,reference FROM bookings WHERE company_id=? AND enquiry_id=? ORDER BY id DESC LIMIT 1',(cid,enquiry_id))
+            booking=one(database,'SELECT id,reference FROM bookings WHERE company_id=:q126_0 AND enquiry_id=:q126_1 ORDER BY id DESC LIMIT 1',(cid,enquiry_id))
             destination=f'/operations/bookings/{int(booking["id"])}' if booking is not None else f'/operations/enquiries/{enquiry_id}'
             return RedirectResponse(destination,303)
-        element_count=int(one(database,'SELECT COUNT(*) AS n FROM enquiry_elements WHERE enquiry_id=? AND company_id=?',(enquiry_id,cid))['n'])
+        element_count=int(one(database,'SELECT COUNT(*) AS n FROM enquiry_elements WHERE enquiry_id=:q133_0 AND company_id=:q133_1',(enquiry_id,cid))['n'])
         if element_count > 1:
             return HTMLResponse(layout(f'Edit Enquiry #{enquiry_id}',f'<h1>Edit Enquiry #{enquiry_id}</h1><p><a href="/operations/enquiries/{enquiry_id}">← Back</a></p><div class="error"><strong>This Enquiry contains {element_count} Elements.</strong><br>DBS has not changed anything. Return to the Enquiry and choose the Element you want to change.</div>',context),409)
         customer=_customer(database,cid,int(enquiry['customer_id'])); data=await form_data(request); require_csrf(context,data); values=dict(data); basic=_basic_values(data); _,_,date_error=_validate_dates(basic)
@@ -468,9 +469,9 @@ def register_enquiry_builder_routes(app)->None:
             if not state.get('available'):
                 msg='Changes not saved. Your existing held space is unchanged. '+str(state.get('reason') or 'The proposed Element or dates are not available.')
                 return HTMLResponse(_form_page(database,context,customer,values,enquiry_id=enquiry_id,message=msg),409)
-        before_element=one(database,'SELECT element_type,element_id,arrival_date,departure_date,party_size,provisional_total FROM enquiry_elements WHERE enquiry_id=? AND company_id=? ORDER BY sort_order,id LIMIT 1',(enquiry_id,cid))
-        before_people=rows(database,'SELECT person_type_id,quantity FROM enquiry_element_people WHERE enquiry_element_id=(SELECT id FROM enquiry_elements WHERE enquiry_id=? AND company_id=? ORDER BY sort_order,id LIMIT 1) AND company_id=? ORDER BY person_type_id',(enquiry_id,cid,cid))
-        before_addons=rows(database,'SELECT addon_id,quantity FROM enquiry_element_addons WHERE enquiry_element_id=(SELECT id FROM enquiry_elements WHERE enquiry_id=? AND company_id=? ORDER BY sort_order,id LIMIT 1) AND company_id=? ORDER BY addon_id',(enquiry_id,cid,cid))
+        before_element=one(database,'SELECT element_type,element_id,arrival_date,departure_date,party_size,provisional_total FROM enquiry_elements WHERE enquiry_id=:q118_0 AND company_id=:q118_1 ORDER BY sort_order,id LIMIT 1',(enquiry_id,cid))
+        before_people=rows(database,'SELECT person_type_id,quantity FROM enquiry_element_people WHERE enquiry_element_id=(SELECT id FROM enquiry_elements WHERE enquiry_id=:q119_0 AND company_id=:q119_1 ORDER BY sort_order,id LIMIT 1) AND company_id=:q119_2 ORDER BY person_type_id',(enquiry_id,cid,cid))
+        before_addons=rows(database,'SELECT addon_id,quantity FROM enquiry_element_addons WHERE enquiry_element_id=(SELECT id FROM enquiry_elements WHERE enquiry_id=:q120_0 AND company_id=:q120_1 ORDER BY sort_order,id LIMIT 1) AND company_id=:q120_2 ORDER BY addon_id',(enquiry_id,cid,cid))
         audit_before=None
         if before_element is not None:
             audit_before={'element_type':str(before_element['element_type'] or ''),'element_id':before_element['element_id'],'arrival_date':before_element['arrival_date'],'departure_date':before_element['departure_date'],'party_size':before_element['party_size'],'people':{int(x['person_type_id']):int(x['quantity']) for x in before_people},'addons':{int(x['addon_id']):int(x['quantity']) for x in before_addons},'provisional_total':before_element['provisional_total']}
@@ -479,7 +480,7 @@ def register_enquiry_builder_routes(app)->None:
         # Serialize the final inventory check and amendment commit. A competing
         # SQLite writer cannot allocate the same Element between these operations.
         with database.connect() as locked:
-            locked.execute('BEGIN IMMEDIATE')
+            lock_inventory(locked, cid)
             if calculation and _int_or_zero(basic['element_id']):
                 final_state=availability_state(database,cid,_int_or_zero(basic['element_id']),basic['arrival_date'],basic['departure_date'],exclude_enquiry_id=enquiry_id)
                 if not final_state.get('available'):

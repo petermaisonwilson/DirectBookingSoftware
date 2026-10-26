@@ -1,4 +1,5 @@
 from __future__ import annotations
+from .sql import execute_sql, insert_sql
 
 import json
 from datetime import date, timedelta
@@ -29,22 +30,22 @@ def _display_end(value,pricing_method):
 
 
 def _held_items(database,company_id,token):
-    return rows(database,'''SELECT h.id,h.element_id,h.arrival_date,h.departure_date,h.expires_at,h.lead_name,e.name AS element_name,e.element_type,e.pricing_method FROM element_holds h JOIN setup_elements e ON e.id=h.element_id AND e.company_id=h.company_id WHERE h.company_id=? AND h.session_token=? AND h.expires_at>? ORDER BY h.created_at,h.id''',(company_id,token,iso_now()))
+    return rows(database,'SELECT h.id,h.element_id,h.arrival_date,h.departure_date,h.expires_at,h.lead_name,e.name AS element_name,e.element_type,e.pricing_method FROM element_holds h JOIN setup_elements e ON e.id=h.element_id AND e.company_id=h.company_id WHERE h.company_id=:q45_0 AND h.session_token=:q45_1 AND h.expires_at>:q45_2 ORDER BY h.created_at,h.id',(company_id,token,iso_now()))
 
 
 def _item_requirements(database,item,company_id):
     details=[];hold_id=int(item['id']);element_id=int(item['element_id'])
     try:year=date.fromisoformat(str(item['arrival_date'])).year
     except ValueError:year=date.today().year
-    for p in rows(database,'''SELECT hp.quantity,hp.ages_json,pt.name,l.min_count,l.max_count FROM hold_requirement_people hp LEFT JOIN setup_person_types pt ON pt.id=hp.person_type_id AND pt.company_id=hp.company_id LEFT JOIN setup_person_limits l ON l.company_id=hp.company_id AND l.year=? AND l.element_id=? AND l.person_type_id=hp.person_type_id WHERE hp.hold_id=? AND hp.quantity>0 AND l.person_type_id IS NOT NULL AND (l.max_count>0 OR l.min_count>0) ORDER BY pt.name''',(year,element_id,hold_id)):
+    for p in rows(database,'SELECT hp.quantity,hp.ages_json,pt.name,l.min_count,l.max_count FROM hold_requirement_people hp LEFT JOIN setup_person_types pt ON pt.id=hp.person_type_id AND pt.company_id=hp.company_id LEFT JOIN setup_person_limits l ON l.company_id=hp.company_id AND l.year=:q46_0 AND l.element_id=:q46_1 AND l.person_type_id=hp.person_type_id WHERE hp.hold_id=:q46_2 AND hp.quantity>0 AND l.person_type_id IS NOT NULL AND (l.max_count>0 OR l.min_count>0) ORDER BY pt.name',(year,element_id,hold_id)):
         label=f'{int(p["quantity"])} {str(p["name"] or "person")}'
         try:ages=json.loads(p['ages_json'] or '[]')
         except json.JSONDecodeError:ages=[]
         if ages:label+=' (age'+('s ' if len(ages)!=1 else ' ')+', '.join(str(x) for x in ages)+')'
         details.append(label)
-    element_rows=rows(database,'SELECT * FROM setup_elements WHERE company_id=? AND id=?',(company_id,element_id));element=element_rows[0] if element_rows else None
+    element_rows=rows(database,'SELECT * FROM setup_elements WHERE company_id=:q47_0 AND id=:q47_1',(company_id,element_id));element=element_rows[0] if element_rows else None
     if element:
-        for a in rows(database,'''SELECT ha.addon_id,ha.quantity,sa.name FROM hold_requirement_addons ha LEFT JOIN setup_addons sa ON sa.id=ha.addon_id AND sa.company_id=ha.company_id WHERE ha.hold_id=? AND ha.quantity>0 AND sa.ask_before_availability=1 ORDER BY sa.name''',(hold_id,)):
+        for a in rows(database,'SELECT ha.addon_id,ha.quantity,sa.name FROM hold_requirement_addons ha LEFT JOIN setup_addons sa ON sa.id=ha.addon_id AND sa.company_id=ha.company_id WHERE ha.hold_id=:q50_0 AND ha.quantity>0 AND sa.ask_before_availability=1 ORDER BY sa.name',(hold_id,)):
             if _addon_rule(database,company_id,year,element,int(a['addon_id'])).get('allowed'):
                 details.append(f'{str(a["name"] or "Requirement")} {int(a["quantity"])}')
     return details
@@ -74,12 +75,12 @@ def booking_progress_strip(database,context,company_id,token):
 
 def _load_item_into_working(database,company_id,token,hold_id):
     with database.connect() as c:
-        item=c.execute('''SELECT h.*,e.name AS element_name,e.element_type,e.pricing_method FROM element_holds h JOIN setup_elements e ON e.id=h.element_id AND e.company_id=h.company_id WHERE h.id=? AND h.company_id=? AND h.session_token=?''',(hold_id,company_id,token)).fetchone()
+        item=execute_sql(c, 'SELECT h.*,e.name AS element_name,e.element_type,e.pricing_method FROM element_holds h JOIN setup_elements e ON e.id=h.element_id AND e.company_id=h.company_id WHERE h.id=:q66_0 AND h.company_id=:q66_1 AND h.session_token=:q66_2',(hold_id,company_id,token)).fetchone()
         if item is None:return None
-        c.execute('DELETE FROM booking_requirement_people WHERE company_id=? AND session_token=?',(company_id,token));c.execute('DELETE FROM booking_requirement_addons WHERE company_id=? AND session_token=?',(company_id,token))
-        c.execute('''INSERT INTO booking_requirement_people(session_token,company_id,person_type_id,quantity,ages_json) SELECT ?,company_id,person_type_id,quantity,ages_json FROM hold_requirement_people WHERE hold_id=?''',(token,hold_id))
-        c.execute('''INSERT INTO booking_requirement_addons(session_token,company_id,addon_id,quantity) SELECT ?,company_id,addon_id,quantity FROM hold_requirement_addons WHERE hold_id=?''',(token,hold_id))
-        c.execute('''INSERT INTO booking_requirement_sessions(session_token,company_id,ready,arrival_date,departure_date,lead_name,updated_at) VALUES (?,?,1,?,?,?,CURRENT_TIMESTAMP) ON CONFLICT(session_token,company_id) DO UPDATE SET ready=1,arrival_date=excluded.arrival_date,departure_date=excluded.departure_date,lead_name=excluded.lead_name,updated_at=CURRENT_TIMESTAMP''',(token,company_id,str(item['arrival_date']),str(item['departure_date']),str(item['lead_name'] or '')))
+        execute_sql(c, 'DELETE FROM booking_requirement_people WHERE company_id=:q51_0 AND session_token=:q51_1',(company_id,token));execute_sql(c, 'DELETE FROM booking_requirement_addons WHERE company_id=:q52_0 AND session_token=:q52_1',(company_id,token))
+        execute_sql(c, 'INSERT INTO booking_requirement_people(session_token,company_id,person_type_id,quantity,ages_json) SELECT :q53_0,company_id,person_type_id,quantity,ages_json FROM hold_requirement_people WHERE hold_id=:q53_1',(token,hold_id))
+        execute_sql(c, 'INSERT INTO booking_requirement_addons(session_token,company_id,addon_id,quantity) SELECT :q54_0,company_id,addon_id,quantity FROM hold_requirement_addons WHERE hold_id=:q54_1',(token,hold_id))
+        execute_sql(c, 'INSERT INTO booking_requirement_sessions(session_token,company_id,ready,arrival_date,departure_date,lead_name,updated_at) VALUES (:q55_0,:q55_1,1,:q55_2,:q55_3,:q55_4,CURRENT_TIMESTAMP) ON CONFLICT(session_token,company_id) DO UPDATE SET ready=1,arrival_date=excluded.arrival_date,departure_date=excluded.departure_date,lead_name=excluded.lead_name,updated_at=CURRENT_TIMESTAMP',(token,company_id,str(item['arrival_date']),str(item['departure_date']),str(item['lead_name'] or '')))
         return item
 
 
@@ -89,10 +90,10 @@ def _hold_enquiry_values(database,company_id,token,hold_id):
     item=items[0]
     values={'arrival_date':str(item['arrival_date']),'departure_date':str(item['departure_date']),'party_size':'','source':'Availability','notes':'','element_type':str(item['element_type']),'element_id':str(int(item['element_id']))}
     total=0
-    for p in rows(database,'SELECT person_type_id,quantity FROM hold_requirement_people WHERE hold_id=? AND company_id=?',(hold_id,company_id)):
+    for p in rows(database,'SELECT person_type_id,quantity FROM hold_requirement_people WHERE hold_id=:q48_0 AND company_id=:q48_1',(hold_id,company_id)):
         qty=int(p['quantity'] or 0);values[f'person_{int(p["person_type_id"])}']=str(qty);total+=qty
     values['party_size']=str(total)
-    for a in rows(database,'SELECT addon_id,quantity FROM hold_requirement_addons WHERE hold_id=? AND company_id=?',(hold_id,company_id)):
+    for a in rows(database,'SELECT addon_id,quantity FROM hold_requirement_addons WHERE hold_id=:q49_0 AND company_id=:q49_1',(hold_id,company_id)):
         aid=int(a['addon_id']);qty=int(a['quantity'] or 0)
         if qty>0:
             values[f'addon_{aid}']=str(qty);values[f'addon_selected_{aid}']='1';values[f'addon_when_{aid}']='every_day'
@@ -116,8 +117,7 @@ def _save_basket_enquiry(database,context,company_id,customer_id,token,notes):
     with database.reservation_write_transaction(company_id) as c:
         from .webv1_reservation_core import migrated_inventory_conflict
         for _, item, _, _ in prepared:
-            live = c.execute('SELECT element_id,arrival_date,departure_date FROM element_holds '
-                             'WHERE id=? AND company_id=? AND session_token=? AND expires_at>?',
+            live = execute_sql(c, 'SELECT element_id,arrival_date,departure_date FROM element_holds WHERE id=:q69_0 AND company_id=:q69_1 AND session_token=:q69_2 AND expires_at>:q69_3',
                              (int(item['id']), company_id, token, iso_now())).fetchone()
             if (live is None or int(live['element_id']) != int(item['element_id'])
                     or str(live['arrival_date']) != str(item['arrival_date'])
@@ -126,33 +126,33 @@ def _save_basket_enquiry(database,context,company_id,customer_id,token,notes):
             if migrated_inventory_conflict(c, company_id, int(item['element_id']),
                                            str(item['arrival_date']), str(item['departure_date'])):
                 raise ValueError('This Element is allocated to a central reservation.')
-        enquiry_id=int(c.execute('''INSERT INTO enquiries(company_id,customer_id,status,source,arrival_date,departure_date,party_size,notes,created_at,updated_at) VALUES (?,?,?,?,?,?,?,?,?,?)''',(company_id,customer_id,'new','Availability',arrival,departure,party,notes,now,now)).lastrowid)
+        enquiry_id=int(insert_sql(c, 'INSERT INTO enquiries(company_id,customer_id,status,source,arrival_date,departure_date,party_size,notes,created_at,updated_at) VALUES (:q67_0,:q67_1,:q67_2,:q67_3,:q67_4,:q67_5,:q67_6,:q67_7,:q67_8,:q67_9)',(company_id,customer_id,'new','Availability',arrival,departure,party,notes,now,now)).lastrowid)
         total=0.0
         for order,item,values,calc in prepared:
             snap=json.dumps({'element_type':calc['element_type'],'element_id':calc['element_id'],'element_name':calc['element_name'],'year':calc['year'],'nights':calc['nights'],'people_total':calc['people_total'],'addon_when':calc['addon_when'],'addon_days':calc['addon_days'],'addon_people':calc['addon_people'],'addon_person_days':calc['addon_person_days'],'selected_addons':calc['selected_addons'],'lines':calc['lines'],'total':calc['total']},separators=(',',':'))
             subtotal=float(calc['total']); total+=subtotal
-            eeid=int(c.execute('''INSERT INTO enquiry_elements(enquiry_id,company_id,element_type,element_id,arrival_date,departure_date,lead_name,party_size,provisional_total,pricing_snapshot_json,sort_order,created_at,updated_at) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?)''',(enquiry_id,company_id,str(item['element_type']),int(item['element_id']),str(item['arrival_date']),str(item['departure_date']),str(item['lead_name'] or ''),int(calc['people_total']),subtotal,snap,order,now,now)).lastrowid)
+            eeid=int(insert_sql(c, 'INSERT INTO enquiry_elements(enquiry_id,company_id,element_type,element_id,arrival_date,departure_date,lead_name,party_size,provisional_total,pricing_snapshot_json,sort_order,created_at,updated_at) VALUES (:q70_0,:q70_1,:q70_2,:q70_3,:q70_4,:q70_5,:q70_6,:q70_7,:q70_8,:q70_9,:q70_10,:q70_11,:q70_12)',(enquiry_id,company_id,str(item['element_type']),int(item['element_id']),str(item['arrival_date']),str(item['departure_date']),str(item['lead_name'] or ''),int(calc['people_total']),subtotal,snap,order,now,now)).lastrowid)
             for pid,qty in calc['people_counts'].items():
-                if qty:c.execute('INSERT INTO enquiry_element_people(enquiry_element_id,company_id,person_type_id,quantity) VALUES (?,?,?,?)',(eeid,company_id,pid,qty))
-            for pos,aid in enumerate(calc['selected_addons'],1):c.execute('INSERT INTO enquiry_element_selected_addons(enquiry_element_id,company_id,addon_id,sort_order) VALUES (?,?,?,?)',(eeid,company_id,aid,pos))
+                if qty:execute_sql(c, 'INSERT INTO enquiry_element_people(enquiry_element_id,company_id,person_type_id,quantity) VALUES (:q71_0,:q71_1,:q71_2,:q71_3)',(eeid,company_id,pid,qty))
+            for pos,aid in enumerate(calc['selected_addons'],1):execute_sql(c, 'INSERT INTO enquiry_element_selected_addons(enquiry_element_id,company_id,addon_id,sort_order) VALUES (:q68_0,:q68_1,:q68_2,:q68_3)',(eeid,company_id,aid,pos))
             for aid,qty in calc['addon_counts'].items():
-                if qty:c.execute('INSERT INTO enquiry_element_addons(enquiry_element_id,company_id,addon_id,quantity) VALUES (?,?,?,?)',(eeid,company_id,aid,qty))
+                if qty:execute_sql(c, 'INSERT INTO enquiry_element_addons(enquiry_element_id,company_id,addon_id,quantity) VALUES (:q72_0,:q72_1,:q72_2,:q72_3)',(eeid,company_id,aid,qty))
             for aid,daily in calc['addon_days'].items():
                 for d,qty in daily.items():
-                    if qty:c.execute('INSERT INTO enquiry_element_addon_days(enquiry_element_id,company_id,addon_id,service_date,quantity) VALUES (?,?,?,?,?)',(eeid,company_id,aid,d,qty))
+                    if qty:execute_sql(c, 'INSERT INTO enquiry_element_addon_days(enquiry_element_id,company_id,addon_id,service_date,quantity) VALUES (:q73_0,:q73_1,:q73_2,:q73_3,:q73_4)',(eeid,company_id,aid,d,qty))
             for aid,pp in calc['addon_people'].items():
                 for pid,qty in pp.items():
-                    if qty:c.execute('INSERT INTO enquiry_element_addon_people(enquiry_element_id,company_id,addon_id,person_type_id,quantity) VALUES (?,?,?,?,?)',(eeid,company_id,aid,pid,qty))
+                    if qty:execute_sql(c, 'INSERT INTO enquiry_element_addon_people(enquiry_element_id,company_id,addon_id,person_type_id,quantity) VALUES (:q74_0,:q74_1,:q74_2,:q74_3,:q74_4)',(eeid,company_id,aid,pid,qty))
             for aid,bydate in calc['addon_person_days'].items():
                 for d,pp in bydate.items():
                     for pid,qty in pp.items():
-                        if qty:c.execute('INSERT INTO enquiry_element_addon_person_days(enquiry_element_id,company_id,addon_id,person_type_id,service_date,quantity) VALUES (?,?,?,?,?,?)',(eeid,company_id,aid,pid,d,qty))
+                        if qty:execute_sql(c, 'INSERT INTO enquiry_element_addon_person_days(enquiry_element_id,company_id,addon_id,person_type_id,service_date,quantity) VALUES (:q77_0,:q77_1,:q77_2,:q77_3,:q77_4,:q77_5)',(eeid,company_id,aid,pid,d,qty))
         # Legacy summary row remains for compatibility while all new logic moves to enquiry_elements.
         first=prepared[0]
-        c.execute('''INSERT INTO enquiry_requests(enquiry_id,company_id,element_type,element_id,provisional_total,pricing_snapshot_json,updated_at) VALUES (?,?,?,?,?,?,?)''',(enquiry_id,company_id,str(first[1]['element_type']),int(first[1]['element_id']),total,first[3] and json.dumps({'multi_element':True,'element_count':len(prepared),'total':total},separators=(',',':')),now))
+        execute_sql(c, 'INSERT INTO enquiry_requests(enquiry_id,company_id,element_type,element_id,provisional_total,pricing_snapshot_json,updated_at) VALUES (:q56_0,:q56_1,:q56_2,:q56_3,:q56_4,:q56_5,:q56_6)',(enquiry_id,company_id,str(first[1]['element_type']),int(first[1]['element_id']),total,first[3] and json.dumps({'multi_element':True,'element_count':len(prepared),'total':total},separators=(',',':')),now))
         hold_ids=[int(x[1]['id']) for x in prepared]
         for hid in hold_ids:
-            c.execute('DELETE FROM hold_requirement_people WHERE hold_id=?',(hid,));c.execute('DELETE FROM hold_requirement_addons WHERE hold_id=?',(hid,));c.execute('DELETE FROM element_holds WHERE id=? AND company_id=? AND session_token=?',(hid,company_id,token))
+            execute_sql(c, 'DELETE FROM hold_requirement_people WHERE hold_id=:q57_0',(hid,));execute_sql(c, 'DELETE FROM hold_requirement_addons WHERE hold_id=:q58_0',(hid,));execute_sql(c, 'DELETE FROM element_holds WHERE id=:q59_0 AND company_id=:q59_1 AND session_token=:q59_2',(hid,company_id,token))
     audit(database,context,company_id,'ENQUIRY_CREATED','enquiry',enquiry_id,after={'customer_id':customer_id,'element_count':len(prepared),'provisional_total':total})
     audit(database,context,company_id,'ELEMENT_HOLDS_CONVERTED_TO_ENQUIRY','enquiry',enquiry_id,after={'hold_ids':[int(x[1]['id']) for x in prepared]})
     return enquiry_id
@@ -209,7 +209,7 @@ def register_booking_progress_routes(app):
     async def new_booking_requirements(request:Request):
         context,company_id=_session_company(database,request);data=await form_data(request);require_csrf(context,data);token=request.cookies.get(COOKIE_NAME,'')
         with database.connect() as c:
-            c.execute('DELETE FROM booking_requirement_people WHERE company_id=? AND session_token=?',(company_id,token));c.execute('DELETE FROM booking_requirement_addons WHERE company_id=? AND session_token=?',(company_id,token));c.execute('''INSERT INTO booking_requirement_sessions(session_token,company_id,ready,arrival_date,departure_date,lead_name,updated_at) VALUES (?,?,0,'','','',CURRENT_TIMESTAMP) ON CONFLICT(session_token,company_id) DO UPDATE SET ready=0,arrival_date='',departure_date='',lead_name='',updated_at=CURRENT_TIMESTAMP''',(token,company_id))
+            execute_sql(c, 'DELETE FROM booking_requirement_people WHERE company_id=:q60_0 AND session_token=:q60_1',(company_id,token));execute_sql(c, 'DELETE FROM booking_requirement_addons WHERE company_id=:q61_0 AND session_token=:q61_1',(company_id,token));execute_sql(c, "INSERT INTO booking_requirement_sessions(session_token,company_id,ready,arrival_date,departure_date,lead_name,updated_at) VALUES (:q62_0,:q62_1,0,'','','',CURRENT_TIMESTAMP) ON CONFLICT(session_token,company_id) DO UPDATE SET ready=0,arrival_date='',departure_date='',lead_name='',updated_at=CURRENT_TIMESTAMP",(token,company_id))
         return RedirectResponse('/availability/start',303)
 
     @app.get('/availability/basket/edit',response_class=HTMLResponse)
@@ -224,7 +224,7 @@ def register_booking_progress_routes(app):
         try:hold_id=int(data.get('hold_id',''))
         except (TypeError,ValueError):return RedirectResponse('/availability/basket/review',303)
         with database.connect() as c:
-            c.execute('DELETE FROM hold_requirement_people WHERE hold_id=?',(hold_id,));c.execute('DELETE FROM hold_requirement_addons WHERE hold_id=?',(hold_id,));c.execute('DELETE FROM element_holds WHERE id=? AND company_id=? AND session_token=?',(hold_id,company_id,token))
+            execute_sql(c, 'DELETE FROM hold_requirement_people WHERE hold_id=:q63_0',(hold_id,));execute_sql(c, 'DELETE FROM hold_requirement_addons WHERE hold_id=:q64_0',(hold_id,));execute_sql(c, 'DELETE FROM element_holds WHERE id=:q65_0 AND company_id=:q65_1 AND session_token=:q65_2',(hold_id,company_id,token))
         return_to=str(data.get('return_to','') or '');return RedirectResponse(return_to if return_to.startswith('/') else '/availability/basket/review',303)
 
     @app.get('/availability/basket/customer',response_class=HTMLResponse)
@@ -253,7 +253,7 @@ def register_booking_progress_routes(app):
         except (TypeError,ValueError):existing_id=0
         customer_id=None
         if existing_id:
-            with database.connect() as c: existing=c.execute('SELECT id FROM customer_records WHERE id=? AND company_id=? AND active=1',(existing_id,company_id)).fetchone()
+            with database.connect() as c: existing=execute_sql(c, 'SELECT id FROM customer_records WHERE id=:q75_0 AND company_id=:q75_1 AND active=1',(existing_id,company_id)).fetchone()
             if existing is None:return HTMLResponse(_customer_stage(database,context,company_id,token,hold_id,values,'That Customer record is no longer available.'),409)
             customer_id=existing_id
         else:
@@ -262,7 +262,7 @@ def register_booking_progress_routes(app):
                 return HTMLResponse(_customer_stage(database,context,company_id,token,hold_id,values,'Possible existing Customer found. Choose the correct master Customer or deliberately create a separate Customer.',matches),409)
             now=iso_now()
             with database.connect() as c:
-                customer_id=int(c.execute('''INSERT INTO customer_records(company_id,first_name,last_name,email,phone,mobile_phone,fixed_phone,address1,address2,town,postcode,country,notes,created_at,updated_at) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)''',(company_id,values['first_name'],values['last_name'],values['email'],values['mobile_phone'] or values['fixed_phone'],values['mobile_phone'],values['fixed_phone'],values['address1'],values['address2'],values['town'],values['postcode'],values['country'],'',now,now)).lastrowid)
+                customer_id=int(insert_sql(c, 'INSERT INTO customer_records(company_id,first_name,last_name,email,phone,mobile_phone,fixed_phone,address1,address2,town,postcode,country,notes,created_at,updated_at) VALUES (:q76_0,:q76_1,:q76_2,:q76_3,:q76_4,:q76_5,:q76_6,:q76_7,:q76_8,:q76_9,:q76_10,:q76_11,:q76_12,:q76_13,:q76_14)',(company_id,values['first_name'],values['last_name'],values['email'],values['mobile_phone'] or values['fixed_phone'],values['mobile_phone'],values['fixed_phone'],values['address1'],values['address2'],values['town'],values['postcode'],values['country'],'',now,now)).lastrowid)
             audit(database,context,company_id,'CUSTOMER_CREATED','customer',customer_id,after={k:values[k] for k in values if k!='notes'})
         try:
             enquiry_id=_save_basket_enquiry(database,context,company_id,int(customer_id),token,values['notes'])

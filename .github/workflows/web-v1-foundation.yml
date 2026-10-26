@@ -321,7 +321,7 @@ jobs:
   reservation-portability:
     name: Reservation SQLite and PostgreSQL 16 integration
     runs-on: ubuntu-latest
-    timeout-minutes: 15
+    timeout-minutes: 35
     services:
       postgres:
         image: postgres:16-alpine
@@ -353,3 +353,10 @@ jobs:
         env:
           DBS_TEST_POSTGRES_URL: postgresql+psycopg://postgres:postgres@127.0.0.1:5432/reservations_test
         run: python -m unittest discover -s tests -p reservation_integration_test.py -v
+
+      - name: Complete operational acceptance on SQLite
+        run: python tests/run_operational_acceptance.py
+      - name: Complete operational acceptance on genuine PostgreSQL
+        env:
+          DBS_TEST_POSTGRES_URL: postgresql+psycopg://postgres:postgres@127.0.0.1:5432/reservations_test
+        run: python tests/run_operational_acceptance.py

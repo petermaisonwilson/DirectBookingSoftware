@@ -11,7 +11,7 @@ def resolve_element_item_rule(database, company_id: int, year: int, element, ite
     """
     override = one(
         database,
-        'SELECT * FROM setup_element_addons WHERE company_id=? AND year=? AND element_id=? AND addon_id=?',
+        'SELECT * FROM setup_element_addons WHERE company_id=:q306_0 AND year=:q306_1 AND element_id=:q306_2 AND addon_id=:q306_3',
         (company_id, year, int(element['id']), item_id),
     )
     if override:
@@ -30,7 +30,7 @@ def resolve_element_item_rule(database, company_id: int, year: int, element, ite
 
     type_rule = one(
         database,
-        'SELECT * FROM setup_type_addons WHERE company_id=? AND year=? AND element_type=? AND addon_id=?',
+        'SELECT * FROM setup_type_addons WHERE company_id=:q307_0 AND year=:q307_1 AND element_type=:q307_2 AND addon_id=:q307_3',
         (company_id, year, str(element['element_type']), item_id),
     )
     if not type_rule or not int(type_rule['allowed'] or 0):

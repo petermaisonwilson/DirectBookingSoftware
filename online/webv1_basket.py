@@ -1,4 +1,5 @@
 from __future__ import annotations
+from .sql import execute_sql
 
 from datetime import date, timedelta
 
@@ -14,41 +15,34 @@ from .webv1_booking_requirements_core import element_reasons
 
 
 def _basket_row(connection, company_id: int, token: str, hold_id: int):
-    return connection.execute(
-        '''SELECT h.*,e.name AS element_name,e.element_type
-           FROM element_holds h
-           JOIN setup_elements e ON e.id=h.element_id AND e.company_id=h.company_id
-           WHERE h.id=? AND h.company_id=? AND h.session_token=?''',
+    return execute_sql(connection,
+        'SELECT h.*,e.name AS element_name,e.element_type\n           FROM element_holds h\n           JOIN setup_elements e ON e.id=h.element_id AND e.company_id=h.company_id\n           WHERE h.id=:q713_0 AND h.company_id=:q713_1 AND h.session_token=:q713_2',
         (hold_id, company_id, token),
     ).fetchone()
 
 
 def _purge_expired_basket_rows(connection, company_id: int, token: str) -> int:
-    expired = [int(r['id']) for r in connection.execute(
-        'SELECT id FROM element_holds WHERE company_id=? AND session_token=? AND expires_at<=?',
+    expired = [int(r['id']) for r in execute_sql(connection,
+        'SELECT id FROM element_holds WHERE company_id=:q718_0 AND session_token=:q718_1 AND expires_at<=:q718_2',
         (company_id, token, iso_now()),
     ).fetchall()]
     for hold_id in expired:
-        connection.execute('DELETE FROM hold_requirement_people WHERE hold_id=?', (hold_id,))
-        connection.execute('DELETE FROM hold_requirement_addons WHERE hold_id=?', (hold_id,))
+        execute_sql(connection, 'DELETE FROM hold_requirement_people WHERE hold_id=:q710_0', (hold_id,))
+        execute_sql(connection, 'DELETE FROM hold_requirement_addons WHERE hold_id=:q711_0', (hold_id,))
     if expired:
-        connection.execute('DELETE FROM element_holds WHERE company_id=? AND session_token=? AND expires_at<=?', (company_id, token, iso_now()))
+        execute_sql(connection, 'DELETE FROM element_holds WHERE company_id=:q712_0 AND session_token=:q712_1 AND expires_at<=:q712_2', (company_id, token, iso_now()))
     return len(expired)
 
 
 def _snapshot_current_requirements(connection, company_id: int, token: str, hold_id: int) -> None:
-    connection.execute('DELETE FROM hold_requirement_people WHERE hold_id=?', (hold_id,))
-    connection.execute('DELETE FROM hold_requirement_addons WHERE hold_id=?', (hold_id,))
-    connection.execute(
-        '''INSERT INTO hold_requirement_people(hold_id,company_id,person_type_id,quantity,ages_json)
-           SELECT ?,company_id,person_type_id,quantity,ages_json
-           FROM booking_requirement_people WHERE company_id=? AND session_token=?''',
+    execute_sql(connection, 'DELETE FROM hold_requirement_people WHERE hold_id=:q706_0', (hold_id,))
+    execute_sql(connection, 'DELETE FROM hold_requirement_addons WHERE hold_id=:q707_0', (hold_id,))
+    execute_sql(connection,
+        'INSERT INTO hold_requirement_people(hold_id,company_id,person_type_id,quantity,ages_json)\n           SELECT :q708_0,company_id,person_type_id,quantity,ages_json\n           FROM booking_requirement_people WHERE company_id=:q708_1 AND session_token=:q708_2',
         (hold_id, company_id, token),
     )
-    connection.execute(
-        '''INSERT INTO hold_requirement_addons(hold_id,company_id,addon_id,quantity)
-           SELECT ?,company_id,addon_id,quantity
-           FROM booking_requirement_addons WHERE company_id=? AND session_token=?''',
+    execute_sql(connection,
+        'INSERT INTO hold_requirement_addons(hold_id,company_id,addon_id,quantity)\n           SELECT :q709_0,company_id,addon_id,quantity\n           FROM booking_requirement_addons WHERE company_id=:q709_1 AND session_token=:q709_2',
         (hold_id, company_id, token),
     )
 
@@ -62,12 +56,8 @@ def register_basket_routes(app) -> None:
         token = request.cookies.get(COOKIE_NAME, '')
         now = availability._now()
         with database.connect() as c:
-            held = c.execute(
-                '''SELECT h.*, e.name AS element_name, e.element_type
-                   FROM element_holds h
-                   JOIN setup_elements e ON e.id=h.element_id AND e.company_id=h.company_id
-                   WHERE h.company_id=? AND h.session_token=? AND h.expires_at>?
-                   ORDER BY h.created_at, h.id''',
+            held = execute_sql(c,
+                'SELECT h.*, e.name AS element_name, e.element_type\n                   FROM element_holds h\n                   JOIN setup_elements e ON e.id=h.element_id AND e.company_id=h.company_id\n                   WHERE h.company_id=:q719_0 AND h.session_token=:q719_1 AND h.expires_at>:q719_2\n                   ORDER BY h.created_at, h.id',
                 (company_id, token, iso_now()),
             ).fetchall()
         items = []
@@ -105,9 +95,9 @@ def register_basket_routes(app) -> None:
             if row is None:
                 return JSONResponse({'ok': False, 'error': 'That basket item has already expired or been removed.'}, status_code=404)
             before = dict(row)
-            c.execute('DELETE FROM hold_requirement_people WHERE hold_id=?', (hold_id,))
-            c.execute('DELETE FROM hold_requirement_addons WHERE hold_id=?', (hold_id,))
-            c.execute('DELETE FROM element_holds WHERE id=? AND company_id=? AND session_token=?', (hold_id, company_id, token))
+            execute_sql(c, 'DELETE FROM hold_requirement_people WHERE hold_id=:q714_0', (hold_id,))
+            execute_sql(c, 'DELETE FROM hold_requirement_addons WHERE hold_id=:q715_0', (hold_id,))
+            execute_sql(c, 'DELETE FROM element_holds WHERE id=:q716_0 AND company_id=:q716_1 AND session_token=:q716_2', (hold_id, company_id, token))
         audit(database, context, company_id, 'ELEMENT_HOLD_REMOVED', 'element_hold', hold_id, before, {'removed': True})
         return JSONResponse({'ok': True, 'removed': 1, 'hold_id': hold_id})
 
@@ -140,8 +130,8 @@ def register_basket_routes(app) -> None:
             if current is None:
                 return JSONResponse({'ok': False, 'error': 'That booking item has expired or been removed.'}, status_code=404)
             before = dict(current)
-            element = c.execute(
-                'SELECT * FROM setup_elements WHERE id=? AND company_id=? AND active=1',
+            element = execute_sql(c,
+                'SELECT * FROM setup_elements WHERE id=:q720_0 AND company_id=:q720_1 AND active=1',
                 (element_id, company_id),
             ).fetchone()
             if element is None:
@@ -150,11 +140,8 @@ def register_basket_routes(app) -> None:
                 reasons = element_reasons(database, company_id, arrival_day.year, element, people, requirements)
                 if reasons:
                     return JSONResponse({'ok': False, 'error': 'That Element is not suitable: ' + ' · '.join(reasons)}, status_code=409)
-            competing_hold = c.execute(
-                '''SELECT id FROM element_holds
-                   WHERE company_id=? AND element_id=? AND id<>?
-                     AND date(arrival_date)<date(?) AND date(departure_date)>date(?)
-                     AND expires_at>? LIMIT 1''',
+            competing_hold = execute_sql(c,
+                'SELECT id FROM element_holds\n                   WHERE company_id=:q721_0 AND element_id=:q721_1 AND id<>:q721_2\n                     AND date(arrival_date)<date(:q721_3) AND date(departure_date)>date(:q721_4)\n                     AND expires_at>:q721_5 LIMIT 1',
                 (company_id, element_id, hold_id, departure, arrival, iso_now()),
             ).fetchone()
             booking_conflict = availability._booking_conflict(c, company_id, element_id, arrival, departure)
@@ -162,18 +149,16 @@ def register_basket_routes(app) -> None:
             if competing_hold or booking_conflict or closure_conflict:
                 return JSONResponse({'ok': False, 'error': 'That Element is already unavailable or held. Please choose another.'}, status_code=409)
 
-            settings = c.execute('SELECT hold_seconds,grace_seconds FROM company_hold_settings WHERE company_id=?', (company_id,)).fetchone()
+            settings = execute_sql(c, 'SELECT hold_seconds,grace_seconds FROM company_hold_settings WHERE company_id=:q722_0', (company_id,)).fetchone()
             hold_seconds = int(settings['hold_seconds']) if settings else 600
             grace_seconds = int(settings['grace_seconds']) if settings else 60
-            working = c.execute('SELECT lead_name FROM booking_requirement_sessions WHERE company_id=? AND session_token=?', (company_id, token)).fetchone()
+            working = execute_sql(c, 'SELECT lead_name FROM booking_requirement_sessions WHERE company_id=:q723_0 AND session_token=:q723_1', (company_id, token)).fetchone()
             lead_name = str(working['lead_name'] or '') if working else str(current['lead_name'] or '')
             now = availability._now()
             prompt = now + timedelta(seconds=hold_seconds)
             expires = prompt + timedelta(seconds=grace_seconds)
-            c.execute(
-                '''UPDATE element_holds SET element_id=?,holder_user_id=?,arrival_date=?,departure_date=?,lead_name=?,
-                   renewal_required_at=?,expires_at=?,updated_at=?
-                   WHERE id=? AND company_id=? AND session_token=?''',
+            execute_sql(c,
+                'UPDATE element_holds SET element_id=:q717_0,holder_user_id=:q717_1,arrival_date=:q717_2,departure_date=:q717_3,lead_name=:q717_4,\n                   renewal_required_at=:q717_5,expires_at=:q717_6,updated_at=:q717_7\n                   WHERE id=:q717_8 AND company_id=:q717_9 AND session_token=:q717_10',
                 (element_id, context['user_id'], arrival, departure, lead_name, prompt.isoformat(timespec='seconds'), expires.isoformat(timespec='seconds'), now.isoformat(timespec='seconds'), hold_id, company_id, token),
             )
             _snapshot_current_requirements(c, company_id, token, hold_id)

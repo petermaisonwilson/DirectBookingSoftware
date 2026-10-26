@@ -1,4 +1,5 @@
 from __future__ import annotations
+from .sql import execute_sql
 
 from urllib.parse import quote_plus
 
@@ -13,7 +14,7 @@ from .webv1_rule_resolver import resolve_element_item_rule
 def initialise_addon_popup(database) -> None:
     """Store per-Element popup visibility. Missing rows deliberately mean Show = Yes."""
     with database.connect() as c:
-        c.execute('''CREATE TABLE IF NOT EXISTS setup_element_popup_items (
+        execute_sql(c, '''CREATE TABLE IF NOT EXISTS setup_element_popup_items (
             company_id INTEGER NOT NULL,
             element_id INTEGER NOT NULL,
             addon_id INTEGER NOT NULL,
@@ -32,12 +33,7 @@ def popup_addons_for_element(database, company_id: int, year: int, element) -> l
     """
     result: list[dict[str, object]] = []
     element_id = int(element['id'])
-    for addon in rows(database, '''SELECT a.*, COALESCE(p.show_popup,1) AS show_popup
-        FROM setup_addons a
-        LEFT JOIN setup_element_popup_items p
-          ON p.company_id=a.company_id AND p.element_id=? AND p.addon_id=a.id
-        WHERE a.company_id=? AND a.active=1
-        ORDER BY a.name COLLATE NOCASE''', (element_id, company_id)):
+    for addon in rows(database, 'SELECT a.*, COALESCE(p.show_popup,1) AS show_popup\n        FROM setup_addons a\n        LEFT JOIN setup_element_popup_items p\n          ON p.company_id=a.company_id AND p.element_id=:q648_0 AND p.addon_id=a.id\n        WHERE a.company_id=:q648_1 AND a.active=1\n        ORDER BY lower(a.name)', (element_id, company_id)):
         if not int(addon['show_popup']):
             continue
         rule = resolve_element_item_rule(database, company_id, year, element, int(addon['id']))
@@ -54,30 +50,30 @@ def popup_addons_for_elements(database, company_id: int, year: int, elements) ->
     result: dict[int, list[dict[str, object]]] = {eid: [] for eid in element_ids}
     if not element_ids:
         return result
-    marks = ','.join('?' for _ in element_ids)
+    marks = ','.join(f':element_{i}' for i in range(len(element_ids)))
     with database.connect() as c:
-        addons = c.execute(
-            'SELECT id,name FROM setup_addons WHERE company_id=? AND active=1 ORDER BY name COLLATE NOCASE',
+        addons = execute_sql(c,
+            'SELECT id,name FROM setup_addons WHERE company_id=:q650_0 AND active=1 ORDER BY lower(name)',
             (company_id,),
         ).fetchall()
         hidden = {
             (int(row['element_id']), int(row['addon_id']))
-            for row in c.execute(
-                f'SELECT element_id,addon_id FROM setup_element_popup_items WHERE company_id=? AND element_id IN ({marks}) AND show_popup=0',
+            for row in execute_sql(c,
+                f'SELECT element_id,addon_id FROM setup_element_popup_items WHERE company_id=:q658_0 AND element_id IN ({marks}) AND show_popup=0',
                 (company_id, *element_ids),
             ).fetchall()
         }
         overrides = {
             (int(row['element_id']), int(row['addon_id'])): str(row['state'] or 'I').upper()
-            for row in c.execute(
-                f'SELECT element_id,addon_id,state FROM setup_element_addons WHERE company_id=? AND year=? AND element_id IN ({marks})',
+            for row in execute_sql(c,
+                f'SELECT element_id,addon_id,state FROM setup_element_addons WHERE company_id=:q659_0 AND year=:q659_1 AND element_id IN ({marks})',
                 (company_id, year, *element_ids),
             ).fetchall()
         }
         type_rules = {
             (str(row['element_type']), int(row['addon_id'])): bool(int(row['allowed'] or 0))
-            for row in c.execute(
-                'SELECT element_type,addon_id,allowed FROM setup_type_addons WHERE company_id=? AND year=?',
+            for row in execute_sql(c,
+                'SELECT element_type,addon_id,allowed FROM setup_type_addons WHERE company_id=:q656_0 AND year=:q656_1',
                 (company_id, year),
             ).fetchall()
         }
@@ -119,15 +115,14 @@ def register_addon_popup_routes(app) -> None:
             return RedirectResponse('/setup/elements?message=' + quote_plus('Invalid popup item.'), 303)
         element_id, addon_id = int(raw_element), int(raw_addon)
         with database.connect() as c:
-            element = c.execute('SELECT id FROM setup_elements WHERE id=? AND company_id=?', (element_id, company_id)).fetchone()
-            addon = c.execute('SELECT id FROM setup_addons WHERE id=? AND company_id=? AND active=1', (addon_id, company_id)).fetchone()
+            element = execute_sql(c, 'SELECT id FROM setup_elements WHERE id=:q652_0 AND company_id=:q652_1', (element_id, company_id)).fetchone()
+            addon = execute_sql(c, 'SELECT id FROM setup_addons WHERE id=:q653_0 AND company_id=:q653_1 AND active=1', (addon_id, company_id)).fetchone()
             if element is None or addon is None:
                 return RedirectResponse('/setup/elements?message=' + quote_plus('Element or popup item was not found.'), 303)
-            existing = c.execute('SELECT show_popup FROM setup_element_popup_items WHERE company_id=? AND element_id=? AND addon_id=?', (company_id, element_id, addon_id)).fetchone()
+            existing = execute_sql(c, 'SELECT show_popup FROM setup_element_popup_items WHERE company_id=:q654_0 AND element_id=:q654_1 AND addon_id=:q654_2', (company_id, element_id, addon_id)).fetchone()
             old_value = int(existing['show_popup']) if existing else 1
             new_value = 0 if old_value else 1
-            c.execute('''INSERT INTO setup_element_popup_items(company_id,element_id,addon_id,show_popup) VALUES (?,?,?,?)
-                         ON CONFLICT(company_id,element_id,addon_id) DO UPDATE SET show_popup=excluded.show_popup''',
+            execute_sql(c, 'INSERT INTO setup_element_popup_items(company_id,element_id,addon_id,show_popup) VALUES (:q649_0,:q649_1,:q649_2,:q649_3)\n                         ON CONFLICT(company_id,element_id,addon_id) DO UPDATE SET show_popup=excluded.show_popup',
                       (company_id, element_id, addon_id, new_value))
         audit(database, context, company_id, 'ELEMENT_POPUP_CHANGED', 'element', element_id,
               {'addon_id': addon_id, 'show_popup': old_value}, {'addon_id': addon_id, 'show_popup': new_value})
@@ -148,11 +143,11 @@ def register_addon_popup_routes(app) -> None:
             company_id = context['acting_company_id'] if context['role']=='supervisor' else context['company_id']
             if company_id:
                 company_id, element_id = int(company_id), int(raw_edit)
-                element = rows(database, 'SELECT * FROM setup_elements WHERE company_id=? AND id=?', (company_id, element_id))
+                element = rows(database, 'SELECT * FROM setup_elements WHERE company_id=:q651_0 AND id=:q651_1', (company_id, element_id))
                 if element:
                     controls = '<div class="card element-popup-settings"><h2>Calendar popup information</h2><p class="muted">Choose which bookable Feature / Extra items may be shown in this Element\'s Availability Calendar popup. Items that resolve to No in Feature / Extra Rules are automatically omitted from the popup, even if Show is Yes here.</p><table><thead><tr><th>Item</th><th>Show when bookable</th></tr></thead><tbody>'
-                    settings = {int(r['addon_id']): int(r['show_popup']) for r in rows(database, 'SELECT addon_id,show_popup FROM setup_element_popup_items WHERE company_id=? AND element_id=?', (company_id, element_id))}
-                    for addon in rows(database, 'SELECT id,name FROM setup_addons WHERE company_id=? AND active=1 ORDER BY name COLLATE NOCASE', (company_id,)):
+                    settings = {int(r['addon_id']): int(r['show_popup']) for r in rows(database, 'SELECT addon_id,show_popup FROM setup_element_popup_items WHERE company_id=:q657_0 AND element_id=:q657_1', (company_id, element_id))}
+                    for addon in rows(database, 'SELECT id,name FROM setup_addons WHERE company_id=:q655_0 AND active=1 ORDER BY lower(name)', (company_id,)):
                         aid = int(addon['id']); shown = bool(settings.get(aid, 1))
                         controls += f'<tr><td>{esc(addon["name"])}</td><td><form method="post" action="/setup/elements/popup" style="display:inline"><input type="hidden" name="csrf" value="{esc(context["csrf_token"])}"><input type="hidden" name="element_id" value="{element_id}"><input type="hidden" name="addon_id" value="{aid}"><button class="secondary">{"✓ Yes" if shown else "No"}</button></form></td></tr>'
                     controls += '</tbody></table></div>'

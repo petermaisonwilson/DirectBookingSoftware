@@ -45,7 +45,7 @@ def install_calendar_edit_semantics(app) -> None:
             return Response(content=text, status_code=response.status_code, headers=headers, media_type='text/html')
         company_id = int(company_id)
 
-        for element in rows(database, 'SELECT id,pricing_method FROM setup_elements WHERE company_id=? AND active=1', (company_id,)):
+        for element in rows(database, 'SELECT id,pricing_method FROM setup_elements WHERE company_id=:q301_0 AND active=1', (company_id,)):
             marker = f'<div class="cal-row element-row" data-element="{int(element["id"])}"'
             replacement = marker + f' data-pricing-method="{esc(element["pricing_method"])}"'
             text = text.replace(marker, replacement, 1)
@@ -60,13 +60,7 @@ def install_calendar_edit_semantics(app) -> None:
             }
             for r in rows(
                 database,
-                '''SELECT h.id AS hold_id,h.element_id,h.arrival_date,h.departure_date,e.name AS element_name
-                   FROM element_holds h
-                   JOIN setup_elements e ON e.id=h.element_id AND e.company_id=h.company_id
-                   WHERE h.company_id=? AND h.session_token=?
-                     AND h.expires_at>datetime('now')
-                     AND lower(e.pricing_method)='per night'
-                   ORDER BY h.created_at,h.id''',
+                "SELECT h.id AS hold_id,h.element_id,h.arrival_date,h.departure_date,e.name AS element_name\n                   FROM element_holds h\n                   JOIN setup_elements e ON e.id=h.element_id AND e.company_id=h.company_id\n                   WHERE h.company_id=:q304_0 AND h.session_token=:q304_1\n                     AND h.expires_at>datetime('now')\n                     AND lower(e.pricing_method)='per night'\n                   ORDER BY h.created_at,h.id",
                 (company_id, token),
             )
         ]
@@ -75,7 +69,7 @@ def install_calendar_edit_semantics(app) -> None:
         editing = edit_hold.isdigit() and int(edit_hold) > 0
         if editing:
             text = text.replace('>UPDATE</button>', '>USE THIS ELEMENT</button>')
-            text = text.replace("qaction.textContent=editingHold?'UPDATE':'RESERVE'", "qaction.textContent=editingHold?'USE THIS ELEMENT':'RESERVE'")
+            text = text.replace("qaction.textContent=editingHold:q303_0'UPDATE':'RESERVE'", "qaction.textContent=editingHold:extra10024_0'USE THIS ELEMENT':'RESERVE'")
             old = ' — select new dates and/or another '
             if old in text:
                 a = request.query_params.get('arrival', '')

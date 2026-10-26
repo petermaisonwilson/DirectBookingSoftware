@@ -1,4 +1,5 @@
 from __future__ import annotations
+from .sql import execute_sql, local_schema
 
 import json
 from datetime import date, timedelta
@@ -36,13 +37,13 @@ CREATE TABLE IF NOT EXISTS enquiry_addon_days (
 
 def initialise_addon_when(database) -> None:
     with database.connect() as connection:
-        connection.executescript(ADDON_WHEN_SCHEMA)
-        connection.execute("""INSERT OR IGNORE INTO setup_addon_when_options(company_id,addon_id,option_code,label,active,sort_order) SELECT company_id,id,'every_day','Every day',1,1 FROM setup_addons""")
-        connection.execute("""INSERT OR IGNORE INTO setup_addon_when_options(company_id,addon_id,option_code,label,active,sort_order) SELECT company_id,id,'selected_days','Selected days',0,2 FROM setup_addons""")
+        local_schema(connection, ADDON_WHEN_SCHEMA)
+        execute_sql(connection, "INSERT INTO setup_addon_when_options(company_id,addon_id,option_code,label,active,sort_order) SELECT company_id,id,'every_day','Every day',1,1 FROM setup_addons WHERE 1=1 ON CONFLICT DO NOTHING")
+        execute_sql(connection, "INSERT INTO setup_addon_when_options(company_id,addon_id,option_code,label,active,sort_order) SELECT company_id,id,'selected_days','Selected days',0,2 FROM setup_addons WHERE 1=1 ON CONFLICT DO NOTHING")
 
 
 def when_options(database, company_id: int, addon_id: int, *, active_only: bool = True):
-    sql = 'SELECT * FROM setup_addon_when_options WHERE company_id=? AND addon_id=?'; params: list[object] = [company_id, addon_id]
+    sql = 'SELECT * FROM setup_addon_when_options WHERE company_id=:q666_0 AND addon_id=:q666_1'; params: list[object] = [company_id, addon_id]
     if active_only: sql += ' AND active=1'
     sql += ' ORDER BY sort_order, option_code'
     return rows(database, sql, tuple(params))
@@ -65,7 +66,7 @@ def register_addon_when_routes(app) -> None:
 
     @app.get('/setup/addons/when', response_class=HTMLResponse)
     def addon_when_setup(request: Request, saved: int = 0, year: int = 0, error: str = ''):
-        context=context_for(database,request); cid=working_company(context); addons=rows(database,"""SELECT * FROM setup_addons WHERE company_id=? ORDER BY CASE item_kind WHEN 'Feature' THEN 0 WHEN 'Extra' THEN 1 ELSE 2 END, COALESCE(NULLIF(TRIM(feature_group),''),'Other') COLLATE NOCASE, active DESC, name COLLATE NOCASE""",(cid,)); people=rows(database,'SELECT * FROM setup_person_types WHERE company_id=? AND active=1 ORDER BY name COLLATE NOCASE',(cid,)); year_rows=rows(database,'SELECT year FROM setup_years WHERE company_id=? ORDER BY year DESC',(cid,)); available=[int(r['year']) for r in year_rows]; selected_year=year if year in available else (available[0] if available else 0)
+        context=context_for(database,request); cid=working_company(context); addons=rows(database,"SELECT * FROM setup_addons WHERE company_id=:q670_0 ORDER BY CASE item_kind WHEN 'Feature' THEN 0 WHEN 'Extra' THEN 1 ELSE 2 END, lower(COALESCE(NULLIF(TRIM(feature_group),''),'Other')), active DESC, lower(name)",(cid,)); people=rows(database,'SELECT * FROM setup_person_types WHERE company_id=:q671_0 AND active=1 ORDER BY lower(name)',(cid,)); year_rows=rows(database,'SELECT year FROM setup_years WHERE company_id=:q672_0 ORDER BY year DESC',(cid,)); available=[int(r['year']) for r in year_rows]; selected_year=year if year in available else (available[0] if available else 0)
         notice='<div class="ok">Add-on options saved.</div>' if saved else ''; error_html=f'<div class="error">{esc(error)}</div>' if error else ''; year_links=' '.join(f'<a class="button {"" if y==selected_year else "secondary"}" href="/setup/addons/when?year={y}">{y}</a>' for y in available) or '<span class="muted">Create a pricing year before entering Person Type rates.</span>'
         body=f'''<h1>Feature / Extra Timings &amp; Person Pricing</h1><p><a href="/setup/addons">← Features / Extras</a> &nbsp; <a href="/setup">Setup home</a></p>{notice}{error_html}<div class="card"><p>Keep ordinary extras on <strong>One price for everyone</strong>. For Breakfast-style extras, choose <strong>Price by Person Type</strong>.</p><p class="muted">Items are grouped first by <strong>Feature</strong> or <strong>Extra</strong>, then by their configured Group, to make client editing easier.</p><p class="muted">Person Type short codes are used on compact booking screens. Keep them clear and descriptive, maximum 8 characters.</p><div>{year_links}</div></div>'''
         current_kind=None; current_group=None
@@ -90,7 +91,7 @@ def register_addon_when_routes(app) -> None:
         context=context_for(database,request); cid=working_company(context); data=await form_data(request); require_csrf(context,data)
         try: aid=int(data.get('addon_id',''))
         except ValueError: raise HTTPException(status_code=400,detail='Invalid Add-on')
-        addon_rows=rows(database,'SELECT * FROM setup_addons WHERE company_id=? AND id=?',(cid,aid))
+        addon_rows=rows(database,'SELECT * FROM setup_addons WHERE company_id=:q673_0 AND id=:q673_1',(cid,aid))
         if not addon_rows: raise HTTPException(status_code=404,detail='Add-on not found')
         addon=addon_rows[0]; every_label=data.get('every_label','').strip() or 'Every day'; selected_label=data.get('selected_label','').strip() or 'Selected days'; every_active=1 if data.get('every_active')=='1' else 0; selected_active=1 if data.get('selected_active')=='1' else 0
         if not every_active and not selected_active: every_active=1
@@ -98,7 +99,7 @@ def register_addon_when_routes(app) -> None:
         if pricing_mode not in {'single','person_type'}: pricing_mode='single'
         try: selected_year=int(data.get('year','0') or 0)
         except ValueError: selected_year=0
-        people=rows(database,'SELECT * FROM setup_person_types WHERE company_id=? AND active=1 ORDER BY name COLLATE NOCASE',(cid,)); parsed={}
+        people=rows(database,'SELECT * FROM setup_person_types WHERE company_id=:q674_0 AND active=1 ORDER BY lower(name)',(cid,)); parsed={}
         if pricing_mode=='person_type':
             if not selected_year: return RedirectResponse('/setup/addons/when?error=Create+a+pricing+year+before+entering+Person+Type+rates',303)
             for p in people:
@@ -110,9 +111,9 @@ def register_addon_when_routes(app) -> None:
                 parsed[int(p['id'])]=rate
         before={'timing':[dict(r) for r in when_options(database,cid,aid,active_only=False)],'pricing_mode':addon_person_mode(database,cid,aid),'rates':addon_person_rates(database,cid,aid,selected_year) if selected_year else {}}
         with database.connect() as c:
-            c.execute("INSERT INTO setup_addon_when_options(company_id,addon_id,option_code,label,active,sort_order) VALUES (?,?,?,?,?,1) ON CONFLICT(company_id,addon_id,option_code) DO UPDATE SET label=excluded.label,active=excluded.active,sort_order=1",(cid,aid,'every_day',every_label,every_active)); c.execute("INSERT INTO setup_addon_when_options(company_id,addon_id,option_code,label,active,sort_order) VALUES (?,?,?,?,?,2) ON CONFLICT(company_id,addon_id,option_code) DO UPDATE SET label=excluded.label,active=excluded.active,sort_order=2",(cid,aid,'selected_days',selected_label,selected_active)); c.execute("INSERT INTO setup_addon_person_pricing(company_id,addon_id,pricing_mode) VALUES (?,?,?) ON CONFLICT(company_id,addon_id) DO UPDATE SET pricing_mode=excluded.pricing_mode",(cid,aid,pricing_mode))
+            execute_sql(c, 'INSERT INTO setup_addon_when_options(company_id,addon_id,option_code,label,active,sort_order) VALUES (:q678_0,:q678_1,:q678_2,:q678_3,:q678_4,1) ON CONFLICT(company_id,addon_id,option_code) DO UPDATE SET label=excluded.label,active=excluded.active,sort_order=1',(cid,aid,'every_day',every_label,every_active)); execute_sql(c, 'INSERT INTO setup_addon_when_options(company_id,addon_id,option_code,label,active,sort_order) VALUES (:q679_0,:q679_1,:q679_2,:q679_3,:q679_4,2) ON CONFLICT(company_id,addon_id,option_code) DO UPDATE SET label=excluded.label,active=excluded.active,sort_order=2',(cid,aid,'selected_days',selected_label,selected_active)); execute_sql(c, 'INSERT INTO setup_addon_person_pricing(company_id,addon_id,pricing_mode) VALUES (:q680_0,:q680_1,:q680_2) ON CONFLICT(company_id,addon_id) DO UPDATE SET pricing_mode=excluded.pricing_mode',(cid,aid,pricing_mode))
             if selected_year and pricing_mode=='person_type':
-                for pid,rate in parsed.items(): c.execute("INSERT INTO setup_addon_person_rates(company_id,addon_id,year,person_type_id,rate) VALUES (?,?,?,?,?) ON CONFLICT(company_id,addon_id,year,person_type_id) DO UPDATE SET rate=excluded.rate",(cid,aid,selected_year,pid,rate))
+                for pid,rate in parsed.items(): execute_sql(c, 'INSERT INTO setup_addon_person_rates(company_id,addon_id,year,person_type_id,rate) VALUES (:q681_0,:q681_1,:q681_2,:q681_3,:q681_4) ON CONFLICT(company_id,addon_id,year,person_type_id) DO UPDATE SET rate=excluded.rate',(cid,aid,selected_year,pid,rate))
         after={'timing':[dict(r) for r in when_options(database,cid,aid,active_only=False)],'pricing_mode':addon_person_mode(database,cid,aid),'rates':addon_person_rates(database,cid,aid,selected_year) if selected_year else {}}; audit(database,context,cid,'ADDON_OPTIONS_SAVED','addon',aid,before,after); suffix=f'&year={selected_year}' if selected_year else ''; return RedirectResponse(f'/setup/addons/when?saved=1{suffix}',303)
 
     @app.get('/customer/direct-booking-preview', response_class=HTMLResponse)
@@ -120,7 +121,7 @@ def register_addon_when_routes(app) -> None:
         context=database.session_context(request.cookies.get(COOKIE_NAME))
         if context is None: raise HTTPException(status_code=401,detail='Login required')
         if context['role']!='customer' or not context['company_id']: raise HTTPException(status_code=403,detail='Customer only')
-        cid=int(context['company_id']); company=database.company(cid); addons=rows(database,'SELECT * FROM setup_addons WHERE company_id=? AND active=1 ORDER BY name COLLATE NOCASE',(cid,)); people=rows(database,'SELECT * FROM setup_person_types WHERE company_id=? AND active=1 ORDER BY name COLLATE NOCASE',(cid,)); elements=rows(database,'SELECT * FROM setup_elements WHERE company_id=? AND active=1 ORDER BY element_type,name COLLATE NOCASE',(cid,)); dates=stay_dates(arrival,departure); year=int(arrival[:4]) if len(arrival)>=4 and arrival[:4].isdigit() else 0; selected_element=next((e for e in elements if int(e['id'])==int(element or 0)),None); person_counts={int(p['id']):max(0,int(request.query_params.get(f'person_{int(p["id"])}','0') or 0)) for p in people}
+        cid=int(context['company_id']); company=database.company(cid); addons=rows(database,'SELECT * FROM setup_addons WHERE company_id=:q675_0 AND active=1 ORDER BY lower(name)',(cid,)); people=rows(database,'SELECT * FROM setup_person_types WHERE company_id=:q676_0 AND active=1 ORDER BY lower(name)',(cid,)); elements=rows(database,'SELECT * FROM setup_elements WHERE company_id=:q677_0 AND active=1 ORDER BY element_type,lower(name)',(cid,)); dates=stay_dates(arrival,departure); year=int(arrival[:4]) if len(arrival)>=4 and arrival[:4].isdigit() else 0; selected_element=next((e for e in elements if int(e['id'])==int(element or 0)),None); person_counts={int(p['id']):max(0,int(request.query_params.get(f'person_{int(p["id"])}','0') or 0)) for p in people}
         element_options='<option value="">-- choose Element --</option>'+''.join(f'<option value="{int(e["id"])}" {"selected" if selected_element and int(e["id"])==int(selected_element["id"]) else ""}>{esc(e["element_type"])} — {esc(e["name"])}</option>' for e in elements)
         body=f'''<h1>{esc(company['name'])} — Direct booking preview</h1><div class="card"><p>This is a Customer-facing preview only. It does not create a Booking yet.</p><form method="get" action="/customer/direct-booking-preview"><div class="grid"><div><label>Arrival</label><input type="date" name="arrival" value="{esc(arrival)}"></div><div><label>Departure</label><input type="date" name="departure" value="{esc(departure)}"></div><div><label>Element</label><select name="element">{element_options}</select></div>'''
         for p in people:

@@ -49,7 +49,7 @@ def register_calendar_v3_routes(app) -> None:
     def calendar(request: Request, element_type: str = '', start: str = '', arrival: str = '', departure: str = ''):
         context, cid = _session_context(database, request)
         staff = str(context['role']) in {'operator', 'supervisor'}
-        types = [str(r['name']) for r in rows(database, 'SELECT name FROM setup_element_types WHERE company_id=? AND active=1 ORDER BY name COLLATE NOCASE', (cid,))]
+        types = [str(r['name']) for r in rows(database, 'SELECT name FROM setup_element_types WHERE company_id=:q505_0 AND active=1 ORDER BY lower(name)', (cid,))]
         selected_type = element_type if element_type in types else (types[0] if types else '')
         arrival_day = _parse(arrival)
         departure_day = _parse(departure)
@@ -83,7 +83,7 @@ def register_calendar_v3_routes(app) -> None:
         {'<a class="button secondary" href="/setup/booking-statuses">Booking Statuses</a>' if staff else ''}</p></form></div>'''
 
         if staff:
-            status_rows = rows(database, 'SELECT * FROM booking_status_definitions WHERE company_id=? AND active=1 ORDER BY display_order,name', (cid,))
+            status_rows = rows(database, 'SELECT * FROM booking_status_definitions WHERE company_id=:q503_0 AND active=1 ORDER BY display_order,name', (cid,))
             legend = ''.join(f'<span class="legend" style="background:{esc(r["colour"])}">{esc(r["name"])}</span>' for r in status_rows)
             body += f'<div class="card"><div class="legend-row"><strong>Key:</strong>{legend}<span class="legend closed">Closed</span><span>Available = clear</span></div></div>'
         else:
@@ -97,7 +97,7 @@ def register_calendar_v3_routes(app) -> None:
         header += '</div>'
 
         rows_html = ''
-        elements = rows(database, 'SELECT * FROM setup_elements WHERE company_id=? AND active=1 AND element_type=? ORDER BY name COLLATE NOCASE', (cid, selected_type)) if selected_type else []
+        elements = rows(database, 'SELECT * FROM setup_elements WHERE company_id=:q504_0 AND active=1 AND element_type=:q504_1 ORDER BY lower(name)', (cid, selected_type)) if selected_type else []
         held_status = default_status(database, cid, 'HELD')
         held_colour = str(held_status['colour']) if held_status else '#FFE39A'
         held_name = str(held_status['name']) if held_status else 'Enquiry / Held'

@@ -1,4 +1,5 @@
 from __future__ import annotations
+from .sql import execute_sql, insert_sql, column_rows
 
 import re
 
@@ -21,13 +22,13 @@ def _normal_phone(value: str) -> str:
 
 def _ensure_customer_contact_columns(database) -> None:
     with database.connect() as connection:
-        columns = {str(r['name']) for r in connection.execute('PRAGMA table_info(customer_records)').fetchall()}
+        columns = {str(r['name']) for r in column_rows(connection, 'customer_records')}
         if 'mobile_phone' not in columns:
-            connection.execute("ALTER TABLE customer_records ADD COLUMN mobile_phone TEXT NOT NULL DEFAULT ''")
+            execute_sql(connection, "ALTER TABLE customer_records ADD COLUMN mobile_phone TEXT NOT NULL DEFAULT ''")
         if 'fixed_phone' not in columns:
-            connection.execute("ALTER TABLE customer_records ADD COLUMN fixed_phone TEXT NOT NULL DEFAULT ''")
-        connection.execute('CREATE INDEX IF NOT EXISTS idx_customer_records_mobile ON customer_records(company_id, mobile_phone)')
-        connection.execute('CREATE INDEX IF NOT EXISTS idx_customer_records_fixed ON customer_records(company_id, fixed_phone)')
+            execute_sql(connection, "ALTER TABLE customer_records ADD COLUMN fixed_phone TEXT NOT NULL DEFAULT ''")
+        execute_sql(connection, 'CREATE INDEX IF NOT EXISTS idx_customer_records_mobile ON customer_records(company_id, mobile_phone)')
+        execute_sql(connection, 'CREATE INDEX IF NOT EXISTS idx_customer_records_fixed ON customer_records(company_id, fixed_phone)')
 
 
 def customer_matches(database, company_id: int, *, email: str = '', mobile_phone: str = '', fixed_phone: str = '', exclude_customer_id: int | None = None):
@@ -36,10 +37,7 @@ def customer_matches(database, company_id: int, *, email: str = '', mobile_phone
     fixed_key = _normal_phone(fixed_phone)
     if not any((email_key, mobile_key, fixed_key)):
         return []
-    candidates = rows(database, '''SELECT c.*,
-        (SELECT COUNT(*) FROM bookings b WHERE b.company_id=c.company_id AND b.customer_id=c.id) AS booking_count,
-        (SELECT COUNT(*) FROM enquiries e WHERE e.company_id=c.company_id AND e.customer_id=c.id) AS enquiry_count
-        FROM customer_records c WHERE c.company_id=? AND c.active=1 ORDER BY c.last_name COLLATE NOCASE,c.first_name COLLATE NOCASE,c.id''', (company_id,))
+    candidates = rows(database, 'SELECT c.*,\n        (SELECT COUNT(*) FROM bookings b WHERE b.company_id=c.company_id AND b.customer_id=c.id) AS booking_count,\n        (SELECT COUNT(*) FROM enquiries e WHERE e.company_id=c.company_id AND e.customer_id=c.id) AS enquiry_count\n        FROM customer_records c WHERE c.company_id=:q376_0 AND c.active=1 ORDER BY lower(c.last_name),lower(c.first_name),c.id', (company_id,))
     found = []
     for row in candidates:
         if exclude_customer_id is not None and int(row['id']) == int(exclude_customer_id):
@@ -108,13 +106,13 @@ def register_customer_routes(app) -> None:
         company_id = working_company(context)
         search = q.strip()
         params: list[object] = [company_id]
-        where = 'company_id=? AND active=1'
+        where = 'company_id=:extra10025_0 AND active=1'
         if search:
             term = f'%{search}%'
             digits = _normal_phone(search)
-            where += " AND (first_name LIKE ? COLLATE NOCASE OR last_name LIKE ? COLLATE NOCASE OR email LIKE ? COLLATE NOCASE OR phone LIKE ? COLLATE NOCASE OR mobile_phone LIKE ? OR fixed_phone LIKE ?)"
+            where += " AND (lower(first_name) LIKE lower(:first) OR lower(last_name) LIKE lower(:last) OR lower(email) LIKE lower(:email) OR lower(phone) LIKE lower(:phone) OR mobile_phone LIKE :mobile OR fixed_phone LIKE :fixed)"
             params.extend([term, term, term, term, f'%{digits}%' if digits else term, f'%{digits}%' if digits else term])
-        customers = rows(database, f'SELECT * FROM customer_records WHERE {where} ORDER BY last_name COLLATE NOCASE, first_name COLLATE NOCASE, id DESC', tuple(params))
+        customers = rows(database, f'SELECT * FROM customer_records WHERE {where} ORDER BY lower(last_name), lower(first_name), id DESC', tuple(params))
         customer_rows = ''.join(
             f'''<tr><td><a href="/operations/customers/{int(row['id'])}">{esc(_customer_name(row))}</a></td>
             <td>{esc(row['email'])}</td><td>{esc(row['mobile_phone'] or row['phone'])}</td><td>{esc(row['fixed_phone'])}</td></tr>'''
@@ -155,9 +153,8 @@ def register_customer_routes(app) -> None:
             return HTMLResponse(layout('Possible existing Customer', _customer_form(context, values, 'Possible existing Customer found. Open the matching master file or submit again to deliberately create a separate Customer.', matches), context), status_code=409)
         now = iso_now()
         with database.connect() as connection:
-            customer_id = int(connection.execute(
-                '''INSERT INTO customer_records(company_id,first_name,last_name,email,phone,mobile_phone,fixed_phone,address1,address2,town,postcode,country,notes,created_at,updated_at)
-                   VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)''',
+            customer_id = int(insert_sql(connection,
+                'INSERT INTO customer_records(company_id,first_name,last_name,email,phone,mobile_phone,fixed_phone,address1,address2,town,postcode,country,notes,created_at,updated_at)\n                   VALUES (:q388_0,:q388_1,:q388_2,:q388_3,:q388_4,:q388_5,:q388_6,:q388_7,:q388_8,:q388_9,:q388_10,:q388_11,:q388_12,:q388_13,:q388_14)',
                 (company_id, values['first_name'], values['last_name'], values['email'], values['mobile_phone'] or values['fixed_phone'], values['mobile_phone'], values['fixed_phone'], values['address1'], values['address2'], values['town'], values['postcode'], values['country'], values['notes'], now, now),
             ).lastrowid)
         audit(database, context, company_id, 'CUSTOMER_CREATED', 'customer', customer_id, after={key: values[key] for key in keys if key != 'confirm_new'})
@@ -167,11 +164,11 @@ def register_customer_routes(app) -> None:
     def customer_detail(customer_id: int, request: Request, created: int = 0, enquiry_created: int = 0):
         context = context_for(database, request)
         company_id = int(working_company(context))
-        customer = one(database, 'SELECT * FROM customer_records WHERE id=? AND company_id=? AND active=1', (customer_id, company_id))
+        customer = one(database, 'SELECT * FROM customer_records WHERE id=:q377_0 AND company_id=:q377_1 AND active=1', (customer_id, company_id))
         if customer is None:
             return HTMLResponse(layout('Customer not found', '<div class="error">Customer not found.</div>', context), status_code=404)
-        enquiries = rows(database, 'SELECT * FROM enquiries WHERE customer_id=? AND company_id=? ORDER BY id DESC', (customer_id, company_id))
-        bookings = rows(database, 'SELECT * FROM bookings WHERE customer_id=? AND company_id=? ORDER BY arrival_date DESC,id DESC', (customer_id, company_id))
+        enquiries = rows(database, 'SELECT * FROM enquiries WHERE customer_id=:q378_0 AND company_id=:q378_1 ORDER BY id DESC', (customer_id, company_id))
+        bookings = rows(database, 'SELECT * FROM bookings WHERE customer_id=:q379_0 AND company_id=:q379_1 ORDER BY arrival_date DESC,id DESC', (customer_id, company_id))
         enquiry_rows = ''.join(
             f'''<tr><td><a href="/operations/enquiries/{int(row['id'])}">#{int(row['id'])}</a></td><td>{esc(row['status'].title())}</td><td>{esc(row['arrival_date'] or '—')}</td><td>{esc(row['departure_date'] or '—')}</td><td>{esc(row['party_size'] if row['party_size'] is not None else '—')}</td><td>{esc(row['source'] or '—')}</td></tr>'''
             for row in enquiries
@@ -194,7 +191,7 @@ def register_customer_routes(app) -> None:
     @app.get('/operations/customers/{customer_id}/edit', response_class=HTMLResponse)
     def customer_edit(customer_id: int, request: Request):
         context = context_for(database, request); company_id = int(working_company(context))
-        customer = one(database, 'SELECT * FROM customer_records WHERE id=? AND company_id=? AND active=1', (customer_id, company_id))
+        customer = one(database, 'SELECT * FROM customer_records WHERE id=:q380_0 AND company_id=:q380_1 AND active=1', (customer_id, company_id))
         if customer is None:
             return HTMLResponse(layout('Customer not found', '<div class="error">Customer not found.</div>', context), 404)
         values = {key: str(customer[key] or '') for key in ('first_name','last_name','email','mobile_phone','fixed_phone','address1','address2','town','postcode','country','notes')}
@@ -204,7 +201,7 @@ def register_customer_routes(app) -> None:
     @app.post('/operations/customers/{customer_id}/edit')
     async def customer_edit_save(customer_id: int, request: Request):
         context = context_for(database, request); company_id = int(working_company(context)); data = await form_data(request); require_csrf(context, data)
-        customer = one(database, 'SELECT * FROM customer_records WHERE id=? AND company_id=? AND active=1', (customer_id, company_id))
+        customer = one(database, 'SELECT * FROM customer_records WHERE id=:q381_0 AND company_id=:q381_1 AND active=1', (customer_id, company_id))
         if customer is None:
             return RedirectResponse('/operations/customers', 303)
         keys = ('first_name','last_name','email','mobile_phone','fixed_phone','address1','address2','town','postcode','country','notes')
@@ -213,7 +210,7 @@ def register_customer_routes(app) -> None:
             return RedirectResponse(f'/operations/customers/{customer_id}/edit', 303)
         before = {key: customer[key] for key in keys}
         with database.connect() as connection:
-            connection.execute('''UPDATE customer_records SET first_name=?,last_name=?,email=?,phone=?,mobile_phone=?,fixed_phone=?,address1=?,address2=?,town=?,postcode=?,country=?,notes=?,updated_at=? WHERE id=? AND company_id=?''', (values['first_name'],values['last_name'],values['email'],values['mobile_phone'] or values['fixed_phone'],values['mobile_phone'],values['fixed_phone'],values['address1'],values['address2'],values['town'],values['postcode'],values['country'],values['notes'],iso_now(),customer_id,company_id))
+            execute_sql(connection, 'UPDATE customer_records SET first_name=:q385_0,last_name=:q385_1,email=:q385_2,phone=:q385_3,mobile_phone=:q385_4,fixed_phone=:q385_5,address1=:q385_6,address2=:q385_7,town=:q385_8,postcode=:q385_9,country=:q385_10,notes=:q385_11,updated_at=:q385_12 WHERE id=:q385_13 AND company_id=:q385_14', (values['first_name'],values['last_name'],values['email'],values['mobile_phone'] or values['fixed_phone'],values['mobile_phone'],values['fixed_phone'],values['address1'],values['address2'],values['town'],values['postcode'],values['country'],values['notes'],iso_now(),customer_id,company_id))
         audit(database, context, company_id, 'CUSTOMER_UPDATED', 'customer', customer_id, before=before, after=values)
         return RedirectResponse(f'/operations/customers/{customer_id}', 303)
 
@@ -221,10 +218,10 @@ def register_customer_routes(app) -> None:
     def booking_customer_matches(booking_id: int, request: Request):
         context = context_for(database, request)
         company_id = int(working_company(context))
-        booking = one(database, 'SELECT * FROM bookings WHERE id=? AND company_id=?', (booking_id, company_id))
+        booking = one(database, 'SELECT * FROM bookings WHERE id=:q382_0 AND company_id=:q382_1', (booking_id, company_id))
         if booking is None:
             return HTMLResponse(layout('Booking not found', '<div class="error">Booking not found.</div>', context), 404)
-        current = one(database, 'SELECT * FROM customer_records WHERE id=? AND company_id=?', (booking['customer_id'], company_id)) if booking['customer_id'] else None
+        current = one(database, 'SELECT * FROM customer_records WHERE id=:q386_0 AND company_id=:q386_1', (booking['customer_id'], company_id)) if booking['customer_id'] else None
         if current is None:
             body = f'''<h1>Customer match for {esc(booking['reference'])}</h1><div class="error">This Booking does not yet have Customer contact details to match.</div><p><a href="/operations/bookings/{booking_id}">← Booking</a></p>'''
             return layout('Customer match', body, context)
@@ -246,12 +243,12 @@ def register_customer_routes(app) -> None:
             customer_id = int(data.get('customer_id', ''))
         except ValueError:
             return HTMLResponse(layout('Customer match', '<div class="error">Choose a valid Customer.</div>', context), 400)
-        booking = one(database, 'SELECT * FROM bookings WHERE id=? AND company_id=?', (booking_id, company_id))
-        target = one(database, 'SELECT * FROM customer_records WHERE id=? AND company_id=? AND active=1', (customer_id, company_id))
+        booking = one(database, 'SELECT * FROM bookings WHERE id=:q383_0 AND company_id=:q383_1', (booking_id, company_id))
+        target = one(database, 'SELECT * FROM customer_records WHERE id=:q384_0 AND company_id=:q384_1 AND active=1', (customer_id, company_id))
         if booking is None or target is None:
             return HTMLResponse(layout('Customer match', '<div class="error">Booking or Customer not found.</div>', context), 404)
         previous_customer_id = booking['customer_id']
         with database.connect() as connection:
-            connection.execute('UPDATE bookings SET customer_id=?,updated_at=? WHERE id=? AND company_id=?', (customer_id, iso_now(), booking_id, company_id))
+            execute_sql(connection, 'UPDATE bookings SET customer_id=:q387_0,updated_at=:q387_1 WHERE id=:q387_2 AND company_id=:q387_3', (customer_id, iso_now(), booking_id, company_id))
         audit(database, context, company_id, 'BOOKING_LINKED_TO_CUSTOMER', 'booking', booking_id, before={'customer_id': previous_customer_id}, after={'customer_id': customer_id})
         return RedirectResponse(f'/operations/bookings/{booking_id}?message=Booking+added+to+existing+Customer+master+file', 303)

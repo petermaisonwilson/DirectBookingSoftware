@@ -1,4 +1,5 @@
 from __future__ import annotations
+from .sql import execute_sql, local_schema
 
 from .setup015_core import one, rows
 
@@ -51,17 +52,16 @@ CREATE TABLE IF NOT EXISTS enquiry_selected_addons (
 
 def initialise_addon_person(database) -> None:
     with database.connect() as connection:
-        connection.executescript(ADDON_PERSON_SCHEMA)
-        connection.execute(
-            """INSERT OR IGNORE INTO setup_addon_person_pricing(company_id,addon_id,pricing_mode)
-               SELECT company_id,id,'single' FROM setup_addons"""
+        local_schema(connection, ADDON_PERSON_SCHEMA)
+        execute_sql(connection,
+            "INSERT INTO setup_addon_person_pricing(company_id,addon_id,pricing_mode)\n               SELECT company_id,id,'single' FROM setup_addons WHERE 1=1 ON CONFLICT DO NOTHING"
         )
 
 
 def addon_person_mode(database, company_id: int, addon_id: int) -> str:
     row = one(
         database,
-        'SELECT pricing_mode FROM setup_addon_person_pricing WHERE company_id=? AND addon_id=?',
+        'SELECT pricing_mode FROM setup_addon_person_pricing WHERE company_id=:q757_0 AND addon_id=:q757_1',
         (company_id, addon_id),
     )
     return str(row['pricing_mode']) if row else 'single'
@@ -72,7 +72,7 @@ def addon_person_rates(database, company_id: int, addon_id: int, year: int) -> d
         int(row['person_type_id']): float(row['rate'])
         for row in rows(
             database,
-            'SELECT person_type_id,rate FROM setup_addon_person_rates WHERE company_id=? AND addon_id=? AND year=?',
+            'SELECT person_type_id,rate FROM setup_addon_person_rates WHERE company_id=:q759_0 AND addon_id=:q759_1 AND year=:q759_2',
             (company_id, addon_id, year),
         )
     }

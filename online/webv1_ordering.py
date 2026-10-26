@@ -1,4 +1,5 @@
 from __future__ import annotations
+from .sql import execute_sql, local_schema
 
 import html
 
@@ -29,15 +30,15 @@ CREATE TABLE IF NOT EXISTS setup_item_order (
 
 def initialise_ordering(database) -> None:
     with database.connect() as c:
-        c.executescript(ORDERING_SCHEMA)
+        local_schema(c, ORDERING_SCHEMA)
 
 
 def order_menu_items(database, user_id: int, page_key: str, items: list[tuple]) -> list[tuple]:
     with database.connect() as c:
         saved = {
             str(r['item_key']): int(r['position'])
-            for r in c.execute(
-                'SELECT item_key,position FROM user_menu_order WHERE user_id=? AND page_key=?',
+            for r in execute_sql(c,
+                'SELECT item_key,position FROM user_menu_order WHERE user_id=:q767_0 AND page_key=:q767_1',
                 (int(user_id), page_key),
             ).fetchall()
         }
@@ -50,8 +51,8 @@ def setup_rows(database, company_id: int, list_key: str, records) -> list:
     with database.connect() as c:
         saved = {
             int(r['item_id']): int(r['position'])
-            for r in c.execute(
-                'SELECT item_id,position FROM setup_item_order WHERE company_id=? AND list_key=?',
+            for r in execute_sql(c,
+                'SELECT item_id,position FROM setup_item_order WHERE company_id=:q768_0 AND list_key=:q768_1',
                 (int(company_id), list_key),
             ).fetchall()
         }
@@ -60,12 +61,12 @@ def setup_rows(database, company_id: int, list_key: str, records) -> list:
 
 
 def person_type_rows(database, company_id: int, *, active_only: bool = False) -> list:
-    sql = 'SELECT * FROM setup_person_types WHERE company_id=?'
+    sql = 'SELECT * FROM setup_person_types WHERE company_id=:q760_0'
     if active_only:
         sql += ' AND active=1'
-    sql += ' ORDER BY name COLLATE NOCASE'
+    sql += ' ORDER BY lower(name)'
     with database.connect() as c:
-        records = c.execute(sql, (int(company_id),)).fetchall()
+        records = execute_sql(c, sql, (int(company_id),)).fetchall()
     return setup_rows(database, company_id, 'person_types', records)
 
 
@@ -153,9 +154,9 @@ def register_ordering_routes(app) -> None:
         if not page_key or not keys or len(keys) != len(set(keys)):
             raise HTTPException(status_code=400, detail='Invalid menu order')
         with database.connect() as c:
-            c.execute('DELETE FROM user_menu_order WHERE user_id=? AND page_key=?', (int(ctx['user_id']), page_key))
+            execute_sql(c, 'DELETE FROM user_menu_order WHERE user_id=:q762_0 AND page_key=:q762_1', (int(ctx['user_id']), page_key))
             for position, item_key in enumerate(keys):
-                c.execute('INSERT INTO user_menu_order(user_id,page_key,item_key,position) VALUES (?,?,?,?)',
+                execute_sql(c, 'INSERT INTO user_menu_order(user_id,page_key,item_key,position) VALUES (:q765_0,:q765_1,:q765_2,:q765_3)',
                           (int(ctx['user_id']), page_key, item_key, position))
         return JSONResponse({'ok': True})
 
@@ -166,7 +167,7 @@ def register_ordering_routes(app) -> None:
             raise HTTPException(status_code=403, detail='Invalid form token')
         page_key = str(data.get('page_key','')).strip()
         with database.connect() as c:
-            c.execute('DELETE FROM user_menu_order WHERE user_id=? AND page_key=?', (int(ctx['user_id']), page_key))
+            execute_sql(c, 'DELETE FROM user_menu_order WHERE user_id=:q763_0 AND page_key=:q763_1', (int(ctx['user_id']), page_key))
         return JSONResponse({'ok': True})
 
     @app.post('/setup/item-order')
@@ -182,12 +183,12 @@ def register_ordering_routes(app) -> None:
         if list_key != 'person_types' or not ids or len(ids) != len(set(ids)):
             raise HTTPException(status_code=400, detail='Invalid Setup order')
         with database.connect() as c:
-            valid = {int(r['id']) for r in c.execute('SELECT id FROM setup_person_types WHERE company_id=?', (int(company_id),)).fetchall()}
+            valid = {int(r['id']) for r in execute_sql(c, 'SELECT id FROM setup_person_types WHERE company_id=:q769_0', (int(company_id),)).fetchall()}
             if any(item_id not in valid for item_id in ids):
                 raise HTTPException(status_code=400, detail='Invalid Setup item')
-            c.execute('DELETE FROM setup_item_order WHERE company_id=? AND list_key=?', (int(company_id), list_key))
+            execute_sql(c, 'DELETE FROM setup_item_order WHERE company_id=:q764_0 AND list_key=:q764_1', (int(company_id), list_key))
             for position, item_id in enumerate(ids):
-                c.execute('INSERT INTO setup_item_order(company_id,list_key,item_id,position) VALUES (?,?,?,?)',
+                execute_sql(c, 'INSERT INTO setup_item_order(company_id,list_key,item_id,position) VALUES (:q766_0,:q766_1,:q766_2,:q766_3)',
                           (int(company_id), list_key, item_id, position))
         database.write_audit(action='SETUP_ORDER_CHANGED', entity_type=list_key, entity_id=None,
                              actor_user_id=int(ctx['user_id']), actor_role=str(ctx['role']),

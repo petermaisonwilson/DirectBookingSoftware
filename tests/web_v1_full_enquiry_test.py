@@ -1,4 +1,6 @@
 from __future__ import annotations
+from operational_backend import create_app
+from online.sql import execute_sql, insert_sql
 
 import json
 import sqlite3
@@ -10,7 +12,7 @@ sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
 from fastapi.testclient import TestClient
 
-from online.app import COOKIE_NAME, create_app
+from online.app import COOKIE_NAME
 from online.webv1 import register_web_v1
 from online import webv1_enquiry_builder as enquiry_builder
 
@@ -34,26 +36,26 @@ def main() -> None:
         client = TestClient(app)
 
         with db.connect() as c:
-            forest = int(c.execute("SELECT id FROM companies WHERE name='Forest View Campsite'").fetchone()['id'])
-            riverside = int(c.execute("SELECT id FROM companies WHERE name='Riverside Cabins'").fetchone()['id'])
-            c.execute("INSERT INTO setup_element_types(company_id,name,active) VALUES (?,?,1)", (forest, 'Camping Pitch'))
-            element_id = int(c.execute("INSERT INTO setup_elements(company_id,name,element_type,pricing_method,base_price,active) VALUES (?,?,?,?,?,1)", (forest, 'Pitch A', 'Camping Pitch', 'Per night', 0)).lastrowid)
-            adult_id = int(c.execute("INSERT INTO setup_person_types(company_id,name,short_name,active) VALUES (?,?,?,1)", (forest, 'Adult', 'A')).lastrowid)
-            child_id = int(c.execute("INSERT INTO setup_person_types(company_id,name,short_name,active) VALUES (?,?,?,1)", (forest, 'Child', 'C')).lastrowid)
-            addon_id = int(c.execute("INSERT INTO setup_addons(company_id,name,pricing_method,active) VALUES (?,?,?,1)", (forest, 'Electric Hook-up', 'Fixed once')).lastrowid)
-            c.execute("INSERT INTO setup_years(company_id,year) VALUES (?,2026)", (forest,))
-            season_id = int(c.execute("INSERT INTO setup_seasons(company_id,year,name,start_date,end_date) VALUES (?,?,?,?,?)", (forest, 2026, 'All Year', '2026-01-01', '2026-12-31')).lastrowid)
-            c.execute("INSERT INTO setup_element_rates(company_id,year,element_id,season_id,rate) VALUES (?,?,?,?,?)", (forest, 2026, element_id, season_id, 25.0))
-            c.execute("INSERT INTO setup_occupancy(company_id,year,element_id,max_total) VALUES (?,?,?,?)", (forest, 2026, element_id, 4))
-            c.execute("INSERT INTO setup_person_limits(company_id,year,element_id,person_type_id,max_count) VALUES (?,?,?,?,?)", (forest, 2026, element_id, adult_id, 4))
-            c.execute("INSERT INTO setup_person_limits(company_id,year,element_id,person_type_id,max_count) VALUES (?,?,?,?,?)", (forest, 2026, element_id, child_id, 3))
-            c.execute("INSERT INTO setup_person_prices(company_id,year,element_id,person_type_id,rate) VALUES (?,?,?,?,?)", (forest, 2026, element_id, adult_id, 5.0))
-            c.execute("INSERT INTO setup_person_prices(company_id,year,element_id,person_type_id,rate) VALUES (?,?,?,?,?)", (forest, 2026, element_id, child_id, 2.0))
-            c.execute("INSERT INTO setup_type_addons(company_id,year,element_type,addon_id,allowed,min_qty,max_qty,rate) VALUES (?,?,?,?,?,?,?,?)", (forest, 2026, 'Camping Pitch', addon_id, 1, 1, 1, 3.0))
+            forest = int(execute_sql(c, "SELECT id FROM companies WHERE name='Forest View Campsite'").fetchone()['id'])
+            riverside = int(execute_sql(c, "SELECT id FROM companies WHERE name='Riverside Cabins'").fetchone()['id'])
+            execute_sql(c, 'INSERT INTO setup_element_types(company_id,name,active) VALUES (:q187_0,:q187_1,1)', (forest, 'Camping Pitch'))
+            element_id = int(insert_sql(c, 'INSERT INTO setup_elements(company_id,name,element_type,pricing_method,base_price,active) VALUES (:q197_0,:q197_1,:q197_2,:q197_3,:q197_4,1)', (forest, 'Pitch A', 'Camping Pitch', 'Per night', 0)).lastrowid)
+            adult_id = int(insert_sql(c, 'INSERT INTO setup_person_types(company_id,name,short_name,active) VALUES (:q198_0,:q198_1,:q198_2,1)', (forest, 'Adult', 'A')).lastrowid)
+            child_id = int(insert_sql(c, 'INSERT INTO setup_person_types(company_id,name,short_name,active) VALUES (:q199_0,:q199_1,:q199_2,1)', (forest, 'Child', 'C')).lastrowid)
+            addon_id = int(insert_sql(c, 'INSERT INTO setup_addons(company_id,name,pricing_method,active) VALUES (:q200_0,:q200_1,:q200_2,1)', (forest, 'Electric Hook-up', 'Fixed once')).lastrowid)
+            execute_sql(c, 'INSERT INTO setup_years(company_id,year) VALUES (:q188_0,2026)', (forest,))
+            season_id = int(insert_sql(c, 'INSERT INTO setup_seasons(company_id,year,name,start_date,end_date) VALUES (:q201_0,:q201_1,:q201_2,:q201_3,:q201_4)', (forest, 2026, 'All Year', '2026-01-01', '2026-12-31')).lastrowid)
+            execute_sql(c, 'INSERT INTO setup_element_rates(company_id,year,element_id,season_id,rate) VALUES (:q189_0,:q189_1,:q189_2,:q189_3,:q189_4)', (forest, 2026, element_id, season_id, 25.0))
+            execute_sql(c, 'INSERT INTO setup_occupancy(company_id,year,element_id,max_total) VALUES (:q190_0,:q190_1,:q190_2,:q190_3)', (forest, 2026, element_id, 4))
+            execute_sql(c, 'INSERT INTO setup_person_limits(company_id,year,element_id,person_type_id,max_count) VALUES (:q191_0,:q191_1,:q191_2,:q191_3,:q191_4)', (forest, 2026, element_id, adult_id, 4))
+            execute_sql(c, 'INSERT INTO setup_person_limits(company_id,year,element_id,person_type_id,max_count) VALUES (:q192_0,:q192_1,:q192_2,:q192_3,:q192_4)', (forest, 2026, element_id, child_id, 3))
+            execute_sql(c, 'INSERT INTO setup_person_prices(company_id,year,element_id,person_type_id,rate) VALUES (:q193_0,:q193_1,:q193_2,:q193_3,:q193_4)', (forest, 2026, element_id, adult_id, 5.0))
+            execute_sql(c, 'INSERT INTO setup_person_prices(company_id,year,element_id,person_type_id,rate) VALUES (:q194_0,:q194_1,:q194_2,:q194_3,:q194_4)', (forest, 2026, element_id, child_id, 2.0))
+            execute_sql(c, 'INSERT INTO setup_type_addons(company_id,year,element_type,addon_id,allowed,min_qty,max_qty,rate) VALUES (:q195_0,:q195_1,:q195_2,:q195_3,:q195_4,:q195_5,:q195_6,:q195_7)', (forest, 2026, 'Camping Pitch', addon_id, 1, 1, 1, 3.0))
             now = '2026-08-22T10:00:00+00:00'
-            customer_id = int(c.execute("INSERT INTO customer_records(company_id,first_name,last_name,email,phone,created_at,updated_at) VALUES (?,?,?,?,?,?,?)", (forest, 'Alice', 'Walker', 'alice@example.test', '0612345678', now, now)).lastrowid)
-            river_customer = int(c.execute("INSERT INTO customer_records(company_id,first_name,last_name,email,phone,created_at,updated_at) VALUES (?,?,?,?,?,?,?)", (riverside, 'River', 'Guest', 'river@example.test', '', now, now)).lastrowid)
-            river_enquiry = int(c.execute("INSERT INTO enquiries(company_id,customer_id,status,source,created_at,updated_at) VALUES (?,?,?,?,?,?)", (riverside, river_customer, 'new', 'Web', now, now)).lastrowid)
+            customer_id = int(insert_sql(c, 'INSERT INTO customer_records(company_id,first_name,last_name,email,phone,created_at,updated_at) VALUES (:q202_0,:q202_1,:q202_2,:q202_3,:q202_4,:q202_5,:q202_6)', (forest, 'Alice', 'Walker', 'alice@example.test', '0612345678', now, now)).lastrowid)
+            river_customer = int(insert_sql(c, 'INSERT INTO customer_records(company_id,first_name,last_name,email,phone,created_at,updated_at) VALUES (:q203_0,:q203_1,:q203_2,:q203_3,:q203_4,:q203_5,:q203_6)', (riverside, 'River', 'Guest', 'river@example.test', '', now, now)).lastrowid)
+            river_enquiry = int(insert_sql(c, 'INSERT INTO enquiries(company_id,customer_id,status,source,created_at,updated_at) VALUES (:q204_0,:q204_1,:q204_2,:q204_3,:q204_4,:q204_5)', (riverside, river_customer, 'new', 'Web', now, now)).lastrowid)
 
         login(client, 'operator@forestview.test', 'Operator013!')
         page = client.get(f'/operations/customers/{customer_id}/enquiries/new')
@@ -80,23 +82,23 @@ def main() -> None:
         assert calculated.status_code == 200
         assert 'Calculated provisional total: €77.00' in calculated.text
         with db.connect() as c:
-            assert c.execute('SELECT COUNT(*) AS n FROM enquiries WHERE company_id=?', (forest,)).fetchone()['n'] == 0
+            assert execute_sql(c, 'SELECT COUNT(*) AS n FROM enquiries WHERE company_id=:q221_0', (forest,)).fetchone()['n'] == 0
 
         saved = client.post(f'/operations/customers/{customer_id}/enquiries/new', data=payload | {'action': 'save'}, follow_redirects=False)
         assert saved.status_code == 303
         assert saved.headers['location'].startswith('/operations/enquiries/')
         enquiry_id = int(saved.headers['location'].split('/')[3].split('?')[0])
         with db.connect() as c:
-            enquiry = c.execute('SELECT * FROM enquiries WHERE id=? AND company_id=?', (enquiry_id, forest)).fetchone()
+            enquiry = execute_sql(c, 'SELECT * FROM enquiries WHERE id=:q205_0 AND company_id=:q205_1', (enquiry_id, forest)).fetchone()
             assert enquiry['arrival_date'] == '2026-09-10' and enquiry['departure_date'] == '2026-09-12'
             assert int(enquiry['party_size']) == 3
-            request_row = c.execute('SELECT * FROM enquiry_requests WHERE enquiry_id=? AND company_id=?', (enquiry_id, forest)).fetchone()
+            request_row = execute_sql(c, 'SELECT * FROM enquiry_requests WHERE enquiry_id=:q206_0 AND company_id=:q206_1', (enquiry_id, forest)).fetchone()
             assert request_row['element_type'] == 'Camping Pitch'
             assert int(request_row['element_id']) == element_id
             assert float(request_row['provisional_total']) == 77.0
             snapshot = json.loads(request_row['pricing_snapshot_json'])
             assert snapshot['total'] == 77.0 and snapshot['people_total'] == 3
-            addon = c.execute('SELECT quantity FROM enquiry_addons WHERE enquiry_id=? AND addon_id=?', (enquiry_id, addon_id)).fetchone()
+            addon = execute_sql(c, 'SELECT quantity FROM enquiry_addons WHERE enquiry_id=:q207_0 AND addon_id=:q207_1', (enquiry_id, addon_id)).fetchone()
             assert int(addon['quantity']) == 1
 
         detail = client.get(f'/operations/enquiries/{enquiry_id}')
@@ -117,10 +119,10 @@ def main() -> None:
         assert checked.status_code == 200
         assert 'Calculated provisional total:' in checked.text
         with db.connect() as c:
-            before_unavailable = c.execute('SELECT element_id,arrival_date,departure_date,party_size,provisional_total FROM enquiry_elements WHERE enquiry_id=? AND company_id=?',(enquiry_id,forest)).fetchone()
-            blocker_customer = int(c.execute("INSERT INTO customer_records(company_id,first_name,last_name,email,phone,created_at,updated_at) VALUES (?,?,?,?,?,?,?)",(forest,'Blocker','Guest','blocker@example.test','0600000000',now,now)).lastrowid)
-            blocker = int(c.execute("INSERT INTO enquiries(company_id,customer_id,status,source,arrival_date,departure_date,party_size,created_at,updated_at) VALUES (?,?,?,?,?,?,?,?,?)",(forest,blocker_customer,'new','TEST DATA ONLY','2026-09-15','2026-09-17',1,now,now)).lastrowid)
-            c.execute("INSERT INTO enquiry_elements(enquiry_id,company_id,element_type,element_id,arrival_date,departure_date,lead_name,party_size,provisional_total,pricing_snapshot_json,sort_order,recovery_state,created_at,updated_at) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?)",(blocker,forest,'Camping Pitch',element_id,'2026-09-15','2026-09-17','Guest',1,50.0,'{}',1,'held',now,now))
+            before_unavailable = execute_sql(c, 'SELECT element_id,arrival_date,departure_date,party_size,provisional_total FROM enquiry_elements WHERE enquiry_id=:q208_0 AND company_id=:q208_1',(enquiry_id,forest)).fetchone()
+            blocker_customer = int(insert_sql(c, 'INSERT INTO customer_records(company_id,first_name,last_name,email,phone,created_at,updated_at) VALUES (:q209_0,:q209_1,:q209_2,:q209_3,:q209_4,:q209_5,:q209_6)',(forest,'Blocker','Guest','blocker@example.test','0600000000',now,now)).lastrowid)
+            blocker = int(insert_sql(c, 'INSERT INTO enquiries(company_id,customer_id,status,source,arrival_date,departure_date,party_size,created_at,updated_at) VALUES (:q210_0,:q210_1,:q210_2,:q210_3,:q210_4,:q210_5,:q210_6,:q210_7,:q210_8)',(forest,blocker_customer,'new','TEST DATA ONLY','2026-09-15','2026-09-17',1,now,now)).lastrowid)
+            execute_sql(c, 'INSERT INTO enquiry_elements(enquiry_id,company_id,element_type,element_id,arrival_date,departure_date,lead_name,party_size,provisional_total,pricing_snapshot_json,sort_order,recovery_state,created_at,updated_at) VALUES (:q196_0,:q196_1,:q196_2,:q196_3,:q196_4,:q196_5,:q196_6,:q196_7,:q196_8,:q196_9,:q196_10,:q196_11,:q196_12,:q196_13)',(blocker,forest,'Camping Pitch',element_id,'2026-09-15','2026-09-17','Guest',1,50.0,'{}',1,'held',now,now))
 
         unavailable = client.post(f'/operations/enquiries/{enquiry_id}/edit', data=payload | {
             'csrf': csrf, 'action': 'save', 'arrival_date': '2026-09-15', 'departure_date': '2026-09-17'
@@ -128,9 +130,9 @@ def main() -> None:
         assert unavailable.status_code == 409
         assert 'Changes not saved. Your existing held space is unchanged.' in unavailable.text
         with db.connect() as c:
-            after_unavailable = c.execute('SELECT element_id,arrival_date,departure_date,party_size,provisional_total FROM enquiry_elements WHERE enquiry_id=? AND company_id=?',(enquiry_id,forest)).fetchone()
+            after_unavailable = execute_sql(c, 'SELECT element_id,arrival_date,departure_date,party_size,provisional_total FROM enquiry_elements WHERE enquiry_id=:q211_0 AND company_id=:q211_1',(enquiry_id,forest)).fetchone()
             assert tuple(after_unavailable) == tuple(before_unavailable)
-            original = c.execute('SELECT arrival_date,departure_date FROM enquiry_elements WHERE enquiry_id=? AND company_id=?',(enquiry_id,forest)).fetchone()
+            original = execute_sql(c, 'SELECT arrival_date,departure_date FROM enquiry_elements WHERE enquiry_id=:q212_0 AND company_id=:q212_1',(enquiry_id,forest)).fetchone()
             assert str(original['arrival_date']) == '2026-09-10' and str(original['departure_date']) == '2026-09-12'
 
         # TEST DATA ONLY: an available change is saved to the authoritative
@@ -143,7 +145,7 @@ def main() -> None:
         assert available.status_code == 303
         assert available.headers['location'] == f'/operations/enquiries/{enquiry_id}?saved=1'
         with db.connect() as c:
-            changed_element = c.execute('SELECT element_id,arrival_date,departure_date,party_size,provisional_total,recovery_state FROM enquiry_elements WHERE enquiry_id=? AND company_id=?',(enquiry_id,forest)).fetchone()
+            changed_element = execute_sql(c, 'SELECT element_id,arrival_date,departure_date,party_size,provisional_total,recovery_state FROM enquiry_elements WHERE enquiry_id=:q213_0 AND company_id=:q213_1',(enquiry_id,forest)).fetchone()
             assert int(changed_element['element_id']) == element_id
             assert str(changed_element['arrival_date']) == '2026-09-20'
             assert str(changed_element['departure_date']) == '2026-09-23'
@@ -151,7 +153,7 @@ def main() -> None:
             # 3 nights: element €75 + Adult €15 + Child €6 + fixed EHU €3 = €99.
             assert float(changed_element['provisional_total']) == 99.0
             assert str(changed_element['recovery_state'] or 'held') == 'held'
-            changed_people = c.execute('SELECT person_type_id,quantity FROM enquiry_element_people WHERE enquiry_element_id=(SELECT id FROM enquiry_elements WHERE enquiry_id=? AND company_id=? LIMIT 1) AND company_id=? ORDER BY person_type_id',(enquiry_id,forest,forest)).fetchall()
+            changed_people = execute_sql(c, 'SELECT person_type_id,quantity FROM enquiry_element_people WHERE enquiry_element_id=(SELECT id FROM enquiry_elements WHERE enquiry_id=:q214_0 AND company_id=:q214_1 LIMIT 1) AND company_id=:q214_2 ORDER BY person_type_id',(enquiry_id,forest,forest)).fetchall()
             assert {int(x['person_type_id']):int(x['quantity']) for x in changed_people} == {adult_id:1,child_id:1}
         from online.webv1_status_availability import availability_state
         new_hold = availability_state(db,forest,element_id,'2026-09-20','2026-09-23')
@@ -172,7 +174,7 @@ def main() -> None:
         assert 'person_type_id' not in changed_detail.text
         assert 'addon_id' not in changed_detail.text
         with db.connect() as c:
-            audit_entry = c.execute("SELECT before_json,after_json FROM audit_log WHERE company_id=? AND entity_type='enquiry' AND entity_id=? AND action='ENQUIRY_UPDATED' ORDER BY id DESC LIMIT 1",(forest,str(enquiry_id))).fetchone()
+            audit_entry = execute_sql(c, "SELECT before_json,after_json FROM audit_log WHERE company_id=:q215_0 AND entity_type='enquiry' AND entity_id=:q215_1 AND action='ENQUIRY_UPDATED' ORDER BY id DESC LIMIT 1",(forest,str(enquiry_id))).fetchone()
             assert audit_entry is not None
             audit_before=json.loads(audit_entry['before_json'])
             audit_after=json.loads(audit_entry['after_json'])
@@ -193,7 +195,7 @@ def main() -> None:
             other = sqlite3.connect(db.path, timeout=0.02)
             try:
                 try:
-                    other.execute('BEGIN IMMEDIATE')
+                    execute_sql(other, 'BEGIN IMMEDIATE')
                     other.rollback()
                     lock_observed.append(False)
                 except sqlite3.OperationalError as exc:
@@ -214,11 +216,11 @@ def main() -> None:
         assert lock_observed and lock_observed[-1] is True
         assert without_electric.status_code == 303
         with db.connect() as c:
-            latest=c.execute("SELECT before_json,after_json FROM audit_log WHERE company_id=? AND entity_type='enquiry' AND entity_id=? AND action='ENQUIRY_UPDATED' ORDER BY id DESC LIMIT 1",(forest,str(enquiry_id))).fetchone()
+            latest=execute_sql(c, "SELECT before_json,after_json FROM audit_log WHERE company_id=:q216_0 AND entity_type='enquiry' AND entity_id=:q216_1 AND action='ENQUIRY_UPDATED' ORDER BY id DESC LIMIT 1",(forest,str(enquiry_id))).fetchone()
             assert latest is not None
             assert json.loads(latest['before_json'])['addons'][str(addon_id)] == 1
             assert int(json.loads(latest['after_json'])['addons'].get(str(addon_id),0)) == 0
-            updated=c.execute('SELECT provisional_total FROM enquiry_elements WHERE enquiry_id=? AND company_id=?',(enquiry_id,forest)).fetchone()
+            updated=execute_sql(c, 'SELECT provisional_total FROM enquiry_elements WHERE enquiry_id=:q217_0 AND company_id=:q217_1',(enquiry_id,forest)).fetchone()
             assert float(updated['provisional_total']) == 96.0
         without_electric_detail=client.get(f'/operations/enquiries/{enquiry_id}')
         assert without_electric_detail.status_code == 200
@@ -240,7 +242,7 @@ def main() -> None:
         assert type_only.status_code == 303
         type_only_id = int(type_only.headers['location'].split('/')[3].split('?')[0])
         with db.connect() as c:
-            req = c.execute('SELECT * FROM enquiry_requests WHERE enquiry_id=? AND company_id=?', (type_only_id, forest)).fetchone()
+            req = execute_sql(c, 'SELECT * FROM enquiry_requests WHERE enquiry_id=:q218_0 AND company_id=:q218_1', (type_only_id, forest)).fetchone()
             assert req is not None and req['element_type'] == 'Camping Pitch' and req['element_id'] is None and req['provisional_total'] is None
 
         register = client.get('/operations/enquiries')

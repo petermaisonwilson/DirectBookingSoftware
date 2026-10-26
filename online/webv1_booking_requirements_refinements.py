@@ -1,4 +1,5 @@
 from __future__ import annotations
+from .sql import execute_sql
 
 import html
 import json
@@ -24,8 +25,8 @@ def _working_context(database, request: Request):
 
 
 def _addon_max_anywhere(database, cid: int, addon_id: int) -> int:
-    elements = rows(database, 'SELECT * FROM setup_elements WHERE company_id=? AND active=1', (cid,))
-    years = [int(r['year']) for r in rows(database, 'SELECT year FROM setup_years WHERE company_id=? ORDER BY year', (cid,))] or [date.today().year]
+    elements = rows(database, 'SELECT * FROM setup_elements WHERE company_id=:q506_0 AND active=1', (cid,))
+    years = [int(r['year']) for r in rows(database, 'SELECT year FROM setup_years WHERE company_id=:q517_0 ORDER BY year', (cid,))] or [date.today().year]
     highest = 0; unlimited = False
     for year in years:
         for element in elements:
@@ -38,13 +39,13 @@ def _addon_max_anywhere(database, cid: int, addon_id: int) -> int:
 
 
 def _addon_caps(database, cid: int) -> dict[int, int]:
-    return {int(a['id']): _addon_max_anywhere(database, cid, int(a['id'])) for a in rows(database, 'SELECT id FROM setup_addons WHERE company_id=? AND active=1 AND ask_before_availability=1', (cid,))}
+    return {int(a['id']): _addon_max_anywhere(database, cid, int(a['id'])) for a in rows(database, 'SELECT id FROM setup_addons WHERE company_id=:q513_0 AND active=1 AND ask_before_availability=1', (cid,))}
 
 
 def _person_features(database, cid: int, year: int, element_id: int) -> list[dict[str, object]]:
     result = []
-    for p in rows(database, 'SELECT id,name FROM setup_person_types WHERE company_id=? AND active=1 ORDER BY name COLLATE NOCASE', (cid,)):
-        limit = one(database, 'SELECT max_count FROM setup_person_limits WHERE company_id=? AND year=? AND element_id=? AND person_type_id=?', (cid, year, element_id, int(p['id'])))
+    for p in rows(database, 'SELECT id,name FROM setup_person_types WHERE company_id=:q507_0 AND active=1 ORDER BY lower(name)', (cid,)):
+        limit = one(database, 'SELECT max_count FROM setup_person_limits WHERE company_id=:q509_0 AND year=:q509_1 AND element_id=:q509_2 AND person_type_id=:q509_3', (cid, year, element_id, int(p['id'])))
         result.append({'name': str(p['name']), 'available': bool(limit is not None and int(limit['max_count']) > 0), 'kind': 'person'})
     return result
 
@@ -64,12 +65,12 @@ def _transform_calendar(database, request: Request, text: str, cid: int, token: 
 
     if not request.query_params.get('element_type') and not request.query_params.get('edit_hold'):
         text = text.replace('<option value="">Select Element Type</option>', '<option value="" selected>Select Element Type</option>', 1)
-        held = one(database, 'SELECT id FROM element_holds WHERE company_id=? AND session_token=? LIMIT 1', (cid, token))
+        held = one(database, 'SELECT id FROM element_holds WHERE company_id=:q510_0 AND session_token=:q510_1 LIMIT 1', (cid, token))
         note = '<strong>Held Elements are shown below.</strong> Select an Element Type above to add another.' if held else '<strong>Select an Element Type</strong> to view availability.'
         text = text.replace('<h2>Availability</h2>', f'<h2>Availability</h2><p class="select-element-note">{note}</p>', 1)
     if not ready: return text
 
-    elements = rows(database, 'SELECT * FROM setup_elements WHERE company_id=? AND active=1', (cid,))
+    elements = rows(database, 'SELECT * FROM setup_elements WHERE company_id=:q508_0 AND active=1', (cid,))
     for element in elements:
         eid = int(element['id']); features = popup_addons_for_element(database, cid, year, element); features.extend(_person_features(database, cid, year, eid))
         feature_json = html.escape(json.dumps(features, ensure_ascii=False), quote=True)
@@ -94,7 +95,7 @@ def register_booking_requirements_refinement_routes(app) -> None:
     async def requirements_save_v2(request: Request):
         context, cid = _working_context(database, request); token = request.cookies.get(COOKIE_NAME, ''); data = await form_data(request)
         if data.get('csrf') != context['csrf_token']: raise HTTPException(status_code=403, detail='Invalid form token')
-        people_rows = rows(database, 'SELECT * FROM setup_person_types WHERE company_id=? AND active=1 ORDER BY name', (cid,)); addon_rows = rows(database, 'SELECT * FROM setup_addons WHERE company_id=? AND active=1 AND ask_before_availability=1 ORDER BY name', (cid,)); parsed_people=[]; total=0
+        people_rows = rows(database, 'SELECT * FROM setup_person_types WHERE company_id=:q511_0 AND active=1 ORDER BY name', (cid,)); addon_rows = rows(database, 'SELECT * FROM setup_addons WHERE company_id=:q512_0 AND active=1 AND ask_before_availability=1 ORDER BY name', (cid,)); parsed_people=[]; total=0
         for p in people_rows:
             pid=int(p['id'])
             try: qty=max(0,int(data.get(f'person_{pid}','0') or 0))
@@ -116,10 +117,10 @@ def register_booking_requirements_refinement_routes(app) -> None:
             if qty<0 or qty>cap: return HTMLResponse(_requirements_page(database,context,cid,token,f'{a["name"]} can be requested up to a maximum of {cap}.'),400)
             parsed_addons.append((aid,qty))
         with database.connect() as c:
-            c.execute('DELETE FROM booking_requirement_people WHERE company_id=? AND session_token=?',(cid,token));c.execute('DELETE FROM booking_requirement_addons WHERE company_id=? AND session_token=?',(cid,token))
-            for pid,qty,ages in parsed_people:c.execute('INSERT INTO booking_requirement_people(session_token,company_id,person_type_id,quantity,ages_json) VALUES (?,?,?,?,?)',(token,cid,pid,qty,ages))
-            for aid,qty in parsed_addons:c.execute('INSERT INTO booking_requirement_addons(session_token,company_id,addon_id,quantity) VALUES (?,?,?,?)',(token,cid,aid,qty))
-            c.execute('''INSERT INTO booking_requirement_sessions(session_token,company_id,ready,updated_at) VALUES (?,?,1,CURRENT_TIMESTAMP) ON CONFLICT(session_token,company_id) DO UPDATE SET ready=1,updated_at=CURRENT_TIMESTAMP''',(token,cid))
+            execute_sql(c, 'DELETE FROM booking_requirement_people WHERE company_id=:q514_0 AND session_token=:q514_1',(cid,token));execute_sql(c, 'DELETE FROM booking_requirement_addons WHERE company_id=:q515_0 AND session_token=:q515_1',(cid,token))
+            for pid,qty,ages in parsed_people:execute_sql(c, 'INSERT INTO booking_requirement_people(session_token,company_id,person_type_id,quantity,ages_json) VALUES (:q518_0,:q518_1,:q518_2,:q518_3,:q518_4)',(token,cid,pid,qty,ages))
+            for aid,qty in parsed_addons:execute_sql(c, 'INSERT INTO booking_requirement_addons(session_token,company_id,addon_id,quantity) VALUES (:q519_0,:q519_1,:q519_2,:q519_3)',(token,cid,aid,qty))
+            execute_sql(c, 'INSERT INTO booking_requirement_sessions(session_token,company_id,ready,updated_at) VALUES (:q516_0,:q516_1,1,CURRENT_TIMESTAMP) ON CONFLICT(session_token,company_id) DO UPDATE SET ready=1,updated_at=CURRENT_TIMESTAMP',(token,cid))
         return RedirectResponse('/availability/calendar-v2',303)
 
 

@@ -1,4 +1,6 @@
 from __future__ import annotations
+from operational_backend import create_app
+from online.sql import execute_sql, insert_sql
 
 import tempfile
 import sys
@@ -9,7 +11,7 @@ sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 from fastapi.testclient import TestClient
 
 from online import BUILD
-from online.app import COOKIE_NAME, create_app
+from online.app import COOKIE_NAME
 from online.webv1 import register_web_v1
 
 
@@ -25,17 +27,17 @@ def main() -> None:
         db = app.state.database
 
         with db.connect() as c:
-            forest = int(c.execute("SELECT id FROM companies WHERE name='Forest View Campsite'").fetchone()['id'])
-            riverside = int(c.execute("SELECT id FROM companies WHERE name='Riverside Cabins'").fetchone()['id'])
+            forest = int(execute_sql(c, "SELECT id FROM companies WHERE name='Forest View Campsite'").fetchone()['id'])
+            riverside = int(execute_sql(c, "SELECT id FROM companies WHERE name='Riverside Cabins'").fetchone()['id'])
             now = '2026-08-21T18:00:00+00:00'
-            forest_customer = c.execute("INSERT INTO customer_records(company_id,first_name,last_name,email,created_at,updated_at) VALUES (?,?,?,?,?,?)", (forest,'Demo','Forest','forest@example.test',now,now)).lastrowid
-            riverside_customer = c.execute("INSERT INTO customer_records(company_id,first_name,last_name,email,created_at,updated_at) VALUES (?,?,?,?,?,?)", (riverside,'Demo','River','river@example.test',now,now)).lastrowid
-            enquiry = c.execute("INSERT INTO enquiries(company_id,customer_id,status,source,arrival_date,departure_date,party_size,created_at,updated_at) VALUES (?,?,?,?,?,?,?,?,?)", (forest,forest_customer,'new','website','2026-09-01','2026-09-03',2,now,now)).lastrowid
-            offer = c.execute("INSERT INTO offers(company_id,enquiry_id,customer_id,status,total_amount,created_at,updated_at) VALUES (?,?,?,?,?,?,?)", (forest,enquiry,forest_customer,'draft',100.0,now,now)).lastrowid
-            booking = c.execute("INSERT INTO bookings(company_id,reference,customer_id,enquiry_id,offer_id,status,arrival_date,departure_date,total_amount,created_at,updated_at) VALUES (?,?,?,?,?,?,?,?,?,?,?)", (forest,'FV-DEMO-001',forest_customer,enquiry,offer,'confirmed','2026-09-01','2026-09-03',100.0,now,now)).lastrowid
-            c.execute("INSERT INTO arrivals(company_id,booking_id,customer_id,arrival_type,status,created_at,updated_at) VALUES (?,?,?,?,?,?,?)", (forest,booking,forest_customer,'booked','expected',now,now))
-            c.execute("INSERT INTO arrivals(company_id,customer_id,arrival_type,status,created_at,updated_at) VALUES (?,?,?,?,?,?)", (forest,None,'walk_in','arrived',now,now))
-            c.execute("INSERT INTO enquiries(company_id,customer_id,status,source,created_at,updated_at) VALUES (?,?,?,?,?,?)", (riverside,riverside_customer,'new','phone',now,now))
+            forest_customer = insert_sql(c, 'INSERT INTO customer_records(company_id,first_name,last_name,email,created_at,updated_at) VALUES (:q261_0,:q261_1,:q261_2,:q261_3,:q261_4,:q261_5)', (forest,'Demo','Forest','forest@example.test',now,now)).lastrowid
+            riverside_customer = insert_sql(c, 'INSERT INTO customer_records(company_id,first_name,last_name,email,created_at,updated_at) VALUES (:q262_0,:q262_1,:q262_2,:q262_3,:q262_4,:q262_5)', (riverside,'Demo','River','river@example.test',now,now)).lastrowid
+            enquiry = insert_sql(c, 'INSERT INTO enquiries(company_id,customer_id,status,source,arrival_date,departure_date,party_size,created_at,updated_at) VALUES (:q263_0,:q263_1,:q263_2,:q263_3,:q263_4,:q263_5,:q263_6,:q263_7,:q263_8)', (forest,forest_customer,'new','website','2026-09-01','2026-09-03',2,now,now)).lastrowid
+            offer = insert_sql(c, 'INSERT INTO offers(company_id,enquiry_id,customer_id,status,total_amount,created_at,updated_at) VALUES (:q264_0,:q264_1,:q264_2,:q264_3,:q264_4,:q264_5,:q264_6)', (forest,enquiry,forest_customer,'draft',100.0,now,now)).lastrowid
+            booking = insert_sql(c, 'INSERT INTO bookings(company_id,reference,customer_id,enquiry_id,offer_id,status,arrival_date,departure_date,total_amount,created_at,updated_at) VALUES (:q265_0,:q265_1,:q265_2,:q265_3,:q265_4,:q265_5,:q265_6,:q265_7,:q265_8,:q265_9,:q265_10)', (forest,'FV-DEMO-001',forest_customer,enquiry,offer,'confirmed','2026-09-01','2026-09-03',100.0,now,now)).lastrowid
+            execute_sql(c, 'INSERT INTO arrivals(company_id,booking_id,customer_id,arrival_type,status,created_at,updated_at) VALUES (:q258_0,:q258_1,:q258_2,:q258_3,:q258_4,:q258_5,:q258_6)', (forest,booking,forest_customer,'booked','expected',now,now))
+            execute_sql(c, 'INSERT INTO arrivals(company_id,customer_id,arrival_type,status,created_at,updated_at) VALUES (:q259_0,:q259_1,:q259_2,:q259_3,:q259_4,:q259_5)', (forest,None,'walk_in','arrived',now,now))
+            execute_sql(c, 'INSERT INTO enquiries(company_id,customer_id,status,source,created_at,updated_at) VALUES (:q260_0,:q260_1,:q260_2,:q260_3,:q260_4,:q260_5)', (riverside,riverside_customer,'new','phone',now,now))
 
         client = TestClient(app)
         health = client.get('/health')
@@ -83,10 +85,10 @@ def main() -> None:
         assert f'Online Build {BUILD}' in page.text
 
         with db.connect() as c:
-            meta = c.execute("SELECT value FROM web_schema_meta WHERE key='schema_version'").fetchone()
+            meta = execute_sql(c, "SELECT value FROM web_schema_meta WHERE key='schema_version'").fetchone()
             assert meta and meta['value'] == 'web-v1-foundation'
             for table in ('customer_records','enquiries','offers','bookings','booking_elements','booking_people','booking_addons','arrivals','self_checkin_tokens'):
-                exists = c.execute("SELECT 1 FROM sqlite_master WHERE type='table' AND name=?", (table,)).fetchone()
+                exists = execute_sql(c, "SELECT 1 FROM sqlite_master WHERE type='table' AND name=:q267_0", (table,)).fetchone()
                 assert exists, f'Missing Web V1 table: {table}'
 
     print('Direct Booking Web V1 foundation test: passed')

@@ -1,4 +1,5 @@
 from __future__ import annotations
+from .sql import execute_sql
 
 import json
 import re
@@ -28,8 +29,8 @@ def _group_key(name: str) -> str:
 
 
 def _requirement_cap_anywhere(database, cid: int, addon_id: int) -> int:
-    elements = rows(database, 'SELECT * FROM setup_elements WHERE company_id=? AND active=1', (cid,))
-    configured_years = [int(r['year']) for r in rows(database, 'SELECT year FROM setup_years WHERE company_id=? ORDER BY year', (cid,))]
+    elements = rows(database, 'SELECT * FROM setup_elements WHERE company_id=:q471_0 AND active=1', (cid,))
+    configured_years = [int(r['year']) for r in rows(database, 'SELECT year FROM setup_years WHERE company_id=:q477_0 ORDER BY year', (cid,))]
     if not configured_years:
         configured_years = [date.today().year]
     highest = 0
@@ -51,17 +52,13 @@ def _relevant_requirement_ids(database, cid: int, year: int, element_type: str) 
     relevant = {
         int(r['addon_id'])
         for r in rows(database,
-            'SELECT addon_id FROM setup_type_addons WHERE company_id=? AND year=? AND element_type=? AND allowed=1',
+            'SELECT addon_id FROM setup_type_addons WHERE company_id=:q478_0 AND year=:q478_1 AND element_type=:q478_2 AND allowed=1',
             (cid, year, element_type))
     }
     relevant.update(
         int(r['addon_id'])
         for r in rows(database,
-            '''SELECT DISTINCT ea.addon_id
-               FROM setup_element_addons ea
-               JOIN setup_elements e ON e.id=ea.element_id AND e.company_id=ea.company_id
-               WHERE ea.company_id=? AND ea.year=? AND e.element_type=?
-                 AND e.active=1 AND ea.state='Y' ''',
+            "SELECT DISTINCT ea.addon_id\n               FROM setup_element_addons ea\n               JOIN setup_elements e ON e.id=ea.element_id AND e.company_id=ea.company_id\n               WHERE ea.company_id=:q483_0 AND ea.year=:q483_1 AND e.element_type=:q483_2\n                 AND e.active=1 AND ea.state='Y' ",
             (cid, year, element_type))
     )
     return relevant
@@ -84,17 +81,14 @@ def element_reasons(database, cid: int, year: int, element, people: dict, requir
 
     if accommodation_style:
         total = sum(int(v.get('quantity', 0)) for v in people.values())
-        occupancy = one(database, 'SELECT max_total FROM setup_occupancy WHERE company_id=? AND year=? AND element_id=?',
+        occupancy = one(database, 'SELECT max_total FROM setup_occupancy WHERE company_id=:q472_0 AND year=:q472_1 AND element_id=:q472_2',
                         (cid, year, int(element['id'])))
         if occupancy is None:
             reasons.append('occupancy setup incomplete')
         elif total > int(occupancy['max_total']):
             reasons.append(f'maximum occupancy {int(occupancy["max_total"])}')
 
-        limits = rows(database, '''SELECT l.person_type_id,l.min_count,l.max_count,p.name
-            FROM setup_person_limits l
-            LEFT JOIN setup_person_types p ON p.id=l.person_type_id AND p.company_id=l.company_id
-            WHERE l.company_id=? AND l.year=? AND l.element_id=?''',
+        limits = rows(database, 'SELECT l.person_type_id,l.min_count,l.max_count,p.name\n            FROM setup_person_limits l\n            LEFT JOIN setup_person_types p ON p.id=l.person_type_id AND p.company_id=l.company_id\n            WHERE l.company_id=:q473_0 AND l.year=:q473_1 AND l.element_id=:q473_2',
             (cid, year, int(element['id'])))
         configured_person_ids: set[int] = set()
         for limit in limits:
@@ -113,7 +107,7 @@ def element_reasons(database, cid: int, year: int, element, people: dict, requir
             qty = int(data.get('quantity', 0))
             if qty <= 0 or int(pid) in configured_person_ids:
                 continue
-            person = one(database, 'SELECT name FROM setup_person_types WHERE company_id=? AND id=?', (cid, pid))
+            person = one(database, 'SELECT name FROM setup_person_types WHERE company_id=:q479_0 AND id=:q479_1', (cid, pid))
             name = str(person['name']) if person else 'Person type'
             reasons.append(f'{name} not configured')
 
@@ -125,7 +119,7 @@ def element_reasons(database, cid: int, year: int, element, people: dict, requir
             continue
         if not accommodation_style and aid not in relevant:
             continue
-        item = one(database, 'SELECT name FROM setup_addons WHERE company_id=? AND id=?', (cid, aid))
+        item = one(database, 'SELECT name FROM setup_addons WHERE company_id=:q474_0 AND id=:q474_1', (cid, aid))
         name = str(item['name']) if item else 'Requirement'
         rule = resolve_element_item_rule(database, cid, year, element, aid)
         if not rule['allowed']:
@@ -151,7 +145,7 @@ def register_booking_requirements_core(app) -> None:
         if data.get('csrf') != context['csrf_token']:
             raise HTTPException(status_code=403, detail='Invalid form token')
 
-        people_rows = rows(database, 'SELECT * FROM setup_person_types WHERE company_id=? AND active=1 ORDER BY name', (cid,))
+        people_rows = rows(database, 'SELECT * FROM setup_person_types WHERE company_id=:q475_0 AND active=1 ORDER BY name', (cid,))
         parsed_people: list[tuple[int, int, str]] = []
         total = 0
         for p in people_rows:
@@ -176,9 +170,7 @@ def register_booking_requirements_core(app) -> None:
         if people_rows and total <= 0:
             return HTMLResponse(_requirements_page(database, context, cid, token, 'Enter at least one person.'), 400)
 
-        addon_rows = rows(database, '''SELECT * FROM setup_addons
-               WHERE company_id=? AND active=1 AND ask_before_availability=1
-               ORDER BY item_kind,feature_group,name COLLATE NOCASE''', (cid,))
+        addon_rows = rows(database, 'SELECT * FROM setup_addons\n               WHERE company_id=:q476_0 AND active=1 AND ask_before_availability=1\n               ORDER BY item_kind,feature_group,lower(name)', (cid,))
         caps = {int(a['id']): _requirement_cap_anywhere(database, cid, int(a['id'])) for a in addon_rows}
         parsed: dict[int, int] = {int(a['id']): 0 for a in addon_rows}
 
@@ -217,15 +209,13 @@ def register_booking_requirements_core(app) -> None:
             parsed[aid] = qty
 
         with database.connect() as c:
-            c.execute('DELETE FROM booking_requirement_people WHERE company_id=? AND session_token=?', (cid, token))
-            c.execute('DELETE FROM booking_requirement_addons WHERE company_id=? AND session_token=?', (cid, token))
+            execute_sql(c, 'DELETE FROM booking_requirement_people WHERE company_id=:q480_0 AND session_token=:q480_1', (cid, token))
+            execute_sql(c, 'DELETE FROM booking_requirement_addons WHERE company_id=:q481_0 AND session_token=:q481_1', (cid, token))
             for pid, qty, ages in parsed_people:
-                c.execute('INSERT INTO booking_requirement_people(session_token,company_id,person_type_id,quantity,ages_json) VALUES (?,?,?,?,?)',
+                execute_sql(c, 'INSERT INTO booking_requirement_people(session_token,company_id,person_type_id,quantity,ages_json) VALUES (:q484_0,:q484_1,:q484_2,:q484_3,:q484_4)',
                           (token, cid, pid, qty, ages))
             for aid, qty in parsed.items():
-                c.execute('INSERT INTO booking_requirement_addons(session_token,company_id,addon_id,quantity) VALUES (?,?,?,?)',
+                execute_sql(c, 'INSERT INTO booking_requirement_addons(session_token,company_id,addon_id,quantity) VALUES (:q485_0,:q485_1,:q485_2,:q485_3)',
                           (token, cid, aid, qty))
-            c.execute('''INSERT INTO booking_requirement_sessions(session_token,company_id,ready,updated_at)
-                   VALUES (?,?,1,CURRENT_TIMESTAMP)
-                   ON CONFLICT(session_token,company_id) DO UPDATE SET ready=1,updated_at=CURRENT_TIMESTAMP''', (token, cid))
+            execute_sql(c, 'INSERT INTO booking_requirement_sessions(session_token,company_id,ready,updated_at)\n                   VALUES (:q482_0,:q482_1,1,CURRENT_TIMESTAMP)\n                   ON CONFLICT(session_token,company_id) DO UPDATE SET ready=1,updated_at=CURRENT_TIMESTAMP', (token, cid))
         return RedirectResponse('/availability/calendar-v2', 303)

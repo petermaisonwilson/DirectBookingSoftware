@@ -1,4 +1,5 @@
 from __future__ import annotations
+from .sql import lock_inventory, execute_sql, insert_sql, local_schema, column_rows
 
 import json
 from datetime import datetime, timedelta, timezone
@@ -82,12 +83,12 @@ CREATE INDEX IF NOT EXISTS idx_booking_amendments_booking ON booking_amendments(
 
 def initialise_booking_workflow(database) -> None:
     with database.connect() as c:
-        c.executescript(PAYMENT_SCHEMA)
-        columns={str(r['name']) for r in c.execute("PRAGMA table_info(booking_elements)").fetchall()}
+        local_schema(c, PAYMENT_SCHEMA)
+        columns={str(r['name']) for r in column_rows(c, 'booking_elements')}
         for name,kind in (('original_arrival_date','TEXT'),('original_departure_date','TEXT'),('original_total_amount','REAL')):
             if name not in columns:
-                c.execute(f'ALTER TABLE booking_elements ADD COLUMN {name} {kind}')
-        c.execute('''UPDATE booking_elements SET
+                execute_sql(c, f'ALTER TABLE booking_elements ADD COLUMN {name} {kind}')
+        execute_sql(c, '''UPDATE booking_elements SET
             original_arrival_date=COALESCE(original_arrival_date,arrival_date),
             original_departure_date=COALESCE(original_departure_date,departure_date),
             original_total_amount=COALESCE(original_total_amount,total_amount)''')
@@ -126,22 +127,17 @@ def _fmt_when(value) -> str:
 
 
 def _status_named(database, cid: int, name: str):
-    found = rows(database, 'SELECT * FROM booking_status_definitions WHERE company_id=? AND active=1 AND name=? COLLATE NOCASE ORDER BY id LIMIT 1', (cid, name))
+    found = rows(database, 'SELECT * FROM booking_status_definitions WHERE company_id=:q185_0 AND active=1 AND lower(name) = lower(:q185_1) ORDER BY id LIMIT 1', (cid, name))
     return found[0] if found else None
 
 
 def _booking(database, cid: int, booking_id: int):
-    return one(database, '''SELECT b.*,c.first_name,c.last_name,c.email,c.phone,
-        s.name AS workflow_name,s.colour,s.internal_state,s.blocks_availability
-        FROM bookings b
-        LEFT JOIN customer_records c ON c.id=b.customer_id AND c.company_id=b.company_id
-        LEFT JOIN booking_status_definitions s ON s.id=b.workflow_status_id AND s.company_id=b.company_id
-        WHERE b.id=? AND b.company_id=?''', (booking_id, cid))
+    return one(database, 'SELECT b.*,c.first_name,c.last_name,c.email,c.phone,\n        s.name AS workflow_name,s.colour,s.internal_state,s.blocks_availability\n        FROM bookings b\n        LEFT JOIN customer_records c ON c.id=b.customer_id AND c.company_id=b.company_id\n        LEFT JOIN booking_status_definitions s ON s.id=b.workflow_status_id AND s.company_id=b.company_id\n        WHERE b.id=:q186_0 AND b.company_id=:q186_1', (booking_id, cid))
 
 
 def _next_reference(connection, cid: int) -> str:
     prefix = datetime.now(timezone.utc).astimezone(ZoneInfo('Europe/Paris')).strftime('DB%y')
-    rows_found = connection.execute('SELECT reference FROM bookings WHERE company_id=? AND reference LIKE ? ORDER BY id DESC LIMIT 100', (cid, prefix + '-%')).fetchall()
+    rows_found = execute_sql(connection, 'SELECT reference FROM bookings WHERE company_id=:q209_0 AND reference LIKE :q209_1 ORDER BY id DESC LIMIT 100', (cid, prefix + '-%')).fetchall()
     highest = 0
     for row in rows_found:
         try:
@@ -152,9 +148,7 @@ def _next_reference(connection, cid: int) -> str:
 
 
 def _conversion_statuses(database, cid: int):
-    return rows(database, '''SELECT * FROM booking_status_definitions
-        WHERE company_id=? AND active=1 AND internal_state IN ('RESERVED','CONFIRMED','ON_SITE')
-        ORDER BY CASE internal_state WHEN 'RESERVED' THEN 1 WHEN 'CONFIRMED' THEN 2 ELSE 3 END, display_order,id''', (cid,))
+    return rows(database, "SELECT * FROM booking_status_definitions\n        WHERE company_id=:q187_0 AND active=1 AND internal_state IN ('RESERVED','CONFIRMED','ON_SITE')\n        ORDER BY CASE internal_state WHEN 'RESERVED' THEN 1 WHEN 'CONFIRMED' THEN 2 ELSE 3 END, display_order,id", (cid,))
 
 
 def payment_due(database, cid: int, total: float, arrival_date: str, *, today=None) -> tuple[float, str]:
@@ -185,37 +179,37 @@ def _snapshot_line_amount(snapshot: dict, name: str) -> float:
 
 
 def _enquiry_elements(database,cid,enquiry_id):
-    data=rows(database,'''SELECT ee.*,se.name AS element_name,se.pricing_method FROM enquiry_elements ee JOIN setup_elements se ON se.id=ee.element_id AND se.company_id=ee.company_id WHERE ee.company_id=? AND ee.enquiry_id=? ORDER BY ee.sort_order,ee.id''',(cid,enquiry_id))
+    data=rows(database,'SELECT ee.*,se.name AS element_name,se.pricing_method FROM enquiry_elements ee JOIN setup_elements se ON se.id=ee.element_id AND se.company_id=ee.company_id WHERE ee.company_id=:q188_0 AND ee.enquiry_id=:q188_1 ORDER BY ee.sort_order,ee.id',(cid,enquiry_id))
     if data:return data
-    legacy=one(database,'''SELECT e.id AS enquiry_id,e.company_id,er.element_type,er.element_id,e.arrival_date,e.departure_date,'' AS lead_name,e.party_size,er.provisional_total,er.pricing_snapshot_json,se.name AS element_name,se.pricing_method FROM enquiries e JOIN enquiry_requests er ON er.enquiry_id=e.id AND er.company_id=e.company_id JOIN setup_elements se ON se.id=er.element_id AND se.company_id=er.company_id WHERE e.id=? AND e.company_id=?''',(enquiry_id,cid))
+    legacy=one(database,"SELECT e.id AS enquiry_id,e.company_id,er.element_type,er.element_id,e.arrival_date,e.departure_date,'' AS lead_name,e.party_size,er.provisional_total,er.pricing_snapshot_json,se.name AS element_name,se.pricing_method FROM enquiries e JOIN enquiry_requests er ON er.enquiry_id=e.id AND er.company_id=e.company_id JOIN setup_elements se ON se.id=er.element_id AND se.company_id=er.company_id WHERE e.id=:q189_0 AND e.company_id=:q189_1",(enquiry_id,cid))
     return [legacy] if legacy is not None else []
 
 def _write_booking(c,database,context,cid,enquiry,elements,workflow_status_id):
     now=iso_now();total=sum(float(e['provisional_total'] or 0) for e in elements);reference=_next_reference(c,cid)
     arrival=min(str(e['arrival_date']) for e in elements);departure=max(str(e['departure_date']) for e in elements)
-    booking_id=int(c.execute('''INSERT INTO bookings (company_id,reference,customer_id,enquiry_id,status,arrival_date,departure_date,currency,total_amount,pricing_snapshot_json,notes,created_at,updated_at,workflow_status_id) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?)''',(cid,reference,enquiry['customer_id'],enquiry['id'],'confirmed',arrival,departure,'EUR',total,json.dumps({'multi_element':len(elements)>1,'element_count':len(elements),'total':total},separators=(',',':')),enquiry['notes'] or '',now,now,workflow_status_id)).lastrowid)
+    booking_id=int(insert_sql(c, 'INSERT INTO bookings (company_id,reference,customer_id,enquiry_id,status,arrival_date,departure_date,currency,total_amount,pricing_snapshot_json,notes,created_at,updated_at,workflow_status_id) VALUES (:q210_0,:q210_1,:q210_2,:q210_3,:q210_4,:q210_5,:q210_6,:q210_7,:q210_8,:q210_9,:q210_10,:q210_11,:q210_12,:q210_13)',(cid,reference,enquiry['customer_id'],enquiry['id'],'confirmed',arrival,departure,'EUR',total,json.dumps({'multi_element':len(elements)>1,'element_count':len(elements),'total':total},separators=(',',':')),enquiry['notes'] or '',now,now,workflow_status_id)).lastrowid)
     for ee in elements:
         try:snapshot=json.loads(ee['pricing_snapshot_json'] or '{}')
         except (TypeError,json.JSONDecodeError):snapshot={}
         element_amount=_snapshot_line_amount(snapshot,str(ee['element_name'] or ''))
-        beid=int(c.execute('''INSERT INTO booking_elements(company_id,booking_id,element_id,arrival_date,departure_date,pricing_method_snapshot,unit_price_snapshot,total_amount,pricing_snapshot_json,lead_name) VALUES (?,?,?,?,?,?,?,?,?,?)''',(cid,booking_id,ee['element_id'],ee['arrival_date'],ee['departure_date'],ee['pricing_method'] or '',0,element_amount,ee['pricing_snapshot_json'],ee['lead_name'] or '')).lastrowid)
-        c.execute('UPDATE booking_elements SET original_arrival_date=arrival_date,original_departure_date=departure_date,original_total_amount=total_amount WHERE id=?',(beid,))
+        beid=int(insert_sql(c, 'INSERT INTO booking_elements(company_id,booking_id,element_id,arrival_date,departure_date,pricing_method_snapshot,unit_price_snapshot,total_amount,pricing_snapshot_json,lead_name) VALUES (:q214_0,:q214_1,:q214_2,:q214_3,:q214_4,:q214_5,:q214_6,:q214_7,:q214_8,:q214_9)',(cid,booking_id,ee['element_id'],ee['arrival_date'],ee['departure_date'],ee['pricing_method'] or '',0,element_amount,ee['pricing_snapshot_json'],ee['lead_name'] or '')).lastrowid)
+        execute_sql(c, 'UPDATE booking_elements SET original_arrival_date=arrival_date,original_departure_date=departure_date,original_total_amount=total_amount WHERE id=:q195_0',(beid,))
         year=int(snapshot.get('year') or str(ee['arrival_date'])[:4])
         if 'id' in ee.keys():
-            people_rows=c.execute('''SELECT ep.person_type_id,ep.quantity,pt.name FROM enquiry_element_people ep JOIN setup_person_types pt ON pt.id=ep.person_type_id AND pt.company_id=ep.company_id WHERE ep.enquiry_element_id=? AND ep.company_id=?''',(ee['id'],cid)).fetchall()
+            people_rows=execute_sql(c, 'SELECT ep.person_type_id,ep.quantity,pt.name FROM enquiry_element_people ep JOIN setup_person_types pt ON pt.id=ep.person_type_id AND pt.company_id=ep.company_id WHERE ep.enquiry_element_id=:q223_0 AND ep.company_id=:q223_1',(ee['id'],cid)).fetchall()
         else:
-            people_rows=c.execute('''SELECT ep.person_type_id,ep.quantity,pt.name FROM enquiry_people ep JOIN setup_person_types pt ON pt.id=ep.person_type_id AND pt.company_id=ep.company_id WHERE ep.enquiry_id=? AND ep.company_id=?''',(enquiry['id'],cid)).fetchall()
+            people_rows=execute_sql(c, 'SELECT ep.person_type_id,ep.quantity,pt.name FROM enquiry_people ep JOIN setup_person_types pt ON pt.id=ep.person_type_id AND pt.company_id=ep.company_id WHERE ep.enquiry_id=:q224_0 AND ep.company_id=:q224_1',(enquiry['id'],cid)).fetchall()
         for p in people_rows:
-            pr=c.execute('SELECT rate FROM setup_person_prices WHERE company_id=? AND year=? AND element_id=? AND person_type_id=?',(cid,year,ee['element_id'],p['person_type_id'])).fetchone();unit=float(pr['rate']) if pr else 0.0
-            c.execute('INSERT INTO booking_people(company_id,booking_element_id,person_type_id,quantity,unit_price_snapshot,total_amount) VALUES (?,?,?,?,?,?)',(cid,beid,p['person_type_id'],p['quantity'],unit,_snapshot_line_amount(snapshot,str(p['name']))))
-        element=c.execute('SELECT * FROM setup_elements WHERE company_id=? AND id=?',(cid,ee['element_id'])).fetchone()
+            pr=execute_sql(c, 'SELECT rate FROM setup_person_prices WHERE company_id=:q225_0 AND year=:q225_1 AND element_id=:q225_2 AND person_type_id=:q225_3',(cid,year,ee['element_id'],p['person_type_id'])).fetchone();unit=float(pr['rate']) if pr else 0.0
+            execute_sql(c, 'INSERT INTO booking_people(company_id,booking_element_id,person_type_id,quantity,unit_price_snapshot,total_amount) VALUES (:q211_0,:q211_1,:q211_2,:q211_3,:q211_4,:q211_5)',(cid,beid,p['person_type_id'],p['quantity'],unit,_snapshot_line_amount(snapshot,str(p['name']))))
+        element=execute_sql(c, 'SELECT * FROM setup_elements WHERE company_id=:q215_0 AND id=:q215_1',(cid,ee['element_id'])).fetchone()
         for aid in [int(x) for x in (snapshot.get('selected_addons') or [])]:
-            addon=c.execute('SELECT * FROM setup_addons WHERE company_id=? AND id=?',(cid,aid)).fetchone()
+            addon=execute_sql(c, 'SELECT * FROM setup_addons WHERE company_id=:q226_0 AND id=:q226_1',(cid,aid)).fetchone()
             if addon is None:continue
-            qr=(c.execute('SELECT quantity FROM enquiry_element_addons WHERE enquiry_element_id=? AND company_id=? AND addon_id=?',(ee['id'],cid,aid)).fetchone() if 'id' in ee.keys() else c.execute('SELECT quantity FROM enquiry_addons WHERE enquiry_id=? AND company_id=? AND addon_id=?',(enquiry['id'],cid,aid)).fetchone());qty=int(qr['quantity']) if qr else 0;rule=_addon_rule(database,cid,year,element,aid);amount=_snapshot_line_amount(snapshot,str(addon['name']))
+            qr=(execute_sql(c, 'SELECT quantity FROM enquiry_element_addons WHERE enquiry_element_id=:q229_0 AND company_id=:q229_1 AND addon_id=:q229_2',(ee['id'],cid,aid)).fetchone() if 'id' in ee.keys() else execute_sql(c, 'SELECT quantity FROM enquiry_addons WHERE enquiry_id=:q230_0 AND company_id=:q230_1 AND addon_id=:q230_2',(enquiry['id'],cid,aid)).fetchone());qty=int(qr['quantity']) if qr else 0;rule=_addon_rule(database,cid,year,element,aid);amount=_snapshot_line_amount(snapshot,str(addon['name']))
             detail={'rule':dict(rule),'when':(snapshot.get('addon_when') or {}).get(str(aid),(snapshot.get('addon_when') or {}).get(aid)),'days':(snapshot.get('addon_days') or {}).get(str(aid),(snapshot.get('addon_days') or {}).get(aid,{})),'people':(snapshot.get('addon_people') or {}).get(str(aid),(snapshot.get('addon_people') or {}).get(aid,{})),'person_days':(snapshot.get('addon_person_days') or {}).get(str(aid),(snapshot.get('addon_person_days') or {}).get(aid,{})),'frozen_amount':amount}
-            c.execute('INSERT INTO booking_addons(company_id,booking_element_id,addon_id,quantity,pricing_method_snapshot,unit_price_snapshot,total_amount,rule_snapshot_json) VALUES (?,?,?,?,?,?,?,?)',(cid,beid,aid,qty,addon['pricing_method'],float(rule.get('rate') or 0),amount,json.dumps(detail,separators=(',',':'))))
-    c.execute("UPDATE enquiries SET status='converted',availability_expires_at=NULL,updated_at=? WHERE id=? AND company_id=?",(now,enquiry['id'],cid))
+            execute_sql(c, 'INSERT INTO booking_addons(company_id,booking_element_id,addon_id,quantity,pricing_method_snapshot,unit_price_snapshot,total_amount,rule_snapshot_json) VALUES (:q212_0,:q212_1,:q212_2,:q212_3,:q212_4,:q212_5,:q212_6,:q212_7)',(cid,beid,aid,qty,addon['pricing_method'],float(rule.get('rate') or 0),amount,json.dumps(detail,separators=(',',':'))))
+    execute_sql(c, "UPDATE enquiries SET status='converted',availability_expires_at=NULL,updated_at=:q190_0 WHERE id=:q190_1 AND company_id=:q190_2",(now,enquiry['id'],cid))
     # Availability->Enquiry normally releases basket holds when the Enquiry is
     # saved. Conversion defensively enforces the same lifecycle invariant for
     # legacy/manually-created Enquiries without disturbing unrelated basket
@@ -223,21 +217,19 @@ def _write_booking(c,database,context,cid,enquiry,elements,workflow_status_id):
     token=str(context['token']) if 'token' in context.keys() else ''
     if token:
         for ee in elements:
-            stale_holds=c.execute(
-                '''SELECT id FROM element_holds
-                   WHERE company_id=? AND session_token=? AND element_id=?
-                     AND arrival_date=? AND departure_date=?''',
+            stale_holds=execute_sql(c,
+                'SELECT id FROM element_holds\n                   WHERE company_id=:q227_0 AND session_token=:q227_1 AND element_id=:q227_2\n                     AND arrival_date=:q227_3 AND departure_date=:q227_4',
                 (cid,token,ee['element_id'],ee['arrival_date'],ee['departure_date'])
             ).fetchall()
             for hold in stale_holds:
                 hold_id=int(hold['id'])
-                c.execute('DELETE FROM hold_requirement_people WHERE hold_id=?',(hold_id,))
-                c.execute('DELETE FROM hold_requirement_addons WHERE hold_id=?',(hold_id,))
-                c.execute('DELETE FROM element_holds WHERE id=? AND company_id=?',(hold_id,cid))
+                execute_sql(c, 'DELETE FROM hold_requirement_people WHERE hold_id=:q216_0',(hold_id,))
+                execute_sql(c, 'DELETE FROM hold_requirement_addons WHERE hold_id=:q217_0',(hold_id,))
+                execute_sql(c, 'DELETE FROM element_holds WHERE id=:q218_0 AND company_id=:q218_1',(hold_id,cid))
     return booking_id,reference,total
 
 def _conversion_enquiry(database,context,cid,enquiry_id,workflow_status_id):
-    enquiry=one(database,'SELECT * FROM enquiries WHERE id=? AND company_id=?',(enquiry_id,cid))
+    enquiry=one(database,'SELECT * FROM enquiries WHERE id=:q191_0 AND company_id=:q191_1',(enquiry_id,cid))
     if enquiry is None:raise ValueError('Enquiry not found.')
     if str(enquiry['status'])=='converted':raise ValueError('This Enquiry is already converted.')
     status=status_by_id(database,cid,workflow_status_id)
@@ -265,8 +257,8 @@ def _lock_and_verify_conversion(c, cid, enquiry_id, elements):
     """Serialise booking conversions and recheck blocking inventory in the write transaction."""
     from .webv1_status_availability import _booking_conflict, _enquiry_conflict
     from .webv1_reservation_core import migrated_inventory_conflict
-    c.execute('BEGIN IMMEDIATE')
-    existing = c.execute('SELECT id FROM bookings WHERE company_id=? AND enquiry_id=? LIMIT 1', (cid, enquiry_id)).fetchone()
+    lock_inventory(c, cid)
+    existing = execute_sql(c, 'SELECT id FROM bookings WHERE company_id=:q213_0 AND enquiry_id=:q213_1 LIMIT 1', (cid, enquiry_id)).fetchone()
     if existing:
         raise ValueError('This Enquiry has already been converted into a Booking.')
     for element in elements:
@@ -296,16 +288,13 @@ def convert_enquiry_with_payment(database,context,cid,enquiry_id,workflow_status
     with database.connect() as c:
         _lock_and_verify_conversion(c,cid,enquiry_id,elements)
         booking_id,bref,total=_write_booking(c,database,context,cid,enquiry,elements,workflow_status_id)
-        payment_id=int(c.execute('INSERT INTO booking_payments(company_id,booking_id,amount,payment_date,method,reference,notes,created_by_user_id,created_at) VALUES (?,?,?,?,?,?,?,?,?)',(cid,booking_id,amount,payment_date,str(method['name']),reference,notes,context['user_id'],iso_now())).lastrowid)
+        payment_id=int(insert_sql(c, 'INSERT INTO booking_payments(company_id,booking_id,amount,payment_date,method,reference,notes,created_by_user_id,created_at) VALUES (:q219_0,:q219_1,:q219_2,:q219_3,:q219_4,:q219_5,:q219_6,:q219_7,:q219_8)',(cid,booking_id,amount,payment_date,str(method['name']),reference,notes,context['user_id'],iso_now())).lastrowid)
     audit(database,context,cid,'ENQUIRY_CONVERTED_TO_BOOKING','enquiry',enquiry_id,after={'booking_id':booking_id,'reference':bref,'element_count':len(elements)});audit(database,context,cid,'BOOKING_CREATED','booking',booking_id,after={'reference':bref,'enquiry_id':enquiry_id,'workflow_status_id':workflow_status_id,'total_amount':total});audit(database,context,cid,'BOOKING_PAYMENT_RECORDED','booking',booking_id,after={'payment_id':payment_id,'amount':amount,'payment_date':payment_date,'method':str(method['name'])})
     return booking_id
 
 
 def _history(database, cid: int, booking_id: int):
-    return rows(database, '''SELECT a.*,u.first_name,u.last_name FROM audit_log a
-        LEFT JOIN users u ON u.id=a.actor_user_id
-        WHERE a.company_id=? AND a.entity_type='booking' AND a.entity_id=?
-        ORDER BY a.id DESC''', (cid, str(booking_id)))
+    return rows(database, "SELECT a.*,u.first_name,u.last_name FROM audit_log a\n        LEFT JOIN users u ON u.id=a.actor_user_id\n        WHERE a.company_id=:q192_0 AND a.entity_type='booking' AND a.entity_id=:q192_1\n        ORDER BY a.id DESC", (cid, str(booking_id)))
 
 
 def register_booking_routes(app) -> None:
@@ -314,10 +303,7 @@ def register_booking_routes(app) -> None:
     @app.get('/operations/bookings', response_class=HTMLResponse)
     def booking_register(request: Request):
         context = context_for(database, request); cid = int(working_company(context))
-        data = rows(database, '''SELECT b.*,c.first_name,c.last_name,s.name AS workflow_name,s.colour
-            FROM bookings b LEFT JOIN customer_records c ON c.id=b.customer_id AND c.company_id=b.company_id
-            LEFT JOIN booking_status_definitions s ON s.id=b.workflow_status_id AND s.company_id=b.company_id
-            WHERE b.company_id=? ORDER BY b.arrival_date,b.id''', (cid,))
+        data = rows(database, 'SELECT b.*,c.first_name,c.last_name,s.name AS workflow_name,s.colour\n            FROM bookings b LEFT JOIN customer_records c ON c.id=b.customer_id AND c.company_id=b.company_id\n            LEFT JOIN booking_status_definitions s ON s.id=b.workflow_status_id AND s.company_id=b.company_id\n            WHERE b.company_id=:q196_0 ORDER BY b.arrival_date,b.id', (cid,))
         trs = ''.join(f'''<tr><td><a href="/operations/bookings/{int(r['id'])}">{esc(r['reference'])}</a></td><td>{esc((str(r['first_name'] or '')+' '+str(r['last_name'] or '')).strip() or 'Customer')}</td><td><span style="padding:4px 8px;border-radius:4px;background:{esc(r['colour'] or '#eee')}">{esc(r['workflow_name'] or r['status'])}</span></td><td>{_fmt_day(r['arrival_date'])}</td><td>{_fmt_day(r['departure_date'])}</td><td>{_money(r['total_amount'])}</td></tr>''' for r in data) or '<tr><td colspan="6" class="muted">No Bookings yet.</td></tr>'
         body = f'''<h1>Bookings</h1><p><a href="/operations">← Operations</a></p><div class="card"><table><thead><tr><th>Reference</th><th>Customer</th><th>Status</th><th>Arrival</th><th>Departure</th><th>Total</th></tr></thead><tbody>{trs}</tbody></table></div>'''
         return layout('Bookings', body, context)
@@ -330,13 +316,13 @@ def register_booking_routes(app) -> None:
     @app.get('/operations/enquiries/{enquiry_id}/confirm', response_class=HTMLResponse)
     def confirm_booking(enquiry_id: int, request: Request):
         context=context_for(database,request); cid=int(working_company(context))
-        enquiry=one(database, 'SELECT e.*,c.first_name,c.last_name FROM enquiries e LEFT JOIN customer_records c ON c.id=e.customer_id AND c.company_id=e.company_id WHERE e.id=? AND e.company_id=?',(enquiry_id,cid))
+        enquiry=one(database, 'SELECT e.*,c.first_name,c.last_name FROM enquiries e LEFT JOIN customer_records c ON c.id=e.customer_id AND c.company_id=e.company_id WHERE e.id=:q197_0 AND e.company_id=:q197_1',(enquiry_id,cid))
         if enquiry is None: return RedirectResponse('/operations/enquiries',303)
         if _unresolved_recovery_count(database,cid,enquiry_id):
             return RedirectResponse(f'/operations/enquiries/{enquiry_id}?convert_error=Resolve+all+unavailable+Elements+before+confirming+this+Enquiry',303)
         elements=_enquiry_elements(database,cid,enquiry_id)
         if not elements:return RedirectResponse(f'/operations/enquiries/{enquiry_id}?convert_error=No+bookable+Elements+saved',303)
-        methods=rows(database,'SELECT * FROM payment_method_definitions WHERE company_id=? AND active=1 ORDER BY display_order,name',(cid,))
+        methods=rows(database,'SELECT * FROM payment_method_definitions WHERE company_id=:q198_0 AND active=1 ORDER BY display_order,name',(cid,))
         options=''.join(f'<option value="{int(m["id"])}">{esc(m["name"])}</option>' for m in methods)
         total=sum(float(e['provisional_total'] or 0) for e in elements); first_arrival=min(str(e['arrival_date']) for e in elements); required,reason=payment_due(database,cid,total,first_arrival); customer=(str(enquiry['first_name'] or '')+' '+str(enquiry['last_name'] or '')).strip() or 'Customer'; party=int(enquiry['party_size'] or 0)
         pending='Balance Pending' if round(required,2)>=round(total,2) else 'Deposit Pending'
@@ -346,7 +332,7 @@ def register_booking_routes(app) -> None:
             except (TypeError,json.JSONDecodeError): snap={}
             people_bits=[]
             if 'id' in e.keys():
-                people_rows=rows(database,'''SELECT ep.quantity,pt.name FROM enquiry_element_people ep JOIN setup_person_types pt ON pt.id=ep.person_type_id AND pt.company_id=ep.company_id WHERE ep.enquiry_element_id=? AND ep.company_id=? ORDER BY pt.name''',(e['id'],cid))
+                people_rows=rows(database,'SELECT ep.quantity,pt.name FROM enquiry_element_people ep JOIN setup_person_types pt ON pt.id=ep.person_type_id AND pt.company_id=ep.company_id WHERE ep.enquiry_element_id=:q220_0 AND ep.company_id=:q220_1 ORDER BY pt.name',(e['id'],cid))
                 people_bits=[f'{esc(p["name"])} × {int(p["quantity"])}' for p in people_rows if int(p['quantity'] or 0)>0]
             addons=[]
             for line in snap.get('lines') or []:
@@ -369,7 +355,7 @@ def register_booking_routes(app) -> None:
             if amount<=0: raise ValueError
             datetime.strptime(str(data.get('payment_date','')),'%Y-%m-%d')
         except (TypeError,ValueError): return RedirectResponse(f'/operations/enquiries/{enquiry_id}?convert_error=Enter+valid+payment+details',303)
-        method=one(database,'SELECT * FROM payment_method_definitions WHERE company_id=? AND id=? AND active=1',(cid,method_id))
+        method=one(database,'SELECT * FROM payment_method_definitions WHERE company_id=:q199_0 AND id=:q199_1 AND active=1',(cid,method_id))
         if method is None: return RedirectResponse(f'/operations/enquiries/{enquiry_id}?convert_error=Choose+an+active+Payment+Method',303)
         if str(method['method_type'])=='card': return RedirectResponse(f'/operations/enquiries/{enquiry_id}?convert_error=Card+provider+connection+is+not+configured+yet',303)
         total=sum(float(e['provisional_total'] or 0) for e in _enquiry_elements(database,cid,enquiry_id)); status=status_by_system_code(database,cid,'BALANCE_PAID' if round(amount,2)>=round(total,2) else 'DEPOSIT_PAID') or default_status(database,cid,'CONFIRMED')
@@ -393,14 +379,14 @@ def register_booking_routes(app) -> None:
         context = context_for(database, request); cid = int(working_company(context)); b = _booking(database, cid, booking_id)
         if b is None:
             return HTMLResponse(layout('Booking not found', '<div class="error">Booking not found.</div>', context), 404)
-        elements = rows(database, '''SELECT be.*,se.name AS element_name,se.element_type FROM booking_elements be JOIN setup_elements se ON se.id=be.element_id AND se.company_id=be.company_id WHERE be.booking_id=? AND be.company_id=? ORDER BY be.id''', (booking_id, cid))
-        people = rows(database, '''SELECT bp.*,pt.name FROM booking_people bp JOIN booking_elements be ON be.id=bp.booking_element_id JOIN setup_person_types pt ON pt.id=bp.person_type_id AND pt.company_id=bp.company_id WHERE be.booking_id=? AND bp.company_id=? ORDER BY pt.name''', (booking_id, cid))
-        addons = rows(database, '''SELECT ba.*,a.name FROM booking_addons ba JOIN booking_elements be ON be.id=ba.booking_element_id JOIN setup_addons a ON a.id=ba.addon_id AND a.company_id=ba.company_id WHERE be.booking_id=? AND ba.company_id=? ORDER BY a.name''', (booking_id, cid))
-        payments = rows(database, 'SELECT * FROM booking_payments WHERE company_id=? AND booking_id=? ORDER BY payment_date,id', (cid, booking_id))
+        elements = rows(database, 'SELECT be.*,se.name AS element_name,se.element_type FROM booking_elements be JOIN setup_elements se ON se.id=be.element_id AND se.company_id=be.company_id WHERE be.booking_id=:q200_0 AND be.company_id=:q200_1 ORDER BY be.id', (booking_id, cid))
+        people = rows(database, 'SELECT bp.*,pt.name FROM booking_people bp JOIN booking_elements be ON be.id=bp.booking_element_id JOIN setup_person_types pt ON pt.id=bp.person_type_id AND pt.company_id=bp.company_id WHERE be.booking_id=:q201_0 AND bp.company_id=:q201_1 ORDER BY pt.name', (booking_id, cid))
+        addons = rows(database, 'SELECT ba.*,a.name FROM booking_addons ba JOIN booking_elements be ON be.id=ba.booking_element_id JOIN setup_addons a ON a.id=ba.addon_id AND a.company_id=ba.company_id WHERE be.booking_id=:q202_0 AND ba.company_id=:q202_1 ORDER BY a.name', (booking_id, cid))
+        payments = rows(database, 'SELECT * FROM booking_payments WHERE company_id=:q203_0 AND booking_id=:q203_1 ORDER BY payment_date,id', (cid, booking_id))
         financials = booking_financials(database, cid, booking_id)
         paid = financials['paid']; balance = financials['outstanding']
         notice = '<div class="ok">Booking created from Enquiry. Prices are now frozen.</div>' if created else (f'<div class="ok">{esc(message)}</div>' if message else '')
-        amendment_rows = rows(database, 'SELECT * FROM booking_amendments WHERE company_id=? AND booking_id=? ORDER BY id', (cid, booking_id))
+        amendment_rows = rows(database, 'SELECT * FROM booking_amendments WHERE company_id=:q204_0 AND booking_id=:q204_1 ORDER BY id', (cid, booking_id))
         latest_amendment = {}
         for ar in amendment_rows:
             latest_amendment[int(ar['booking_element_id'])] = ar
@@ -468,7 +454,7 @@ def register_booking_routes(app) -> None:
             return labels.get(action, action.replace('_',' ').title())
         history_rows = ''.join(f'<tr><td>{esc(_fmt_when(h["created_at"]))}</td><td>{esc(((h["first_name"] or "")+" "+(h["last_name"] or "")).strip() or h["actor_role"] or "System")}</td><td>{esc(history_text(h))}</td></tr>' for h in hist) or '<tr><td colspan="3" class="muted">No history yet.</td></tr>'
         cancelled = str(b['status'] or '').lower() == 'cancelled' or str(b['internal_state'] or '') == 'RELEASED'
-        cancellation = one(database, 'SELECT * FROM booking_cancellations WHERE company_id=? AND booking_id=?', (cid, booking_id))
+        cancellation = one(database, 'SELECT * FROM booking_cancellations WHERE company_id=:q205_0 AND booking_id=:q205_1', (cid, booking_id))
         if cancelled:
             cancellation_panel = (f'<div class="card"><h2>Cancelled — permanent</h2>'
                 f'<p>Accommodation released. Customer, original booking, payment and history records remain accessible.</p>'
@@ -481,7 +467,7 @@ def register_booking_routes(app) -> None:
             cancellation_panel = (f'<div class="card"><h2>Cancel Booking</h2>'
                 f'<p>Permanent action: all reserved Elements will be released and cannot be reinstated.</p>'
                 f'<p><a href="/operations/bookings/{booking_id}/cancel">Review Cancellation</a></p></div>')
-        refunds = rows(database, 'SELECT * FROM booking_refunds WHERE company_id=? AND booking_id=? ORDER BY id', (cid,booking_id))
+        refunds = rows(database, 'SELECT * FROM booking_refunds WHERE company_id=:q206_0 AND booking_id=:q206_1 ORDER BY id', (cid,booking_id))
         refunded = round(sum(float(x['amount']) for x in refunds),2)
         refund_rows = ''.join(f'<tr><td>{esc(x["refund_date"])}</td><td>{_money(x["amount"])}</td><td>{esc(x["method"])}</td><td>{esc(x["reference"])}</td><td>{esc(x["notes"])}</td></tr>' for x in refunds) or '<tr><td colspan="5">No refunds recorded.</td></tr>'
         refundable = round(max(0.0,float(cancellation['refund_amount'])-refunded),2) if cancellation else 0.0
@@ -502,7 +488,7 @@ def register_booking_routes(app) -> None:
         {refund_panel}
         {'<div class="card"><h2>Accommodation locked</h2><p>This booking is permanently cancelled. Financial records and history remain accessible.</p></div>' if cancelled else '<div class="card"><h2>Amend Booking</h2>'}<p class="muted">Preview the price before applying. Original frozen booking values remain in history.</p>{''.join(f'<form method="post" action="/operations/bookings/{booking_id}/amend-preview"><input type="hidden" name="csrf" value="{esc(context["csrf_token"])}"><input type="hidden" name="booking_element_id" value="{int(e["id"])}"><h3>{esc(e["element_name"])}</h3><div class="grid"><div><label>Arrival</label><input type="date" name="arrival_date" value="{esc(e["arrival_date"])}" required></div><div><label>Departure</label><input type="date" name="departure_date" value="{esc(e["departure_date"])}" required></div><div><label>Staff discount</label><input type="number" name="manual_discount" min="0" step="0.01" value="{manual_by_element.get(int(e["id"]),0):.2f}"></div></div><p><button>Preview Amendment</button></p></form>' for e in elements)}{'' if cancelled else '</div>'}
         <div class="card"><h2>Frozen Booking</h2>{element_html}<p class="muted">Each element is shown from its own frozen snapshot. Later Setup price changes do not alter this Booking.</p></div>
-        <div class="card"><h2>Payments</h2><table><thead><tr><th>Date</th><th>Amount</th><th>Method</th><th>Reference</th><th>Notes</th></tr></thead><tbody>{payment_rows}</tbody></table><h3>Record payment</h3><form method="post" action="/operations/bookings/{booking_id}/payments"><input type="hidden" name="csrf" value="{esc(context['csrf_token'])}"><div class="grid"><div><label>Amount</label><input name="amount" type="number" min="0.01" step="0.01" value="{balance:.2f}" required></div><div><label>Date</label><input name="payment_date" type="date" value="{_local_today().isoformat()}" required></div><div><label>Method</label><select name="payment_method_id" required>{''.join(f'<option value="{int(m["id"])}">{esc(m["name"])}</option>' for m in rows(database,'SELECT * FROM payment_method_definitions WHERE company_id=? AND active=1 ORDER BY display_order,name',(cid,)))}</select></div><div><label>Reference</label><input name="reference"></div></div><label>Notes</label><input name="notes"><p><button>Record Payment</button></p></form></div>
+        <div class="card"><h2>Payments</h2><table><thead><tr><th>Date</th><th>Amount</th><th>Method</th><th>Reference</th><th>Notes</th></tr></thead><tbody>{payment_rows}</tbody></table><h3>Record payment</h3><form method="post" action="/operations/bookings/{booking_id}/payments"><input type="hidden" name="csrf" value="{esc(context['csrf_token'])}"><div class="grid"><div><label>Amount</label><input name="amount" type="number" min="0.01" step="0.01" value="{balance:.2f}" required></div><div><label>Date</label><input name="payment_date" type="date" value="{_local_today().isoformat()}" required></div><div><label>Method</label><select name="payment_method_id" required>{''.join(f'<option value="{int(m["id"])}">{esc(m["name"])}</option>' for m in rows(database,'SELECT * FROM payment_method_definitions WHERE company_id=:q235_0 AND active=1 ORDER BY display_order,name',(cid,)))}</select></div><div><label>Reference</label><input name="reference"></div></div><label>Notes</label><input name="notes"><p><button>Record Payment</button></p></form></div>
         <div class="card"><h2>Booking History</h2><table><thead><tr><th>When</th><th>Who</th><th>What happened</th></tr></thead><tbody>{history_rows}</tbody></table></div>'''
         return layout(f'Booking {b["reference"]}', body, context)
 
@@ -552,22 +538,19 @@ def register_booking_routes(app) -> None:
         except (ValueError,TypeError): refund=-1
         try:
             with database.connect() as c:
-                c.execute('BEGIN IMMEDIATE')
-                b=c.execute('''SELECT b.*,s.internal_state FROM bookings b LEFT JOIN booking_status_definitions s
-                    ON s.id=b.workflow_status_id AND s.company_id=b.company_id
-                    WHERE b.id=? AND b.company_id=?''',(booking_id,cid)).fetchone()
+                lock_inventory(c, cid)
+                b=execute_sql(c, 'SELECT b.*,s.internal_state FROM bookings b LEFT JOIN booking_status_definitions s\n                    ON s.id=b.workflow_status_id AND s.company_id=b.company_id\n                    WHERE b.id=:q231_0 AND b.company_id=:q231_1',(booking_id,cid)).fetchone()
                 if b is None or str(b['status'] or '').lower()=='cancelled' or str(b['internal_state'] or '')=='RELEASED':
                     raise ValueError('Booking is missing or already cancelled.')
-                paid=round(float(c.execute('SELECT COALESCE(SUM(amount),0) AS paid FROM booking_payments WHERE company_id=? AND booking_id=?',(cid,booking_id)).fetchone()['paid']),2)
+                paid=round(float(execute_sql(c, 'SELECT COALESCE(SUM(amount),0) AS paid FROM booking_payments WHERE company_id=:q238_0 AND booking_id=:q238_1',(cid,booking_id)).fetchone()['paid']),2)
                 if refund<0 or refund>paid: raise ValueError('Refund must be between zero and the total payments received.')
                 if (decision=='full_refund' and refund!=paid) or (decision=='no_refund' and refund!=0) or (decision=='partial_refund' and (refund<=0 or refund>=paid)):
                     raise ValueError('Refund amount does not match the selected refund decision.')
-                status=c.execute("""SELECT id FROM booking_status_definitions WHERE company_id=? AND internal_state='RELEASED' AND blocks_availability=0 AND active=1 ORDER BY id LIMIT 1""",(cid,)).fetchone()
+                status=execute_sql(c, "SELECT id FROM booking_status_definitions WHERE company_id=:q232_0 AND internal_state='RELEASED' AND blocks_availability=0 AND active=1 ORDER BY id LIMIT 1",(cid,)).fetchone()
                 if status is None: raise ValueError('No active non-blocking cancellation status configured.')
                 now=iso_now()
-                c.execute('''INSERT INTO booking_cancellations(company_id,booking_id,reason,refund_decision,refund_amount,retained_amount,financial_note,created_by_user_id,created_at)
-                    VALUES(?,?,?,?,?,?,?,?,?)''',(cid,booking_id,reason,decision,refund,round(paid-refund,2),note,context['user_id'],now))
-                c.execute('UPDATE bookings SET status=?,workflow_status_id=?,updated_at=? WHERE company_id=? AND id=?',
+                execute_sql(c, 'INSERT INTO booking_cancellations(company_id,booking_id,reason,refund_decision,refund_amount,retained_amount,financial_note,created_by_user_id,created_at)\n                    VALUES(:q221_0,:q221_1,:q221_2,:q221_3,:q221_4,:q221_5,:q221_6,:q221_7,:q221_8)',(cid,booking_id,reason,decision,refund,round(paid-refund,2),note,context['user_id'],now))
+                execute_sql(c, 'UPDATE bookings SET status=:q222_0,workflow_status_id=:q222_1,updated_at=:q222_2 WHERE company_id=:q222_3 AND id=:q222_4',
                           ('cancelled',int(status['id']),now,cid,booking_id))
         except ValueError as exc:
             return HTMLResponse(layout('Cancellation not completed',f'<p>{esc(str(exc))}</p><a href="/operations/bookings/{booking_id}/cancel">Return</a>',context),400)
@@ -625,14 +608,13 @@ def register_booking_routes(app) -> None:
             if amount<=0 or not method or not reference or data.get('acknowledge')!='yes':
                 raise ValueError('Refund amount, method, reference and confirmation are required.')
             with database.connect() as c:
-                c.execute('BEGIN IMMEDIATE')
-                cancellation=c.execute('SELECT refund_amount FROM booking_cancellations WHERE company_id=? AND booking_id=?',(cid,booking_id)).fetchone()
+                lock_inventory(c, cid)
+                cancellation=execute_sql(c, 'SELECT refund_amount FROM booking_cancellations WHERE company_id=:q233_0 AND booking_id=:q233_1',(cid,booking_id)).fetchone()
                 if cancellation is None: raise ValueError('Only cancelled bookings with an approved refund decision can record refunds.')
-                previous=round(float(c.execute('SELECT COALESCE(SUM(amount),0) AS n FROM booking_refunds WHERE company_id=? AND booking_id=?',(cid,booking_id)).fetchone()['n']),2)
+                previous=round(float(execute_sql(c, 'SELECT COALESCE(SUM(amount),0) AS n FROM booking_refunds WHERE company_id=:q239_0 AND booking_id=:q239_1',(cid,booking_id)).fetchone()['n']),2)
                 if amount>round(float(cancellation['refund_amount'])-previous,2):
                     raise ValueError('Refund exceeds the amount authorised at cancellation.')
-                refund_id=int(c.execute('''INSERT INTO booking_refunds(company_id,booking_id,amount,refund_date,method,reference,notes,created_by_user_id,created_at)
-                    VALUES(?,?,?,?,?,?,?,?,?)''',(cid,booking_id,amount,date,method,reference,str(data.get('notes','')).strip(),context['user_id'],iso_now())).lastrowid)
+                refund_id=int(insert_sql(c, 'INSERT INTO booking_refunds(company_id,booking_id,amount,refund_date,method,reference,notes,created_by_user_id,created_at)\n                    VALUES(:q234_0,:q234_1,:q234_2,:q234_3,:q234_4,:q234_5,:q234_6,:q234_7,:q234_8)',(cid,booking_id,amount,date,method,reference,str(data.get('notes','')).strip(),context['user_id'],iso_now())).lastrowid)
         except (ValueError,TypeError) as exc:
             return HTMLResponse(layout('Refund not recorded',f'<p>{esc(str(exc))}</p><a href="/operations/bookings/{booking_id}">Return to booking</a>',context),400)
         audit(database,context,cid,'BOOKING_REFUND_RECORDED','booking',booking_id,after={'refund_id':refund_id,'amount':amount,'method':method,'reference':reference,'refund_date':date})
@@ -656,14 +638,13 @@ def register_booking_routes(app) -> None:
             return RedirectResponse(f'/operations/bookings/{booking_id}?message=Enter+a+valid+payment+date', 303)
         try: method_id=int(data.get('payment_method_id',''))
         except (TypeError,ValueError): return RedirectResponse(f'/operations/bookings/{booking_id}?message=Choose+an+active+Payment+Method',303)
-        method=one(database,'SELECT * FROM payment_method_definitions WHERE company_id=? AND id=? AND active=1',(cid,method_id))
+        method=one(database,'SELECT * FROM payment_method_definitions WHERE company_id=:q207_0 AND id=:q207_1 AND active=1',(cid,method_id))
         if method is None: return RedirectResponse(f'/operations/bookings/{booking_id}?message=Choose+an+active+Payment+Method',303)
         if str(method['method_type'])=='card': return RedirectResponse(f'/operations/bookings/{booking_id}?message=Card+provider+connection+is+not+configured+yet',303)
         with database.connect() as c:
-            payment_id = int(c.execute('''INSERT INTO booking_payments(company_id,booking_id,amount,payment_date,method,reference,notes,created_by_user_id,created_at)
-                VALUES (?,?,?,?,?,?,?,?,?)''', (cid, booking_id, amount, payment_date, str(method['name']), str(data.get('reference','')).strip(), str(data.get('notes','')).strip(), context['user_id'], iso_now())).lastrowid)
-            total=float(c.execute('SELECT total_amount FROM bookings WHERE id=? AND company_id=?',(booking_id,cid)).fetchone()['total_amount'])
-            paid=float(c.execute('SELECT COALESCE(SUM(amount),0) AS n FROM booking_payments WHERE booking_id=? AND company_id=?',(booking_id,cid)).fetchone()['n'])
+            payment_id = int(insert_sql(c, 'INSERT INTO booking_payments(company_id,booking_id,amount,payment_date,method,reference,notes,created_by_user_id,created_at)\n                VALUES (:q228_0,:q228_1,:q228_2,:q228_3,:q228_4,:q228_5,:q228_6,:q228_7,:q228_8)', (cid, booking_id, amount, payment_date, str(method['name']), str(data.get('reference','')).strip(), str(data.get('notes','')).strip(), context['user_id'], iso_now())).lastrowid)
+            total=float(execute_sql(c, 'SELECT total_amount FROM bookings WHERE id=:q236_0 AND company_id=:q236_1',(booking_id,cid)).fetchone()['total_amount'])
+            paid=float(execute_sql(c, 'SELECT COALESCE(SUM(amount),0) AS n FROM booking_payments WHERE booking_id=:q237_0 AND company_id=:q237_1',(booking_id,cid)).fetchone()['n'])
             sync_payment_status(database,cid,booking_id,connection=c,context=context)
         audit(database, context, cid, 'BOOKING_PAYMENT_RECORDED', 'booking', booking_id, after={'payment_id': payment_id, 'amount': amount, 'payment_date': payment_date, 'method': str(method['name']), 'reference': str(data.get('reference','')).strip()})
         return RedirectResponse(f'/operations/bookings/{booking_id}?message=Payment+recorded', 303)
@@ -671,7 +652,7 @@ def register_booking_routes(app) -> None:
 
 def _unresolved_recovery_count(database,cid:int,enquiry_id:int)->int:
     try:
-        row=one(database,"SELECT COUNT(*) AS n FROM enquiry_elements WHERE company_id=? AND enquiry_id=? AND COALESCE(recovery_state,'held')='needs_replacement'",(cid,enquiry_id))
+        row=one(database,"SELECT COUNT(*) AS n FROM enquiry_elements WHERE company_id=:q208_0 AND enquiry_id=:q208_1 AND COALESCE(recovery_state,'held')='needs_replacement'",(cid,enquiry_id))
         return int(row['n'] or 0) if row else 0
     except Exception:
         return 0
@@ -679,7 +660,7 @@ def _unresolved_recovery_count(database,cid:int,enquiry_id:int)->int:
 
 def enquiry_conversion_panel(database, context, enquiry_id: int) -> str:
     cid = int(working_company(context))
-    existing = one(database, 'SELECT id,reference FROM bookings WHERE company_id=? AND enquiry_id=? ORDER BY id DESC LIMIT 1', (cid, enquiry_id))
+    existing = one(database, 'SELECT id,reference FROM bookings WHERE company_id=:q193_0 AND enquiry_id=:q193_1 ORDER BY id DESC LIMIT 1', (cid, enquiry_id))
     if existing:
         return f'<div class="card"><h2>Booking</h2><p>This Enquiry has been converted to <a href="/operations/bookings/{int(existing["id"])}"><strong>{esc(existing["reference"])}</strong></a>.</p></div>'
     unresolved=_unresolved_recovery_count(database,cid,enquiry_id)

@@ -38,7 +38,7 @@ def install_booking_requirements_ui(app) -> None:
         cid = int(cid)
 
         controls = '<div class="card"><h2>Ask before Availability</h2><p class="muted">Use this only for requirements that can make an Element unsuitable.</p><table><thead><tr><th>Add-on</th><th>Ask before Availability</th></tr></thead><tbody>'
-        for a in rows(database, 'SELECT id,name,ask_before_availability FROM setup_addons WHERE company_id=? AND active=1 ORDER BY name', (cid,)):
+        for a in rows(database, 'SELECT id,name,ask_before_availability FROM setup_addons WHERE company_id=:q44_0 AND active=1 ORDER BY name', (cid,)):
             controls += f'<tr><td>{esc(a["name"])}</td><td><form method="post" action="/setup/addons/requirement-toggle"><input type="hidden" name="csrf" value="{esc(context["csrf_token"])}"><input type="hidden" name="addon_id" value="{int(a["id"])}"><button class="secondary">{"✓ Yes" if int(a["ask_before_availability"] or 0) else "No"}</button></form></td></tr>'
         controls += '</tbody></table></div>'
         text = text.replace('<div class="card"><table>', controls + '<div class="card"><table>', 1)

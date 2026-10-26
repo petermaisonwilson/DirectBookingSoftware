@@ -1,18 +1,16 @@
 from __future__ import annotations
+from .sql import execute_sql, table_exists
 
 from datetime import date, timedelta
 
 
 def _table_exists(connection, table: str) -> bool:
-    return connection.execute(
-        "SELECT 1 FROM sqlite_master WHERE type='table' AND name=?", (table,)
-    ).fetchone() is not None
+    return (True if table_exists(connection, table) else None) is not None
 
 
 def _season_for_date(connection, company_id: int, year: int, day: date):
-    rows = connection.execute(
-        '''SELECT * FROM setup_seasons
-           WHERE company_id=? AND year=? AND start_date<=? AND end_date>=?''',
+    rows = execute_sql(connection,
+        'SELECT * FROM setup_seasons\n           WHERE company_id=:q629_0 AND year=:q629_1 AND start_date<=:q629_2 AND end_date>=:q629_3',
         (company_id, year, day.isoformat(), day.isoformat()),
     ).fetchall()
     if not rows:
@@ -28,18 +26,16 @@ def _season_for_date(connection, company_id: int, year: int, day: date):
 def _addon_is_person_type(connection, company_id: int, addon_id: int) -> bool:
     if not _table_exists(connection, 'setup_addon_person_pricing'):
         return False
-    row = connection.execute(
-        '''SELECT pricing_mode FROM setup_addon_person_pricing
-           WHERE company_id=? AND addon_id=?''',
+    row = execute_sql(connection,
+        'SELECT pricing_mode FROM setup_addon_person_pricing\n           WHERE company_id=:q630_0 AND addon_id=:q630_1',
         (company_id, addon_id),
     ).fetchone()
     return bool(row and str(row['pricing_mode']) == 'person_type')
 
 
 def _allowed_addon_rule(connection, company_id: int, year: int, element, addon_id: int):
-    override = connection.execute(
-        '''SELECT * FROM setup_element_addons
-           WHERE company_id=? AND year=? AND element_id=? AND addon_id=?''',
+    override = execute_sql(connection,
+        'SELECT * FROM setup_element_addons\n           WHERE company_id=:q631_0 AND year=:q631_1 AND element_id=:q631_2 AND addon_id=:q631_3',
         (company_id, year, int(element['id']), addon_id),
     ).fetchone()
     if override:
@@ -48,9 +44,8 @@ def _allowed_addon_rule(connection, company_id: int, year: int, element, addon_i
             return None
         if state == 'Y':
             return override
-    return connection.execute(
-        '''SELECT * FROM setup_type_addons
-           WHERE company_id=? AND year=? AND element_type=? AND addon_id=? AND allowed=1''',
+    return execute_sql(connection,
+        'SELECT * FROM setup_type_addons\n           WHERE company_id=:q632_0 AND year=:q632_1 AND element_type=:q632_2 AND addon_id=:q632_3 AND allowed=1',
         (company_id, year, str(element['element_type']), addon_id),
     ).fetchone()
 
@@ -58,15 +53,15 @@ def _allowed_addon_rule(connection, company_id: int, year: int, element, addon_i
 def element_missing_items(database, company_id: int, year: int, element_id: int) -> list[dict[str, str]]:
     items: list[dict[str, str]] = []
     with database.connect() as c:
-        element = c.execute(
-            'SELECT * FROM setup_elements WHERE company_id=? AND id=? AND active=1',
+        element = execute_sql(c,
+            'SELECT * FROM setup_elements WHERE company_id=:q634_0 AND id=:q634_1 AND active=1',
             (company_id, element_id),
         ).fetchone()
         if element is None:
             return items
 
-        seasons = c.execute(
-            'SELECT * FROM setup_seasons WHERE company_id=? AND year=? ORDER BY start_date,id',
+        seasons = execute_sql(c,
+            'SELECT * FROM setup_seasons WHERE company_id=:q635_0 AND year=:q635_1 ORDER BY start_date,id',
             (company_id, year),
         ).fetchall()
         if not seasons:
@@ -76,9 +71,8 @@ def element_missing_items(database, company_id: int, year: int, element_id: int)
                 'href': f'/setup/pricing?year={year}',
             })
         for season in seasons:
-            rate = c.execute(
-                '''SELECT rate FROM setup_element_rates
-                   WHERE company_id=? AND year=? AND element_id=? AND season_id=?''',
+            rate = execute_sql(c,
+                'SELECT rate FROM setup_element_rates\n                   WHERE company_id=:q640_0 AND year=:q640_1 AND element_id=:q640_2 AND season_id=:q640_3',
                 (company_id, year, element_id, int(season['id'])),
             ).fetchone()
             if rate is None:
@@ -88,9 +82,8 @@ def element_missing_items(database, company_id: int, year: int, element_id: int)
                     'href': f'/setup/pricing?year={year}',
                 })
 
-        occupancy = c.execute(
-            '''SELECT max_total FROM setup_occupancy
-               WHERE company_id=? AND year=? AND element_id=?''',
+        occupancy = execute_sql(c,
+            'SELECT max_total FROM setup_occupancy\n               WHERE company_id=:q636_0 AND year=:q636_1 AND element_id=:q636_2',
             (company_id, year, element_id),
         ).fetchone()
         if occupancy is None:
@@ -100,16 +93,14 @@ def element_missing_items(database, company_id: int, year: int, element_id: int)
                 'href': f'/setup/occupancy?year={year}',
             })
 
-        people = c.execute(
-            '''SELECT * FROM setup_person_types
-               WHERE company_id=? AND active=1 ORDER BY name COLLATE NOCASE''',
+        people = execute_sql(c,
+            'SELECT * FROM setup_person_types\n               WHERE company_id=:q637_0 AND active=1 ORDER BY lower(name)',
             (company_id,),
         ).fetchall()
         for person in people:
             pid = int(person['id'])
-            limit = c.execute(
-                '''SELECT max_count FROM setup_person_limits
-                   WHERE company_id=? AND year=? AND element_id=? AND person_type_id=?''',
+            limit = execute_sql(c,
+                'SELECT max_count FROM setup_person_limits\n                   WHERE company_id=:q641_0 AND year=:q641_1 AND element_id=:q641_2 AND person_type_id=:q641_3',
                 (company_id, year, element_id, pid),
             ).fetchone()
             if limit is None:
@@ -118,9 +109,8 @@ def element_missing_items(database, company_id: int, year: int, element_id: int)
                     'text': f"{element['name']} — {person['name']} maximum missing",
                     'href': f'/setup/occupancy?year={year}',
                 })
-            price = c.execute(
-                '''SELECT rate FROM setup_person_prices
-                   WHERE company_id=? AND year=? AND element_id=? AND person_type_id=?''',
+            price = execute_sql(c,
+                'SELECT rate FROM setup_person_prices\n                   WHERE company_id=:q642_0 AND year=:q642_1 AND element_id=:q642_2 AND person_type_id=:q642_3',
                 (company_id, year, element_id, pid),
             ).fetchone()
             if price is None:
@@ -130,9 +120,8 @@ def element_missing_items(database, company_id: int, year: int, element_id: int)
                     'href': f'/setup/occupancy?year={year}',
                 })
 
-        addons = c.execute(
-            '''SELECT * FROM setup_addons
-               WHERE company_id=? AND active=1 ORDER BY name COLLATE NOCASE''',
+        addons = execute_sql(c,
+            'SELECT * FROM setup_addons\n               WHERE company_id=:q638_0 AND active=1 ORDER BY lower(name)',
             (company_id,),
         ).fetchall()
         for addon in addons:
@@ -149,9 +138,8 @@ def element_missing_items(database, company_id: int, year: int, element_id: int)
             if _addon_is_person_type(c, company_id, aid) and _table_exists(c, 'setup_addon_person_rates'):
                 for person in people:
                     pid = int(person['id'])
-                    rate = c.execute(
-                        '''SELECT rate FROM setup_addon_person_rates
-                           WHERE company_id=? AND addon_id=? AND year=? AND person_type_id=?''',
+                    rate = execute_sql(c,
+                        'SELECT rate FROM setup_addon_person_rates\n                           WHERE company_id=:q644_0 AND addon_id=:q644_1 AND year=:q644_2 AND person_type_id=:q644_3',
                         (company_id, aid, year, pid),
                     ).fetchone()
                     if rate is None:
@@ -165,9 +153,8 @@ def element_missing_items(database, company_id: int, year: int, element_id: int)
 
 def incomplete_elements(database, company_id: int, year: int) -> list[dict[str, object]]:
     with database.connect() as c:
-        elements = c.execute(
-            '''SELECT id,name FROM setup_elements
-               WHERE company_id=? AND active=1 ORDER BY element_type,name COLLATE NOCASE''',
+        elements = execute_sql(c,
+            'SELECT id,name FROM setup_elements\n               WHERE company_id=:q639_0 AND active=1 ORDER BY element_type,lower(name)',
             (company_id,),
         ).fetchall()
     result: list[dict[str, object]] = []
@@ -223,9 +210,8 @@ def element_available_setup_ready(
             season = _season_for_date(c, company_id, year, day)
             if season is None:
                 return False, f'No Season covers {day.isoformat()}.'
-            rate = c.execute(
-                '''SELECT rate FROM setup_element_rates
-                   WHERE company_id=? AND year=? AND element_id=? AND season_id=?''',
+            rate = execute_sql(c,
+                'SELECT rate FROM setup_element_rates\n                   WHERE company_id=:q643_0 AND year=:q643_1 AND element_id=:q643_2 AND season_id=:q643_3',
                 (company_id, year, element_id, int(season['id'])),
             ).fetchone()
             if rate is None:

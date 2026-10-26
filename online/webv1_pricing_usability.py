@@ -1,4 +1,5 @@
 from __future__ import annotations
+from .sql import execute_sql, column_rows
 
 import json
 from datetime import date, datetime
@@ -27,15 +28,15 @@ CURRENCIES = {
 
 def initialise_pricing_usability(database) -> None:
     with database.connect() as c:
-        cols = {str(r['name']) for r in c.execute('PRAGMA table_info(companies)').fetchall()}
+        cols = {str(r['name']) for r in column_rows(c, 'companies')}
         if 'base_currency' not in cols:
-            c.execute("ALTER TABLE companies ADD COLUMN base_currency TEXT NOT NULL DEFAULT 'EUR'")
-        c.execute("UPDATE companies SET base_currency='EUR' WHERE base_currency IS NULL OR TRIM(base_currency)='' ")
+            execute_sql(c, "ALTER TABLE companies ADD COLUMN base_currency TEXT NOT NULL DEFAULT 'EUR'")
+        execute_sql(c, "UPDATE companies SET base_currency='EUR' WHERE base_currency IS NULL OR TRIM(base_currency)='' ")
 
 
 def company_currency(database, company_id: int) -> str:
     with database.connect() as c:
-        row = c.execute('SELECT base_currency FROM companies WHERE id=?', (company_id,)).fetchone()
+        row = execute_sql(c, 'SELECT base_currency FROM companies WHERE id=:q2_0', (company_id,)).fetchone()
     code = str(row['base_currency'] if row and row['base_currency'] else 'EUR').upper()
     return code if code in CURRENCIES else 'EUR'
 
@@ -50,14 +51,14 @@ def _append_duration_to_result(database, company_id: int, result: dict | None) -
     nights = int(result.get('nights') or 0)
     element_id = int(result.get('element_id') or 0)
     with database.connect() as c:
-        element = c.execute(
-            'SELECT name,pricing_method FROM setup_elements WHERE company_id=? AND id=?',
+        element = execute_sql(c,
+            'SELECT name,pricing_method FROM setup_elements WHERE company_id=:q3_0 AND id=:q3_1',
             (company_id, element_id),
         ).fetchone()
         addons = {
             str(r['name']): (int(r['id']), str(r['pricing_method']))
-            for r in c.execute(
-                'SELECT id,name,pricing_method FROM setup_addons WHERE company_id=?',
+            for r in execute_sql(c,
+                'SELECT id,name,pricing_method FROM setup_addons WHERE company_id=:q8_0',
                 (company_id,),
             ).fetchall()
         }
@@ -154,8 +155,8 @@ def install_pricing_calculation_transparency() -> None:
             booking_id = original_convert(database, context, cid, enquiry_id, workflow_status_id)
             code = company_currency(database, cid)
             with database.connect() as c:
-                c.execute(
-                    'UPDATE bookings SET currency=? WHERE id=? AND company_id=?',
+                execute_sql(c,
+                    'UPDATE bookings SET currency=:q4_0 WHERE id=:q4_1 AND company_id=:q4_2',
                     (code, booking_id, cid),
                 )
             return booking_id
@@ -215,8 +216,8 @@ def _booking_duration_html(database, company_id: int, request_path: str) -> str:
     except ValueError:
         return ''
     with database.connect() as c:
-        row = c.execute(
-            'SELECT arrival_date,departure_date FROM bookings WHERE company_id=? AND id=?',
+        row = execute_sql(c,
+            'SELECT arrival_date,departure_date FROM bookings WHERE company_id=:q5_0 AND id=:q5_1',
             (company_id, booking_id),
         ).fetchone()
     if not row or not row['arrival_date'] or not row['departure_date']:
@@ -263,10 +264,10 @@ def register_pricing_usability_routes(app) -> None:
         old_code = company_currency(database, cid)
         if new_code != old_code:
             with database.connect() as c:
-                used = c.execute('SELECT COUNT(*) AS n FROM bookings WHERE company_id=?', (cid,)).fetchone()['n']
+                used = execute_sql(c, 'SELECT COUNT(*) AS n FROM bookings WHERE company_id=:q10_0', (cid,)).fetchone()['n']
                 if int(used):
                     return RedirectResponse('/company/settings?currency_error=' + quote_plus('Base currency is locked once this Client has Bookings.'), 303)
-                c.execute('UPDATE companies SET base_currency=? WHERE id=?', (new_code, cid))
+                execute_sql(c, 'UPDATE companies SET base_currency=:q6_0 WHERE id=:q6_1', (new_code, cid))
             audit(database, context, cid, 'BASE_CURRENCY_CHANGED', 'company', cid, {'base_currency': old_code}, {'base_currency': new_code})
         return RedirectResponse('/company/settings?saved=1', 303)
 
@@ -285,7 +286,7 @@ def register_pricing_usability_routes(app) -> None:
         focus = None
         if focus_element_id and selected:
             with database.connect() as c:
-                element = c.execute('SELECT id,name FROM setup_elements WHERE company_id=? AND id=? AND active=1', (cid, focus_element_id)).fetchone()
+                element = execute_sql(c, 'SELECT id,name FROM setup_elements WHERE company_id=:q9_0 AND id=:q9_1 AND active=1', (cid, focus_element_id)).fetchone()
             if element:
                 focus = {'id': int(element['id']), 'name': str(element['name']), 'count': len(element_missing_items(database, cid, selected, int(element['id'])))}
         return JSONResponse({'year': selected, 'incomplete': incomplete, 'focus': focus})
@@ -295,7 +296,7 @@ def register_pricing_usability_routes(app) -> None:
         context = context_for(database, request)
         cid = int(working_company(context))
         with database.connect() as c:
-            element = c.execute('SELECT id,name FROM setup_elements WHERE company_id=? AND id=? AND active=1', (cid, element_id)).fetchone()
+            element = execute_sql(c, 'SELECT id,name FROM setup_elements WHERE company_id=:q7_0 AND id=:q7_1 AND active=1', (cid, element_id)).fetchone()
         if element is None:
             return HTMLResponse(layout('Element Setup Audit', '<div class="error">Element not found.</div>', context), 404)
         missing = element_missing_items(database, cid, year, element_id)

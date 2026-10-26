@@ -34,7 +34,7 @@ def register_calendar_v5_routes(app) -> None:
         anchor_arrival = arrival or (str(basket[0]['arrival_date']) if basket else '')
         anchor_departure = departure or (str(basket[0]['departure_date']) if basket else '')
 
-        types = [str(r['name']) for r in rows(database, 'SELECT name FROM setup_element_types WHERE company_id=? AND active=1 ORDER BY name COLLATE NOCASE', (cid,))]
+        types = [str(r['name']) for r in rows(database, 'SELECT name FROM setup_element_types WHERE company_id=:q251_0 AND active=1 ORDER BY lower(name)', (cid,))]
         selected_type = element_type if element_type in types else ''
         # Multiple type selection is restricted to the staff master calendar.
         # An absent selection means ALL, preserving existing bookmarked URLs.
@@ -89,7 +89,7 @@ def register_calendar_v5_routes(app) -> None:
         body = (('<div class="master-calendar-page"></div><h1>Master Calendar</h1>') if staff and not (basket or arrival or departure or edit_hold or recovery_enquiry) else booking_progress_strip(database, context, cid, token) + '<h1>Availability Calendar</h1>')
         if date_warning:
             body += '<div class="error" role="alert">' + esc(date_warning) + '</div>'
-        recovery_row = one(database, '''SELECT ee.*,se.name AS element_name FROM enquiry_elements ee JOIN setup_elements se ON se.id=ee.element_id AND se.company_id=ee.company_id WHERE ee.id=? AND ee.enquiry_id=? AND ee.company_id=? AND COALESCE(ee.recovery_state,'held')='needs_replacement' ''', (recovery_element,recovery_enquiry,cid)) if recovery_enquiry and recovery_element else None
+        recovery_row = one(database, "SELECT ee.*,se.name AS element_name FROM enquiry_elements ee JOIN setup_elements se ON se.id=ee.element_id AND se.company_id=ee.company_id WHERE ee.id=:q249_0 AND ee.enquiry_id=:q249_1 AND ee.company_id=:q249_2 AND COALESCE(ee.recovery_state,'held')='needs_replacement' ", (recovery_element,recovery_enquiry,cid)) if recovery_enquiry and recovery_element else None
         if recovery_enquiry and recovery_element and recovery_row is None:
             return HTMLResponse(layout('Availability Calendar','<h1>Availability Calendar</h1><div class="error">That Enquiry Element no longer requires replacement.</div>',context),409)
         if recovery_row:
@@ -103,7 +103,7 @@ def register_calendar_v5_routes(app) -> None:
             for pid, data in people.items():
                 qty = int(data.get('quantity', 0))
                 if qty:
-                    p = one(database, 'SELECT name FROM setup_person_types WHERE company_id=? AND id=?', (cid, pid))
+                    p = one(database, 'SELECT name FROM setup_person_types WHERE company_id=:q252_0 AND id=:q252_1', (cid, pid))
                     label = f'{qty} {str(p["name"]) if p else "person"}'
                     ages = data.get('ages', [])
                     if ages:
@@ -111,7 +111,7 @@ def register_calendar_v5_routes(app) -> None:
                     summary.append(label)
             for aid, qty in requirements.items():
                 if int(qty):
-                    a = one(database, 'SELECT name FROM setup_addons WHERE company_id=? AND id=?', (cid, aid))
+                    a = one(database, 'SELECT name FROM setup_addons WHERE company_id=:q253_0 AND id=:q253_1', (cid, aid))
                     summary.append(f'{str(a["name"]) if a else "Requirement"} {int(qty)}')
             summary_html = ' · '.join(esc(x) for x in summary) or 'No special requirements'
             name_html = f'<strong>Name:</strong> {esc(working_lead)} &nbsp; ' if working_lead else ''
@@ -149,10 +149,7 @@ def register_calendar_v5_routes(app) -> None:
         held_colour = str(held_status['colour']) if held_status else '#FFE39A'
         held_name = str(held_status['name']) if held_status else 'Enquiry / Held'
         if staff:
-            status_rows = rows(database, """SELECT * FROM booking_status_definitions
-                WHERE company_id=? AND active=1 AND blocks_availability=1
-                  AND internal_state!='RELEASED'
-                ORDER BY display_order,name""", (cid,))
+            status_rows = rows(database, "SELECT * FROM booking_status_definitions\n                WHERE company_id=:q250_0 AND active=1 AND blocks_availability=1\n                  AND internal_state!='RELEASED'\n                ORDER BY display_order,name", (cid,))
             status_legend = ''.join(f'<span class="legend mini" style="background:{esc(r["colour"])}">{esc(r["name"])}</span>' for r in status_rows)
         else:
             status_legend = '<span class="legend mini unavailable">Unavailable</span>'
@@ -166,14 +163,14 @@ def register_calendar_v5_routes(app) -> None:
             elements = []
         elif selected_type or staff:
             if filter_types:
-                marks = ','.join('?' for _ in filter_types)
-                elements = rows(database, f'SELECT * FROM setup_elements WHERE company_id=? AND active=1 AND element_type IN ({marks}) ORDER BY element_type,name COLLATE NOCASE', (cid, *filter_types))
+                marks = ','.join(f':type_{i}' for i in range(len(filter_types)))
+                elements = rows(database, f'SELECT * FROM setup_elements WHERE company_id=:q255_0 AND active=1 AND element_type IN ({marks}) ORDER BY element_type,lower(name)', (cid, *filter_types))
             else:
-                elements = rows(database, 'SELECT * FROM setup_elements WHERE company_id=? AND active=1 ORDER BY element_type,name COLLATE NOCASE', (cid,))
+                elements = rows(database, 'SELECT * FROM setup_elements WHERE company_id=:q254_0 AND active=1 ORDER BY element_type,lower(name)', (cid,))
         elif basket:
             basket_ids = list(dict.fromkeys(int(r['element_id']) for r in basket))
-            marks = ','.join('?' for _ in basket_ids)
-            elements = rows(database, f'SELECT * FROM setup_elements WHERE company_id=? AND active=1 AND id IN ({marks}) ORDER BY element_type,name COLLATE NOCASE', (cid, *basket_ids))
+            marks = ','.join(f':basket_{i}' for i in range(len(basket_ids)))
+            elements = rows(database, f'SELECT * FROM setup_elements WHERE company_id=:q256_0 AND active=1 AND id IN ({marks}) ORDER BY element_type,lower(name)', (cid, *basket_ids))
         else:
             elements = []
         if elements:

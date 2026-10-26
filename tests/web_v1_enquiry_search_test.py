@@ -1,4 +1,6 @@
 from __future__ import annotations
+from operational_backend import create_app
+from online.sql import execute_sql, insert_sql
 
 import sys
 import tempfile
@@ -8,7 +10,7 @@ sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
 from fastapi.testclient import TestClient
 
-from online.app import COOKIE_NAME, create_app
+from online.app import COOKIE_NAME
 from online.webv1 import register_web_v1
 
 
@@ -31,37 +33,34 @@ def main() -> None:
         client = TestClient(app)
 
         with db.connect() as c:
-            forest = int(c.execute("SELECT id FROM companies WHERE name='Forest View Campsite'").fetchone()['id'])
-            riverside = int(c.execute("SELECT id FROM companies WHERE name='Riverside Cabins'").fetchone()['id'])
+            forest = int(execute_sql(c, "SELECT id FROM companies WHERE name='Forest View Campsite'").fetchone()['id'])
+            riverside = int(execute_sql(c, "SELECT id FROM companies WHERE name='Riverside Cabins'").fetchone()['id'])
             now = '2026-08-22T10:00:00+00:00'
-            alice = int(c.execute(
-                "INSERT INTO customer_records(company_id,first_name,last_name,email,phone,created_at,updated_at) VALUES (?,?,?,?,?,?,?)",
+            alice = int(insert_sql(c,
+                'INSERT INTO customer_records(company_id,first_name,last_name,email,phone,created_at,updated_at) VALUES (:q33_0,:q33_1,:q33_2,:q33_3,:q33_4,:q33_5,:q33_6)',
                 (forest, 'Alice', 'Walker', 'alice@example.test', '0611111111', now, now),
             ).lastrowid)
-            bob = int(c.execute(
-                "INSERT INTO customer_records(company_id,first_name,last_name,email,phone,created_at,updated_at) VALUES (?,?,?,?,?,?,?)",
+            bob = int(insert_sql(c,
+                'INSERT INTO customer_records(company_id,first_name,last_name,email,phone,created_at,updated_at) VALUES (:q34_0,:q34_1,:q34_2,:q34_3,:q34_4,:q34_5,:q34_6)',
                 (forest, 'Bob', 'Smith', 'bob@example.test', '0622222222', now, now),
             ).lastrowid)
-            river = int(c.execute(
-                "INSERT INTO customer_records(company_id,first_name,last_name,email,phone,created_at,updated_at) VALUES (?,?,?,?,?,?,?)",
+            river = int(insert_sql(c,
+                'INSERT INTO customer_records(company_id,first_name,last_name,email,phone,created_at,updated_at) VALUES (:q35_0,:q35_1,:q35_2,:q35_3,:q35_4,:q35_5,:q35_6)',
                 (riverside, 'River', 'Guest', 'river@example.test', '0633333333', now, now),
             ).lastrowid)
 
-            held_status = c.execute("SELECT id FROM booking_status_definitions WHERE company_id=? AND active=1 AND internal_state='HELD' ORDER BY id LIMIT 1", (forest,)).fetchone()
+            held_status = execute_sql(c, "SELECT id FROM booking_status_definitions WHERE company_id=:q36_0 AND active=1 AND internal_state='HELD' ORDER BY id LIMIT 1", (forest,)).fetchone()
             assert held_status is not None
-            enquiry_alice = int(c.execute(
-                '''INSERT INTO enquiries(company_id,customer_id,status,source,arrival_date,departure_date,party_size,notes,created_at,updated_at,workflow_status_id,availability_expires_at)
-                   VALUES (?,?,?,?,?,?,?,?,?,?,?,?)''',
+            enquiry_alice = int(insert_sql(c,
+                'INSERT INTO enquiries(company_id,customer_id,status,source,arrival_date,departure_date,party_size,notes,created_at,updated_at,workflow_status_id,availability_expires_at)\n                   VALUES (:q37_0,:q37_1,:q37_2,:q37_3,:q37_4,:q37_5,:q37_6,:q37_7,:q37_8,:q37_9,:q37_10,:q37_11)',
                 (forest, alice, 'new', 'Phone', '2026-09-10', '2026-09-12', 2, 'Electric pitch', now, now, int(held_status['id']), '2099-09-12T10:00:00+00:00'),
             ).lastrowid)
-            enquiry_bob = int(c.execute(
-                '''INSERT INTO enquiries(company_id,customer_id,status,source,arrival_date,departure_date,party_size,notes,created_at,updated_at)
-                   VALUES (?,?,?,?,?,?,?,?,?,?)''',
+            enquiry_bob = int(insert_sql(c,
+                'INSERT INTO enquiries(company_id,customer_id,status,source,arrival_date,departure_date,party_size,notes,created_at,updated_at)\n                   VALUES (:q38_0,:q38_1,:q38_2,:q38_3,:q38_4,:q38_5,:q38_6,:q38_7,:q38_8,:q38_9)',
                 (forest, bob, 'closed', 'Website', '2026-10-01', '2026-10-05', 4, 'Family stay', now, now),
             ).lastrowid)
-            enquiry_river = int(c.execute(
-                '''INSERT INTO enquiries(company_id,customer_id,status,source,arrival_date,departure_date,party_size,notes,created_at,updated_at)
-                   VALUES (?,?,?,?,?,?,?,?,?,?)''',
+            enquiry_river = int(insert_sql(c,
+                'INSERT INTO enquiries(company_id,customer_id,status,source,arrival_date,departure_date,party_size,notes,created_at,updated_at)\n                   VALUES (:q39_0,:q39_1,:q39_2,:q39_3,:q39_4,:q39_5,:q39_6,:q39_7,:q39_8,:q39_9)',
                 (riverside, river, 'new', 'Phone', '2026-09-11', '2026-09-13', 2, 'Other client', now, now),
             ).lastrowid)
 

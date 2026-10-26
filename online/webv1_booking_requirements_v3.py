@@ -1,4 +1,5 @@
 from __future__ import annotations
+from .sql import execute_sql
 
 import json
 from datetime import date
@@ -36,10 +37,8 @@ def register_booking_requirements_v3(app) -> None:
         held_type = ''
         if edit_hold:
             with database.connect() as c:
-                owned = c.execute(
-                    '''SELECT h.id,e.element_type FROM element_holds h
-                       JOIN setup_elements e ON e.id=h.element_id AND e.company_id=h.company_id
-                       WHERE h.id=? AND h.company_id=? AND h.session_token=?''',
+                owned = execute_sql(c,
+                    'SELECT h.id,e.element_type FROM element_holds h\n                       JOIN setup_elements e ON e.id=h.element_id AND e.company_id=h.company_id\n                       WHERE h.id=:q470_0 AND h.company_id=:q470_1 AND h.session_token=:q470_2',
                     (edit_hold, cid, token),
                 ).fetchone()
             if owned is None:
@@ -48,7 +47,7 @@ def register_booking_requirements_v3(app) -> None:
                 held_type = str(owned['element_type'])
 
         element_type = str(data.get('element_type', '') or '').strip() or held_type
-        active_types = {str(r['name']) for r in rows(database, 'SELECT name FROM setup_element_types WHERE company_id=? AND active=1', (cid,))}
+        active_types = {str(r['name']) for r in rows(database, 'SELECT name FROM setup_element_types WHERE company_id=:q461_0 AND active=1', (cid,))}
         if element_type and element_type not in active_types:
             return HTMLResponse(_requirements_page(database, context, cid, token, 'Please select a valid Element Type.', edit_hold=edit_hold, selected_element_type=element_type), 400)
 
@@ -72,7 +71,7 @@ def register_booking_requirements_v3(app) -> None:
         relevant_people = _relevant_person_ids_for_type(database, cid, element_type, year)
         relevant_addons = _relevant_addon_ids_for_type(database, cid, element_type, year)
         people_rows = [p for p in person_type_rows(database, cid, active_only=True) if int(p['id']) in relevant_people]
-        addon_rows = [a for a in rows(database, 'SELECT * FROM setup_addons WHERE company_id=? AND active=1 AND ask_before_availability=1 ORDER BY name COLLATE NOCASE', (cid,)) if int(a['id']) in relevant_addons]
+        addon_rows = [a for a in rows(database, 'SELECT * FROM setup_addons WHERE company_id=:q462_0 AND active=1 AND ask_before_availability=1 ORDER BY lower(name)', (cid,)) if int(a['id']) in relevant_addons]
 
         parsed_people = []
         total = 0
@@ -115,31 +114,24 @@ def register_booking_requirements_v3(app) -> None:
             parsed_addons.append((aid, qty))
 
         with database.connect() as c:
-            c.execute('DELETE FROM booking_requirement_people WHERE company_id=? AND session_token=?', (cid, token))
-            c.execute('DELETE FROM booking_requirement_addons WHERE company_id=? AND session_token=?', (cid, token))
+            execute_sql(c, 'DELETE FROM booking_requirement_people WHERE company_id=:q458_0 AND session_token=:q458_1', (cid, token))
+            execute_sql(c, 'DELETE FROM booking_requirement_addons WHERE company_id=:q459_0 AND session_token=:q459_1', (cid, token))
             for pid, qty, ages in parsed_people:
-                c.execute('INSERT INTO booking_requirement_people(session_token,company_id,person_type_id,quantity,ages_json) VALUES (?,?,?,?,?)', (token, cid, pid, qty, ages))
+                execute_sql(c, 'INSERT INTO booking_requirement_people(session_token,company_id,person_type_id,quantity,ages_json) VALUES (:q463_0,:q463_1,:q463_2,:q463_3,:q463_4)', (token, cid, pid, qty, ages))
             for aid, qty in parsed_addons:
-                c.execute('INSERT INTO booking_requirement_addons(session_token,company_id,addon_id,quantity) VALUES (?,?,?,?)', (token, cid, aid, qty))
-            c.execute('''INSERT INTO booking_requirement_sessions(session_token,company_id,ready,arrival_date,departure_date,lead_name,updated_at)
-                         VALUES (?,?,1,?,?,?,CURRENT_TIMESTAMP)
-                         ON CONFLICT(session_token,company_id) DO UPDATE SET ready=1,arrival_date=excluded.arrival_date,
-                         departure_date=excluded.departure_date,lead_name=excluded.lead_name,updated_at=CURRENT_TIMESTAMP''',
+                execute_sql(c, 'INSERT INTO booking_requirement_addons(session_token,company_id,addon_id,quantity) VALUES (:q464_0,:q464_1,:q464_2,:q464_3)', (token, cid, aid, qty))
+            execute_sql(c, 'INSERT INTO booking_requirement_sessions(session_token,company_id,ready,arrival_date,departure_date,lead_name,updated_at)\n                         VALUES (:q460_0,:q460_1,1,:q460_2,:q460_3,:q460_4,CURRENT_TIMESTAMP)\n                         ON CONFLICT(session_token,company_id) DO UPDATE SET ready=1,arrival_date=excluded.arrival_date,\n                         departure_date=excluded.departure_date,lead_name=excluded.lead_name,updated_at=CURRENT_TIMESTAMP',
                       (token, cid, arrival, departure, lead_name))
 
             # Editing the same Element Type commits only this held item's relevant
             # requirements. Other Elements in the same named booking can intentionally
             # have different occupancy and requirements.
             if edit_hold and element_type == held_type:
-                c.execute('DELETE FROM hold_requirement_people WHERE hold_id=?', (edit_hold,))
-                c.execute('DELETE FROM hold_requirement_addons WHERE hold_id=?', (edit_hold,))
-                c.execute('''INSERT INTO hold_requirement_people(hold_id,company_id,person_type_id,quantity,ages_json)
-                             SELECT ?,company_id,person_type_id,quantity,ages_json FROM booking_requirement_people
-                             WHERE company_id=? AND session_token=?''', (edit_hold, cid, token))
-                c.execute('''INSERT INTO hold_requirement_addons(hold_id,company_id,addon_id,quantity)
-                             SELECT ?,company_id,addon_id,quantity FROM booking_requirement_addons
-                             WHERE company_id=? AND session_token=?''', (edit_hold, cid, token))
-                c.execute('UPDATE element_holds SET lead_name=? WHERE id=? AND company_id=? AND session_token=?', (lead_name, edit_hold, cid, token))
+                execute_sql(c, 'DELETE FROM hold_requirement_people WHERE hold_id=:q465_0', (edit_hold,))
+                execute_sql(c, 'DELETE FROM hold_requirement_addons WHERE hold_id=:q466_0', (edit_hold,))
+                execute_sql(c, 'INSERT INTO hold_requirement_people(hold_id,company_id,person_type_id,quantity,ages_json)\n                             SELECT :q467_0,company_id,person_type_id,quantity,ages_json FROM booking_requirement_people\n                             WHERE company_id=:q467_1 AND session_token=:q467_2', (edit_hold, cid, token))
+                execute_sql(c, 'INSERT INTO hold_requirement_addons(hold_id,company_id,addon_id,quantity)\n                             SELECT :q468_0,company_id,addon_id,quantity FROM booking_requirement_addons\n                             WHERE company_id=:q468_1 AND session_token=:q468_2', (edit_hold, cid, token))
+                execute_sql(c, 'UPDATE element_holds SET lead_name=:q469_0 WHERE id=:q469_1 AND company_id=:q469_2 AND session_token=:q469_3', (lead_name, edit_hold, cid, token))
 
         parts = []
         if element_type: parts.append('element_type=' + quote_plus(element_type))

@@ -1,4 +1,5 @@
 from __future__ import annotations
+from .sql import execute_sql, insert_sql, local_schema
 
 from datetime import date
 from typing import Any
@@ -66,7 +67,7 @@ CREATE TABLE IF NOT EXISTS setup_element_addons (
 
 def initialise_setup014(database) -> None:
     with database.connect() as connection:
-        connection.executescript(SCHEMA)
+        local_schema(connection, SCHEMA)
 
 
 def working_company(context) -> int | None:
@@ -103,16 +104,16 @@ def audit(database, context, company_id: int, action: str, entity_type: str, ent
 
 def rows(database, sql: str, params=()):
     with database.connect() as c:
-        return c.execute(sql, params).fetchall()
+        return execute_sql(c, sql, params).fetchall()
 
 
 def one(database, sql: str, params=()):
     with database.connect() as c:
-        return c.execute(sql, params).fetchone()
+        return execute_sql(c, sql, params).fetchone()
 
 
 def years(database, company_id: int) -> list[int]:
-    return [int(r["year"]) for r in rows(database, "SELECT year FROM setup_years WHERE company_id=? ORDER BY year", (company_id,))]
+    return [int(r["year"]) for r in rows(database, 'SELECT year FROM setup_years WHERE company_id=:q244_0 ORDER BY year', (company_id,))]
 
 
 def selected_year(database, company_id: int, raw: str | int | None) -> int | None:
@@ -162,26 +163,26 @@ def copy_previous_year(database, company_id: int, target_year: int) -> int:
     if target_year in years(database, company_id):
         raise ValueError("That year already exists")
     with database.connect() as c:
-        c.execute("INSERT INTO setup_years(company_id,year,copied_from_year) VALUES (?,?,?)", (company_id,target_year,source))
+        execute_sql(c, 'INSERT INTO setup_years(company_id,year,copied_from_year) VALUES (:q241_0,:q241_1,:q241_2)', (company_id,target_year,source))
         season_map: dict[int,int] = {}
-        for row in c.execute("SELECT * FROM setup_seasons WHERE company_id=? AND year=? ORDER BY id", (company_id,source)):
-            new_id = c.execute(
-                "INSERT INTO setup_seasons(company_id,year,name,start_date,end_date) VALUES (?,?,?,?,?)",
+        for row in execute_sql(c, 'SELECT * FROM setup_seasons WHERE company_id=:q242_0 AND year=:q242_1 ORDER BY id', (company_id,source)):
+            new_id = insert_sql(c,
+                'INSERT INTO setup_seasons(company_id,year,name,start_date,end_date) VALUES (:q245_0,:q245_1,:q245_2,:q245_3,:q245_4)',
                 (company_id,target_year,row["name"],shift_date(row["start_date"],target_year),shift_date(row["end_date"],target_year)),
             ).lastrowid
             season_map[int(row["id"])] = int(new_id)
-        for row in c.execute("SELECT * FROM setup_element_rates WHERE company_id=? AND year=?", (company_id,source)):
+        for row in execute_sql(c, 'SELECT * FROM setup_element_rates WHERE company_id=:q243_0 AND year=:q243_1', (company_id,source)):
             if int(row["season_id"]) in season_map:
-                c.execute("INSERT INTO setup_element_rates VALUES (?,?,?,?,?)", (company_id,target_year,row["element_id"],season_map[int(row["season_id"])],row["rate"]))
+                execute_sql(c, 'INSERT INTO setup_element_rates VALUES (:q246_0,:q246_1,:q246_2,:q246_3,:q246_4)', (company_id,target_year,row["element_id"],season_map[int(row["season_id"])],row["rate"]))
         for table, cols in (
             ("setup_occupancy", "element_id,max_total"),
             ("setup_person_limits", "element_id,person_type_id,max_count"),
             ("setup_type_addons", "element_type,addon_id,allowed,min_qty,max_qty,rate"),
             ("setup_element_addons", "element_id,addon_id,state,min_qty,max_qty,rate"),
         ):
-            source_rows = c.execute(f"SELECT {cols} FROM {table} WHERE company_id=? AND year=?", (company_id,source)).fetchall()
+            source_rows = execute_sql(c, f'SELECT {cols} FROM {table} WHERE company_id=:q248_0 AND year=:q248_1', (company_id,source)).fetchall()
             names = cols.split(",")
-            placeholders = ",".join("?" for _ in range(2 + len(names)))
+            placeholders = ",".join(f":copy_{i}" for i in range(2 + len(names)))
             for row in source_rows:
-                c.execute(f"INSERT INTO {table}(company_id,year,{cols}) VALUES ({placeholders})", (company_id,target_year,*[row[n] for n in names]))
+                execute_sql(c, f'INSERT INTO {table}(company_id,year,{cols}) VALUES ({placeholders})', (company_id,target_year,*[row[n] for n in names]))
     return source

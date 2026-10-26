@@ -1,4 +1,5 @@
 from __future__ import annotations
+from .sql import execute_sql
 
 from datetime import date, timedelta
 from typing import Any
@@ -98,7 +99,7 @@ def availability_state(database, company_id: int, element_id: int, arrival: str,
         active = element_active_cache[element_key]
     else:
         with database.connect() as c:
-            element = c.execute('SELECT active FROM setup_elements WHERE id=? AND company_id=?', (element_id, company_id)).fetchone()
+            element = execute_sql(c, 'SELECT active FROM setup_elements WHERE id=:q167_0 AND company_id=:q167_1', (element_id, company_id)).fetchone()
         active = bool(element is not None and int(element['active']))
         if element_active_cache is not None:
             element_active_cache[element_key] = active
@@ -134,10 +135,7 @@ def availability_state(database, company_id: int, element_id: int, arrival: str,
         # Availability reads are deliberately non-destructive. Expired holds are
         # invisible immediately, while physical cleanup is reserved for explicit
         # write/lifecycle operations so polling and page rendering cannot mutate data.
-        held_rows = c.execute('''SELECT * FROM element_holds WHERE company_id=? AND element_id=?
-                            AND date(arrival_date)<date(?) AND date(departure_date)>date(?)
-                            AND expires_at>?
-                            ORDER BY expires_at DESC,id DESC''', (company_id, element_id, departure, arrival, iso_now())).fetchall()
+        held_rows = execute_sql(c, 'SELECT * FROM element_holds WHERE company_id=:q166_0 AND element_id=:q166_1\n                            AND date(arrival_date)<date(:q166_2) AND date(departure_date)>date(:q166_3)\n                            AND expires_at>:q166_4\n                            ORDER BY expires_at DESC,id DESC', (company_id, element_id, departure, arrival, iso_now())).fetchall()
         if held_rows:
             foreign = next((h for h in held_rows if not session_token or str(h['session_token']) != session_token), None)
             held = foreign or held_rows[0]
@@ -152,12 +150,12 @@ def available_elements(database, company_id: int, element_type: str, arrival: st
     except ValueError:
         return []
     result: list[dict[str, Any]] = []
-    for element in rows(database, 'SELECT * FROM setup_elements WHERE company_id=? AND active=1 AND element_type=? ORDER BY name COLLATE NOCASE', (company_id, element_type)):
+    for element in rows(database, 'SELECT * FROM setup_elements WHERE company_id=:q164_0 AND active=1 AND element_type=:q164_1 ORDER BY lower(name)', (company_id, element_type)):
         state = availability_state(database, company_id, int(element['id']), arrival, departure, session_token=session_token)
         if not state['available']:
             continue
         addons = []
-        for addon in rows(database, 'SELECT * FROM setup_addons WHERE company_id=? AND active=1 ORDER BY name COLLATE NOCASE', (company_id,)):
+        for addon in rows(database, 'SELECT * FROM setup_addons WHERE company_id=:q165_0 AND active=1 ORDER BY lower(name)', (company_id,)):
             rule = _addon_rule(database, company_id, year, element, int(addon['id']))
             addons.append({'id': int(addon['id']), 'name': str(addon['name']), 'available': bool(rule['allowed'])})
         result.append({'id': int(element['id']), 'name': str(element['name']), 'element_type': str(element['element_type']), 'state': state['state'], 'addons': addons})

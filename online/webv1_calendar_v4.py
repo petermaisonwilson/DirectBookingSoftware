@@ -1,4 +1,5 @@
 from __future__ import annotations
+from .sql import execute_sql
 
 import json
 from datetime import date, timedelta
@@ -48,12 +49,8 @@ def _basket_rows(database, company_id: int, token: str):
     from .webv1_basket import _purge_expired_basket_rows
     with database.connect() as c:
         _purge_expired_basket_rows(c, company_id, token)
-        return c.execute(
-            '''SELECT h.*,e.name AS element_name,e.element_type
-               FROM element_holds h
-               JOIN setup_elements e ON e.id=h.element_id AND e.company_id=h.company_id
-               WHERE h.company_id=? AND h.session_token=?
-               ORDER BY h.created_at,h.id''',
+        return execute_sql(c,
+            'SELECT h.*,e.name AS element_name,e.element_type\n               FROM element_holds h\n               JOIN setup_elements e ON e.id=h.element_id AND e.company_id=h.company_id\n               WHERE h.company_id=:q80_0 AND h.session_token=:q80_1\n               ORDER BY h.created_at,h.id',
             (company_id, token),
         ).fetchall()
 
@@ -81,7 +78,7 @@ def register_calendar_v4_routes(app) -> None:
         anchor_arrival = str(basket[0]['arrival_date']) if basket else arrival
         anchor_departure = str(basket[0]['departure_date']) if basket else departure
 
-        types = [str(r['name']) for r in rows(database, 'SELECT name FROM setup_element_types WHERE company_id=? AND active=1 ORDER BY name COLLATE NOCASE', (cid,))]
+        types = [str(r['name']) for r in rows(database, 'SELECT name FROM setup_element_types WHERE company_id=:q81_0 AND active=1 ORDER BY lower(name)', (cid,))]
         selected_type = element_type if element_type in types else (types[0] if types else '')
         arrival_day = _parse(arrival)
         departure_day = _parse(departure)
@@ -142,7 +139,7 @@ def register_calendar_v4_routes(app) -> None:
             body += f'<div class="card edit-notice"><strong>Editing {esc(editing["element_name"])}</strong> — choose new dates and/or another {esc(editing["element_type"])} Element below, then click <strong>UPDATE</strong>.</div>'
 
         if staff:
-            status_rows = rows(database, 'SELECT * FROM booking_status_definitions WHERE company_id=? AND active=1 ORDER BY display_order,name', (cid,))
+            status_rows = rows(database, 'SELECT * FROM booking_status_definitions WHERE company_id=:q78_0 AND active=1 ORDER BY display_order,name', (cid,))
             legend = ''.join(f'<span class="legend" style="background:{esc(r["colour"])}">{esc(r["name"])}</span>' for r in status_rows)
             body += f'<div class="card"><div class="legend-row"><strong>Key:</strong>{legend}<span class="legend closed">Closed</span><span>Available = clear</span></div></div>'
         else:
@@ -150,7 +147,7 @@ def register_calendar_v4_routes(app) -> None:
 
         lower_header = _header(dates, arrival_day, departure_day)
         lower_rows = ''
-        elements = rows(database, 'SELECT * FROM setup_elements WHERE company_id=? AND active=1 AND element_type=? ORDER BY name COLLATE NOCASE', (cid, selected_type)) if selected_type else []
+        elements = rows(database, 'SELECT * FROM setup_elements WHERE company_id=:q79_0 AND active=1 AND element_type=:q79_1 ORDER BY lower(name)', (cid, selected_type)) if selected_type else []
         held_status = default_status(database, cid, 'HELD')
         held_colour = str(held_status['colour']) if held_status else '#FFE39A'
         held_name = str(held_status['name']) if held_status else 'Enquiry / Held'

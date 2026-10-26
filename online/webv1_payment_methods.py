@@ -1,4 +1,5 @@
 from __future__ import annotations
+from .sql import execute_sql, insert_sql, local_schema
 
 from fastapi import Request
 from fastapi.responses import HTMLResponse, RedirectResponse
@@ -29,21 +30,19 @@ DEFAULTS=(("Card","card",10),("Cash","manual",20),("Cheque","manual",30),("Credi
 
 def initialise_payment_methods(database):
     with database.connect() as c:
-        c.executescript(SCHEMA); now=iso_now()
-        for company in c.execute("SELECT id FROM companies").fetchall():
+        local_schema(c, SCHEMA); now=iso_now()
+        for company in execute_sql(c, "SELECT id FROM companies").fetchall():
             cid=int(company["id"])
-            if not int(c.execute("SELECT COUNT(*) AS n FROM payment_method_definitions WHERE company_id=?",(cid,)).fetchone()["n"]):
+            if not int(execute_sql(c, 'SELECT COUNT(*) AS n FROM payment_method_definitions WHERE company_id=:q300_0',(cid,)).fetchone()["n"]):
                 for name,kind,order_no in DEFAULTS:
-                    c.execute("INSERT INTO payment_method_definitions(company_id,name,method_type,display_order,active,created_at,updated_at) VALUES (?,?,?,?,1,?,?)",(cid,name,kind,order_no,now,now))
-            c.execute("""INSERT OR IGNORE INTO payment_rules
-                (company_id,deposit_type,deposit_value,full_payment_threshold,balance_due_days,always_require_full_payment,updated_at)
-                VALUES (?,'fixed',0,NULL,0,1,?)""",(cid,now))
+                    execute_sql(c, 'INSERT INTO payment_method_definitions(company_id,name,method_type,display_order,active,created_at,updated_at) VALUES (:q296_0,:q296_1,:q296_2,:q296_3,1,:q296_4,:q296_5)',(cid,name,kind,order_no,now,now))
+            execute_sql(c, "INSERT INTO payment_rules\n                (company_id,deposit_type,deposit_value,full_payment_threshold,balance_due_days,always_require_full_payment,updated_at)\n                VALUES (:q291_0,'fixed',0,NULL,0,1,:q291_1) ON CONFLICT DO NOTHING",(cid,now))
 
 
 
 def _currency_code(database, company_id:int) -> str:
     with database.connect() as c:
-        row=c.execute('SELECT currency FROM companies WHERE id=?',(company_id,)).fetchone()
+        row=execute_sql(c, 'SELECT currency FROM companies WHERE id=:q295_0',(company_id,)).fetchone()
         return str(row['currency'] or 'EUR').upper() if row else 'EUR'
 
 
@@ -54,7 +53,7 @@ def _currency_symbol(database, company_id:int) -> str:
     return symbols.get(code,code)
 
 def payment_rule(database, company_id:int):
-    result=rows(database,"SELECT * FROM payment_rules WHERE company_id=?",(company_id,))
+    result=rows(database,'SELECT * FROM payment_rules WHERE company_id=:q289_0',(company_id,))
     return result[0] if result else None
 
 
@@ -64,7 +63,7 @@ def register_payment_method_routes(app):
     @app.get("/setup/payment-methods",response_class=HTMLResponse)
     def page(request:Request,saved:int=0,message:str=''):
         context=context_for(database,request); cid=int(working_company(context))
-        methods=rows(database,"SELECT * FROM payment_method_definitions WHERE company_id=? ORDER BY display_order,name",(cid,)); currency_symbol=_currency_symbol(database,cid)
+        methods=rows(database,'SELECT * FROM payment_method_definitions WHERE company_id=:q290_0 ORDER BY display_order,name',(cid,)); currency_symbol=_currency_symbol(database,cid)
         rule=payment_rule(database,cid)
         trs="".join(f'<tr><td>{int(m["display_order"])}</td><td>{esc(m["name"])}</td><td>{"Card provider" if m["method_type"]=="card" else "Manual payment"}</td><td>{"Active" if int(m["active"]) else "Inactive"}</td><td><form method="post" action="/setup/payment-methods/toggle"><input type="hidden" name="csrf" value="{esc(context["csrf_token"])}"><input type="hidden" name="id" value="{int(m["id"])}"><button class="secondary">{"Deactivate" if int(m["active"]) else "Reactivate"}</button></form></td></tr>' for m in methods)
         deposit_type=str(rule["deposit_type"] if rule else "fixed")
@@ -102,10 +101,8 @@ def register_payment_method_routes(app):
             return RedirectResponse("/setup/payment-methods?message=Enter+valid+Payment+Rule+values",303)
         always=1 if data.get("always_require_full_payment")=="1" else 0; now=iso_now()
         with database.connect() as c:
-            before=c.execute("SELECT * FROM payment_rules WHERE company_id=?",(cid,)).fetchone()
-            c.execute("""INSERT INTO payment_rules(company_id,deposit_type,deposit_value,full_payment_threshold,balance_due_days,always_require_full_payment,updated_by_user_id,updated_at)
-                VALUES (?,?,?,?,?,?,?,?)
-                ON CONFLICT(company_id) DO UPDATE SET deposit_type=excluded.deposit_type,deposit_value=excluded.deposit_value,full_payment_threshold=excluded.full_payment_threshold,balance_due_days=excluded.balance_due_days,always_require_full_payment=excluded.always_require_full_payment,updated_by_user_id=excluded.updated_by_user_id,updated_at=excluded.updated_at""",
+            before=execute_sql(c, 'SELECT * FROM payment_rules WHERE company_id=:q297_0',(cid,)).fetchone()
+            execute_sql(c, 'INSERT INTO payment_rules(company_id,deposit_type,deposit_value,full_payment_threshold,balance_due_days,always_require_full_payment,updated_by_user_id,updated_at)\n                VALUES (:q292_0,:q292_1,:q292_2,:q292_3,:q292_4,:q292_5,:q292_6,:q292_7)\n                ON CONFLICT(company_id) DO UPDATE SET deposit_type=excluded.deposit_type,deposit_value=excluded.deposit_value,full_payment_threshold=excluded.full_payment_threshold,balance_due_days=excluded.balance_due_days,always_require_full_payment=excluded.always_require_full_payment,updated_by_user_id=excluded.updated_by_user_id,updated_at=excluded.updated_at',
                 (cid,kind,value,threshold,balance_days,always,context["user_id"],now))
         audit(database,context,cid,"PAYMENT_RULES_SAVED","payment_rules",cid,dict(before) if before else None,{"deposit_type":kind,"deposit_value":value,"full_payment_threshold":threshold,"balance_due_days":balance_days,"always_require_full_payment":always})
         return RedirectResponse("/setup/payment-methods?saved=1",303)
@@ -118,7 +115,7 @@ def register_payment_method_routes(app):
         except ValueError: order_no=50
         if not name or kind not in {"manual","card"}: return RedirectResponse("/setup/payment-methods",303)
         now=iso_now()
-        with database.connect() as c: mid=int(c.execute("INSERT INTO payment_method_definitions(company_id,name,method_type,display_order,active,created_at,updated_at) VALUES (?,?,?,?,1,?,?)",(cid,name,kind,order_no,now,now)).lastrowid)
+        with database.connect() as c: mid=int(insert_sql(c, 'INSERT INTO payment_method_definitions(company_id,name,method_type,display_order,active,created_at,updated_at) VALUES (:q298_0,:q298_1,:q298_2,:q298_3,1,:q298_4,:q298_5)',(cid,name,kind,order_no,now,now)).lastrowid)
         audit(database,context,cid,"PAYMENT_METHOD_SAVED","payment_method",mid,after={"name":name,"method_type":kind,"display_order":order_no})
         return RedirectResponse("/setup/payment-methods?saved=1",303)
 
@@ -128,9 +125,9 @@ def register_payment_method_routes(app):
         try: mid=int(data.get("id",""))
         except ValueError: return RedirectResponse("/setup/payment-methods",303)
         with database.connect() as c:
-            before=c.execute("SELECT * FROM payment_method_definitions WHERE company_id=? AND id=?",(cid,mid)).fetchone()
+            before=execute_sql(c, 'SELECT * FROM payment_method_definitions WHERE company_id=:q299_0 AND id=:q299_1',(cid,mid)).fetchone()
             if not before: return RedirectResponse("/setup/payment-methods",303)
             active=0 if int(before["active"]) else 1
-            c.execute("UPDATE payment_method_definitions SET active=?,updated_at=? WHERE company_id=? AND id=?",(active,iso_now(),cid,mid))
+            execute_sql(c, 'UPDATE payment_method_definitions SET active=:q293_0,updated_at=:q293_1 WHERE company_id=:q293_2 AND id=:q293_3',(active,iso_now(),cid,mid))
         audit(database,context,cid,"PAYMENT_METHOD_TOGGLED","payment_method",mid,dict(before),{"active":active})
         return RedirectResponse("/setup/payment-methods",303)

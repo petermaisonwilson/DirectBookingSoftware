@@ -1,4 +1,5 @@
 from __future__ import annotations
+from .sql import INTEGRITY_ERRORS, execute_sql, insert_sql
 
 import sqlite3
 from datetime import date
@@ -68,7 +69,7 @@ def _element_types_page(database, context, submitted=None, errors=None, message=
     cid = working_company(context)
     submitted = submitted or {}
     errors = errors or set()
-    type_rows = rows(database, 'SELECT * FROM setup_element_types WHERE company_id=? ORDER BY active DESC,name', (cid,))
+    type_rows = rows(database, 'SELECT * FROM setup_element_types WHERE company_id=:q609_0 ORDER BY active DESC,name', (cid,))
     current = next((r for r in type_rows if int(r['id']) == int(edit or 0)), None)
     name = submitted.get('name', current['name'] if current else '')
     body = f'<h1>Element Types</h1>{setup_nav()}{error_box(message)}'
@@ -78,7 +79,7 @@ def _element_types_page(database, context, submitted=None, errors=None, message=
     <label>Name</label><input style="{field_style("name" in errors)}" name="name" value="{esc(name)}"><p><button>{"Save name" if current else "Add Element Type"}</button></p></form></div>'''
     body += '<div class="card"><table><thead><tr><th>Name</th><th>Status</th><th>Used by</th><th></th></tr></thead><tbody>'
     for t in type_rows:
-        used = rows(database, 'SELECT id FROM setup_elements WHERE company_id=? AND element_type=?', (cid, t['name']))
+        used = rows(database, 'SELECT id FROM setup_elements WHERE company_id=:q611_0 AND element_type=:q611_1', (cid, t['name']))
         toggle = 'Reactivate' if not t['active'] else 'Deactivate'
         body += f'<tr><td>{esc(t["name"])}</td><td>{"Active" if t["active"] else "Inactive"}</td><td>{len(used)} Element(s)</td><td><a href="/setup/element-types?edit={t["id"]}">Rename</a> &nbsp; <form method="post" action="/setup/element-types/toggle" style="display:inline"><input type="hidden" name="csrf" value="{esc(context["csrf_token"])}"><input type="hidden" name="id" value="{t["id"]}"><button class="secondary">{toggle}</button></form></td></tr>'
     body += '</tbody></table></div>'
@@ -89,10 +90,10 @@ def _elements_page(database, context, submitted=None, errors=None, message='', e
     cid = working_company(context)
     submitted = submitted or {}
     errors = errors or set()
-    element_rows = rows(database, 'SELECT * FROM setup_elements WHERE company_id=? ORDER BY element_type,name', (cid,))
+    element_rows = rows(database, 'SELECT * FROM setup_elements WHERE company_id=:q610_0 ORDER BY element_type,name', (cid,))
     element_rows = setup_rows(database, cid, 'elements', element_rows)
     current = next((r for r in element_rows if int(r['id']) == int(edit or 0)), None)
-    active_types = list(rows(database, 'SELECT * FROM setup_element_types WHERE company_id=? AND active=1 ORDER BY name', (cid,)))
+    active_types = list(rows(database, 'SELECT * FROM setup_element_types WHERE company_id=:q612_0 AND active=1 ORDER BY name', (cid,)))
     selected_type = submitted.get('element_type', current['element_type'] if current else '')
     if current and selected_type and not any(str(t['name']) == selected_type for t in active_types):
         active_types.append({'name': selected_type})
@@ -117,7 +118,7 @@ def _catalog_page(database, context, table, title, action, methods=(), submitted
     submitted = submitted or {}
     errors = errors or set()
     is_person = table == 'setup_person_types'
-    catalog_rows = person_type_rows(database, cid) if is_person else rows(database, f'SELECT * FROM {table} WHERE company_id=? ORDER BY name', (cid,))
+    catalog_rows = person_type_rows(database, cid) if is_person else rows(database, f'SELECT * FROM {table} WHERE company_id=:q628_0 ORDER BY name', (cid,))
     method = submitted.get('pricing_method', methods[0] if methods else '')
     method_html = ''
     if methods:
@@ -194,15 +195,15 @@ def register_catalogue_routes(app) -> None:
         try:
             with database.connect() as c:
                 if raw_id.isdigit():
-                    old = c.execute('SELECT * FROM setup_element_types WHERE id=? AND company_id=?', (int(raw_id), cid)).fetchone()
+                    old = execute_sql(c, 'SELECT * FROM setup_element_types WHERE id=:q626_0 AND company_id=:q626_1', (int(raw_id), cid)).fetchone()
                     if not old: return HTMLResponse(_element_types_page(database, context, data, {'name'}, 'Element Type was not found.'), 404)
                     before = dict(old); old_name = old['name']; entity_id = int(raw_id)
-                    c.execute('UPDATE setup_element_types SET name=? WHERE id=? AND company_id=?', (name, entity_id, cid))
-                    c.execute('UPDATE setup_elements SET element_type=? WHERE company_id=? AND element_type=?', (name, cid, old_name))
-                    c.execute('UPDATE setup_type_addons SET element_type=? WHERE company_id=? AND element_type=?', (name, cid, old_name))
+                    execute_sql(c, 'UPDATE setup_element_types SET name=:q617_0 WHERE id=:q617_1 AND company_id=:q617_2', (name, entity_id, cid))
+                    execute_sql(c, 'UPDATE setup_elements SET element_type=:q618_0 WHERE company_id=:q618_1 AND element_type=:q618_2', (name, cid, old_name))
+                    execute_sql(c, 'UPDATE setup_type_addons SET element_type=:q619_0 WHERE company_id=:q619_1 AND element_type=:q619_2', (name, cid, old_name))
                 else:
-                    before = None; entity_id = c.execute('INSERT INTO setup_element_types(company_id,name) VALUES (?,?)', (cid, name)).lastrowid
-        except sqlite3.IntegrityError:
+                    before = None; entity_id = insert_sql(c, 'INSERT INTO setup_element_types(company_id,name) VALUES (:q624_0,:q624_1)', (cid, name)).lastrowid
+        except INTEGRITY_ERRORS:
             return HTMLResponse(_element_types_page(database, context, data, {'name'}, 'That Element Type already exists for this Client.'), 400)
         audit(database, context, cid, 'ELEMENT_TYPE_SAVED', 'element_type', entity_id, before, {'name': name})
         return RedirectResponse('/setup/element-types', 303)
@@ -213,10 +214,10 @@ def register_catalogue_routes(app) -> None:
         try: type_id = int(data.get('id', ''))
         except ValueError: return HTMLResponse(_element_types_page(database, context, message='Invalid Element Type.'), 400)
         with database.connect() as c:
-            old = c.execute('SELECT * FROM setup_element_types WHERE id=? AND company_id=?', (type_id, cid)).fetchone()
+            old = execute_sql(c, 'SELECT * FROM setup_element_types WHERE id=:q620_0 AND company_id=:q620_1', (type_id, cid)).fetchone()
             if not old: return HTMLResponse(_element_types_page(database, context, message='Element Type was not found.'), 404)
             new_state = 0 if old['active'] else 1
-            c.execute('UPDATE setup_element_types SET active=? WHERE id=? AND company_id=?', (new_state, type_id, cid))
+            execute_sql(c, 'UPDATE setup_element_types SET active=:q613_0 WHERE id=:q613_1 AND company_id=:q613_2', (new_state, type_id, cid))
         audit(database, context, cid, 'ELEMENT_TYPE_STATUS_CHANGED', 'element_type', type_id, dict(old), {'active': new_state})
         return RedirectResponse('/setup/element-types', 303)
 
@@ -229,7 +230,7 @@ def register_catalogue_routes(app) -> None:
         context = context_for(database, request); cid = working_company(context); data = await form_data(request); require_csrf(context, data)
         name = data.get('name', '').strip(); element_type = data.get('element_type', '').strip(); method = data.get('pricing_method', ''); errors = set()
         if not name: errors.add('name')
-        if not element_type or not rows(database, 'SELECT id FROM setup_element_types WHERE company_id=? AND name=?', (cid, element_type)): errors.add('element_type')
+        if not element_type or not rows(database, 'SELECT id FROM setup_element_types WHERE company_id=:q614_0 AND name=:q614_1', (cid, element_type)): errors.add('element_type')
         if method not in ELEMENT_PRICING_METHODS: errors.add('pricing_method')
         try: base_price = valid_money(data.get('base_price', ''))
         except (TypeError, ValueError): base_price = 0; errors.add('base_price')
@@ -238,13 +239,13 @@ def register_catalogue_routes(app) -> None:
         try:
             with database.connect() as c:
                 if edit_id:
-                    old = c.execute('SELECT * FROM setup_elements WHERE id=? AND company_id=?', (edit_id, cid)).fetchone()
+                    old = execute_sql(c, 'SELECT * FROM setup_elements WHERE id=:q627_0 AND company_id=:q627_1', (edit_id, cid)).fetchone()
                     if not old: return HTMLResponse(_elements_page(database, context, data, {'name'}, 'Element was not found.'), 404)
                     before = dict(old); entity_id = edit_id
-                    c.execute('UPDATE setup_elements SET name=?,element_type=?,pricing_method=?,base_price=? WHERE id=? AND company_id=?', (name, element_type, method, base_price, edit_id, cid))
+                    execute_sql(c, 'UPDATE setup_elements SET name=:q621_0,element_type=:q621_1,pricing_method=:q621_2,base_price=:q621_3 WHERE id=:q621_4 AND company_id=:q621_5', (name, element_type, method, base_price, edit_id, cid))
                 else:
-                    before = None; entity_id = c.execute('INSERT INTO setup_elements(company_id,name,element_type,pricing_method,base_price) VALUES (?,?,?,?,?)', (cid, name, element_type, method, base_price)).lastrowid
-        except sqlite3.IntegrityError:
+                    before = None; entity_id = insert_sql(c, 'INSERT INTO setup_elements(company_id,name,element_type,pricing_method,base_price) VALUES (:q625_0,:q625_1,:q625_2,:q625_3,:q625_4)', (cid, name, element_type, method, base_price)).lastrowid
+        except INTEGRITY_ERRORS:
             return HTMLResponse(_elements_page(database, context, data, {'name'}, 'An Element with that name already exists.', edit=edit_id), 400)
         audit(database, context, cid, 'ELEMENT_SAVED', 'element', entity_id, before, {'name': name, 'element_type': element_type, 'pricing_method': method, 'base_price': base_price})
         return RedirectResponse('/setup/elements?saved=1', 303)
@@ -258,8 +259,8 @@ def register_catalogue_routes(app) -> None:
         context = context_for(database, request); cid = working_company(context); data = await form_data(request); require_csrf(context, data); name = data.get('name', '').strip()
         if not name: return HTMLResponse(_catalog_page(database, context, 'setup_person_types', 'Person Types', '/setup/person-types', submitted=data, errors={'name'}, message='Person Type name cannot be empty.'), 400)
         try:
-            with database.connect() as c: entity_id = c.execute('INSERT INTO setup_person_types(company_id,name,short_name) VALUES (?,?,?)', (cid, name, data.get('short_name', '').strip())).lastrowid
-        except sqlite3.IntegrityError:
+            with database.connect() as c: entity_id = insert_sql(c, 'INSERT INTO setup_person_types(company_id,name,short_name) VALUES (:q622_0,:q622_1,:q622_2)', (cid, name, data.get('short_name', '').strip())).lastrowid
+        except INTEGRITY_ERRORS:
             return HTMLResponse(_catalog_page(database, context, 'setup_person_types', 'Person Types', '/setup/person-types', submitted=data, errors={'name'}, message='That Person Type already exists.'), 400)
         audit(database, context, cid, 'PERSON_TYPE_ADDED', 'person_type', entity_id, None, {'name': name}); return RedirectResponse('/setup/person-types', 303)
 
@@ -274,8 +275,8 @@ def register_catalogue_routes(app) -> None:
         if method not in ADDON_PRICING_METHODS: errors.add('pricing_method')
         if errors: return HTMLResponse(_catalog_page(database, context, 'setup_addons', 'Add-ons', '/setup/addons', ADDON_PRICING_METHODS, data, errors, 'Complete every highlighted Add-on field.'), 400)
         try:
-            with database.connect() as c: entity_id = c.execute('INSERT INTO setup_addons(company_id,name,pricing_method) VALUES (?,?,?)', (cid, name, method)).lastrowid
-        except sqlite3.IntegrityError:
+            with database.connect() as c: entity_id = insert_sql(c, 'INSERT INTO setup_addons(company_id,name,pricing_method) VALUES (:q623_0,:q623_1,:q623_2)', (cid, name, method)).lastrowid
+        except INTEGRITY_ERRORS:
             return HTMLResponse(_catalog_page(database, context, 'setup_addons', 'Add-ons', '/setup/addons', ADDON_PRICING_METHODS, data, {'name'}, 'That Add-on already exists.'), 400)
         audit(database, context, cid, 'ADDON_ADDED', 'addon', entity_id, None, {'name': name, 'pricing_method': method}); return RedirectResponse('/setup/addons', 303)
 
@@ -290,8 +291,8 @@ def register_catalogue_routes(app) -> None:
         except ValueError: return HTMLResponse(_years_page(database, context, {'new_year': data.get('year', '')}, {'new_year'}, 'Enter a valid year.'), 400)
         try:
             with database.connect() as c:
-                c.execute('INSERT INTO setup_years(company_id,year) VALUES (?,?)', (cid, year)); c.execute('INSERT INTO setup_seasons(company_id,year,name,start_date,end_date) VALUES (?,?,?,?,?)', (cid, year, f'All Year {year}', f'{year}-01-01', f'{year}-12-31'))
-        except sqlite3.IntegrityError:
+                execute_sql(c, 'INSERT INTO setup_years(company_id,year) VALUES (:q615_0,:q615_1)', (cid, year)); execute_sql(c, 'INSERT INTO setup_seasons(company_id,year,name,start_date,end_date) VALUES (:q616_0,:q616_1,:q616_2,:q616_3,:q616_4)', (cid, year, f'All Year {year}', f'{year}-01-01', f'{year}-12-31'))
+        except INTEGRITY_ERRORS:
             return HTMLResponse(_years_page(database, context, {'new_year': str(year)}, {'new_year'}, 'That pricing year already exists.'), 400)
         audit(database, context, cid, 'PRICING_YEAR_CREATED', 'pricing_year', year, None, {'year': year}); return RedirectResponse('/setup/years', 303)
 

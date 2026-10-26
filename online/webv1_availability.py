@@ -1,4 +1,5 @@
 from __future__ import annotations
+from .sql import lock_inventory, execute_sql, insert_sql, local_schema
 
 from datetime import date, datetime, timedelta, timezone
 from typing import Any
@@ -53,7 +54,7 @@ ON element_holds(company_id, element_id, arrival_date, departure_date, expires_a
 
 def initialise_availability(database) -> None:
     with database.connect() as c:
-        c.executescript(SCHEMA)
+        local_schema(c, SCHEMA)
 
 
 def _parse_day(value: str) -> date:
@@ -81,45 +82,37 @@ def _session_company(database, request: Request):
 
 def operating_window(database, company_id: int, year: int) -> tuple[date, date] | None:
     with database.connect() as c:
-        row = c.execute('SELECT MIN(start_date) AS first_day, MAX(end_date) AS last_day FROM setup_seasons WHERE company_id=? AND year=?', (company_id, year)).fetchone()
+        row = execute_sql(c, 'SELECT MIN(start_date) AS first_day, MAX(end_date) AS last_day FROM setup_seasons WHERE company_id=:q272_0 AND year=:q272_1', (company_id, year)).fetchone()
     if not row or not row['first_day'] or not row['last_day']:
         return None
     return _parse_day(row['first_day']), _parse_day(row['last_day']) + timedelta(days=1)
 
 
 def _purge_expired_holds(connection) -> None:
-    expired = [int(r['id']) for r in connection.execute('SELECT id FROM element_holds WHERE expires_at<=?', (iso_now(),)).fetchall()]
+    expired = [int(r['id']) for r in execute_sql(connection, 'SELECT id FROM element_holds WHERE expires_at<=:q281_0', (iso_now(),)).fetchall()]
     for hold_id in expired:
-        connection.execute('DELETE FROM hold_requirement_people WHERE hold_id=?', (hold_id,))
-        connection.execute('DELETE FROM hold_requirement_addons WHERE hold_id=?', (hold_id,))
+        execute_sql(connection, 'DELETE FROM hold_requirement_people WHERE hold_id=:q263_0', (hold_id,))
+        execute_sql(connection, 'DELETE FROM hold_requirement_addons WHERE hold_id=:q264_0', (hold_id,))
     if expired:
-        connection.execute('DELETE FROM element_holds WHERE expires_at<=?', (iso_now(),))
+        execute_sql(connection, 'DELETE FROM element_holds WHERE expires_at<=:q265_0', (iso_now(),))
 
 
 def _booking_conflict(connection, company_id: int, element_id: int, start: str, end: str, exclude_booking_id: int | None = None):
-    sql = '''
-        SELECT b.id,b.reference,b.status,be.arrival_date,be.departure_date
-        FROM booking_elements be
-        JOIN bookings b ON b.id=be.booking_id AND b.company_id=be.company_id
-        WHERE be.company_id=? AND be.element_id=?
-          AND b.status<>'cancelled'
-          AND date(be.arrival_date)<date(?) AND date(be.departure_date)>date(?)
-    '''
+    sql = "\n        SELECT b.id,b.reference,b.status,be.arrival_date,be.departure_date\n        FROM booking_elements be\n        JOIN bookings b ON b.id=be.booking_id AND b.company_id=be.company_id\n        WHERE be.company_id=:q257_0 AND be.element_id=:q257_1\n          AND b.status<>'cancelled'\n          AND date(be.arrival_date)<date(:q257_2) AND date(be.departure_date)>date(:q257_3)\n    "
     params: list[Any] = [company_id, element_id, end, start]
     if exclude_booking_id is not None:
-        sql += ' AND b.id<>?'; params.append(exclude_booking_id)
+        sql += ' AND b.id<>:q261_0'; params.append(exclude_booking_id)
     sql += ' ORDER BY be.arrival_date LIMIT 1'
-    return connection.execute(sql, params).fetchone()
+    return execute_sql(connection, sql, params).fetchone()
 
 
 def _closure_conflict(connection, company_id: int, element_id: int, start: str, end: str, exclude_closure_id: int | None = None):
-    sql = '''SELECT * FROM element_closures WHERE company_id=? AND element_id=?
-             AND date(start_date)<date(?) AND date(end_date)>date(?)'''
+    sql = 'SELECT * FROM element_closures WHERE company_id=:q259_0 AND element_id=:q259_1\n             AND date(start_date)<date(:q259_2) AND date(end_date)>date(:q259_3)'
     params: list[Any] = [company_id, element_id, end, start]
     if exclude_closure_id is not None:
-        sql += ' AND id<>?'; params.append(exclude_closure_id)
+        sql += ' AND id<>:exclude_closure'; params.append(exclude_closure_id)
     sql += ' ORDER BY start_date LIMIT 1'
-    return connection.execute(sql, params).fetchone()
+    return execute_sql(connection, sql, params).fetchone()
 
 
 def availability_state(database, company_id: int, element_id: int, arrival: str, departure: str, *, session_token: str = '', exclude_booking_id: int | None = None) -> dict[str, Any]:
@@ -138,7 +131,7 @@ def availability_state(database, company_id: int, element_id: int, arrival: str,
     if start < open_start or end > open_end:
         return {'available': False, 'state': 'OUT_OF_SEASON', 'reason': f'Element is open from {open_start.isoformat()} to {(open_end-timedelta(days=1)).isoformat()}.'}
     with database.connect() as c:
-        element = c.execute('SELECT * FROM setup_elements WHERE id=? AND company_id=?', (element_id, company_id)).fetchone()
+        element = execute_sql(c, 'SELECT * FROM setup_elements WHERE id=:q273_0 AND company_id=:q273_1', (element_id, company_id)).fetchone()
         if element is None or not int(element['active']):
             return {'available': False, 'state': 'INACTIVE', 'reason': 'Element is inactive.'}
         closed = _closure_conflict(c, company_id, element_id, arrival, departure)
@@ -147,10 +140,7 @@ def availability_state(database, company_id: int, element_id: int, arrival: str,
         booked = _booking_conflict(c, company_id, element_id, arrival, departure, exclude_booking_id)
         if booked:
             return {'available': False, 'state': 'BOOKED', 'reason': f"Booked: {booked['reference']}", 'booking_id': int(booked['id']), 'booking_reference': str(booked['reference'])}
-        held = c.execute('''SELECT * FROM element_holds WHERE company_id=? AND element_id=?
-                            AND date(arrival_date)<date(?) AND date(departure_date)>date(?)
-                            AND expires_at>?
-                            ORDER BY expires_at DESC LIMIT 1''', (company_id, element_id, departure, arrival, iso_now())).fetchone()
+        held = execute_sql(c, 'SELECT * FROM element_holds WHERE company_id=:q274_0 AND element_id=:q274_1\n                            AND date(arrival_date)<date(:q274_2) AND date(departure_date)>date(:q274_3)\n                            AND expires_at>:q274_4\n                            ORDER BY expires_at DESC LIMIT 1', (company_id, element_id, departure, arrival, iso_now())).fetchone()
         if held:
             own = bool(session_token and str(held['session_token']) == session_token)
             return {'available': own, 'state': 'HELD_BY_YOU' if own else 'HELD', 'reason': 'Temporarily held' if not own else 'Held in your basket', 'hold_id': int(held['id']), 'expires_at': str(held['expires_at']), 'renewal_required_at': str(held['renewal_required_at'])}
@@ -163,12 +153,12 @@ def available_elements(database, company_id: int, element_type: str, arrival: st
     except ValueError:
         return []
     result: list[dict[str, Any]] = []
-    for element in rows(database, 'SELECT * FROM setup_elements WHERE company_id=? AND active=1 AND element_type=? ORDER BY name COLLATE NOCASE', (company_id, element_type)):
+    for element in rows(database, 'SELECT * FROM setup_elements WHERE company_id=:q262_0 AND active=1 AND element_type=:q262_1 ORDER BY lower(name)', (company_id, element_type)):
         state = availability_state(database, company_id, int(element['id']), arrival, departure, session_token=session_token)
         if not state['available']:
             continue
         addons = []
-        for addon in rows(database, 'SELECT * FROM setup_addons WHERE company_id=? AND active=1 ORDER BY name COLLATE NOCASE', (company_id,)):
+        for addon in rows(database, 'SELECT * FROM setup_addons WHERE company_id=:q266_0 AND active=1 ORDER BY lower(name)', (company_id,)):
             rule = _addon_rule(database, company_id, year, element, int(addon['id']))
             addons.append({'id': int(addon['id']), 'name': str(addon['name']), 'available': bool(rule['allowed'])})
         result.append({'id': int(element['id']), 'name': str(element['name']), 'element_type': str(element['element_type']), 'state': state['state'], 'addons': addons})
@@ -182,25 +172,23 @@ def create_or_replace_hold(database, context, company_id: int, session_token: st
     now = _now(); prompt = now + timedelta(minutes=HOLD_MINUTES); expires = prompt + timedelta(minutes=HOLD_GRACE_MINUTES)
     with database.connect() as c:
         # Hold allocation and conflict checks must be atomic across sessions.
-        c.execute('BEGIN IMMEDIATE')
+        lock_inventory(c, company_id)
         _purge_expired_holds(c)
         from .webv1_status_availability import _enquiry_conflict
-        conflict = c.execute('''SELECT id FROM element_holds WHERE company_id=? AND element_id=? AND session_token<>?
-                                AND date(arrival_date)<date(?) AND date(departure_date)>date(?) AND expires_at>? LIMIT 1''',
+        conflict = execute_sql(c, 'SELECT id FROM element_holds WHERE company_id=:q275_0 AND element_id=:q275_1 AND session_token<>:q275_2\n                                AND date(arrival_date)<date(:q275_3) AND date(departure_date)>date(:q275_4) AND expires_at>:q275_5 LIMIT 1',
                              (company_id, element_id, session_token, departure, arrival, iso_now())).fetchone()
         from .webv1_reservation_core import migrated_inventory_conflict
         canonical = migrated_inventory_conflict(c, company_id, element_id, arrival, departure)
         if canonical or conflict or _booking_conflict(c, company_id, element_id, arrival, departure) or _enquiry_conflict(c, company_id, element_id, arrival, departure) or _closure_conflict(c, company_id, element_id, arrival, departure):
             raise ValueError('That Element has just become unavailable. Please choose another.')
-        existing = c.execute('SELECT * FROM element_holds WHERE company_id=? AND element_id=? AND session_token=?', (company_id, element_id, session_token)).fetchone()
+        existing = execute_sql(c, 'SELECT * FROM element_holds WHERE company_id=:q276_0 AND element_id=:q276_1 AND session_token=:q276_2', (company_id, element_id, session_token)).fetchone()
         if existing:
             hold_id = int(existing['id'])
-            c.execute('UPDATE element_holds SET arrival_date=?,departure_date=?,renewal_required_at=?,expires_at=?,updated_at=? WHERE id=?',
+            execute_sql(c, 'UPDATE element_holds SET arrival_date=:q269_0,departure_date=:q269_1,renewal_required_at=:q269_2,expires_at=:q269_3,updated_at=:q269_4 WHERE id=:q269_5',
                       (arrival, departure, prompt.isoformat(timespec='seconds'), expires.isoformat(timespec='seconds'), now.isoformat(timespec='seconds'), hold_id))
             before = dict(existing)
         else:
-            hold_id = int(c.execute('''INSERT INTO element_holds(company_id,element_id,session_token,holder_user_id,arrival_date,departure_date,renewal_required_at,expires_at,created_at,updated_at)
-                                      VALUES (?,?,?,?,?,?,?,?,?,?)''',
+            hold_id = int(insert_sql(c, 'INSERT INTO element_holds(company_id,element_id,session_token,holder_user_id,arrival_date,departure_date,renewal_required_at,expires_at,created_at,updated_at)\n                                      VALUES (:q282_0,:q282_1,:q282_2,:q282_3,:q282_4,:q282_5,:q282_6,:q282_7,:q282_8,:q282_9)',
                                     (company_id, element_id, session_token, context['user_id'], arrival, departure, prompt.isoformat(timespec='seconds'), expires.isoformat(timespec='seconds'), now.isoformat(timespec='seconds'), now.isoformat(timespec='seconds'))).lastrowid)
             before = None
     audit(database, context, company_id, 'ELEMENT_HOLD_SAVED', 'element_hold', hold_id, before, {'element_id': element_id, 'arrival_date': arrival, 'departure_date': departure, 'renewal_required_at': prompt.isoformat(timespec='seconds'), 'expires_at': expires.isoformat(timespec='seconds')})
@@ -230,8 +218,7 @@ def register_availability_routes(app) -> None:
         context, cid = _session_company(database, request); token = request.cookies.get(COOKIE_NAME, '')
         now = _now()
         with database.connect() as c:
-            hold_rows = c.execute('''SELECT h.*,e.name AS element_name FROM element_holds h JOIN setup_elements e ON e.id=h.element_id
-                                     WHERE h.company_id=? AND h.session_token=? AND h.expires_at>? ORDER BY e.name''', (cid, token, iso_now())).fetchall()
+            hold_rows = execute_sql(c, 'SELECT h.*,e.name AS element_name FROM element_holds h JOIN setup_elements e ON e.id=h.element_id\n                                     WHERE h.company_id=:q283_0 AND h.session_token=:q283_1 AND h.expires_at>:q283_2 ORDER BY e.name', (cid, token, iso_now())).fetchall()
         holds = []
         for h in hold_rows:
             holds.append({'id': int(h['id']), 'element_id': int(h['element_id']), 'element_name': str(h['element_name']), 'arrival_date': str(h['arrival_date']), 'departure_date': str(h['departure_date']), 'renewal_required_at': str(h['renewal_required_at']), 'expires_at': str(h['expires_at']), 'needs_confirmation': now >= _utc(str(h['renewal_required_at']))})
@@ -243,8 +230,8 @@ def register_availability_routes(app) -> None:
         now = _now(); prompt = now + timedelta(minutes=HOLD_MINUTES); expires = prompt + timedelta(minutes=HOLD_GRACE_MINUTES)
         with database.connect() as c:
             _purge_expired_holds(c)
-            held = c.execute('SELECT * FROM element_holds WHERE company_id=? AND session_token=?', (cid, token)).fetchall()
-            c.execute('UPDATE element_holds SET renewal_required_at=?,expires_at=?,updated_at=? WHERE company_id=? AND session_token=?', (prompt.isoformat(timespec='seconds'), expires.isoformat(timespec='seconds'), now.isoformat(timespec='seconds'), cid, token))
+            held = execute_sql(c, 'SELECT * FROM element_holds WHERE company_id=:q284_0 AND session_token=:q284_1', (cid, token)).fetchall()
+            execute_sql(c, 'UPDATE element_holds SET renewal_required_at=:q270_0,expires_at=:q270_1,updated_at=:q270_2 WHERE company_id=:q270_3 AND session_token=:q270_4', (prompt.isoformat(timespec='seconds'), expires.isoformat(timespec='seconds'), now.isoformat(timespec='seconds'), cid, token))
         audit(database, context, cid, 'ELEMENT_HOLDS_RENEWED', 'element_hold', token[:12], {'count': len(held)}, {'count': len(held), 'expires_at': expires.isoformat(timespec='seconds')})
         return JSONResponse({'ok': True, 'count': len(held), 'renewal_required_at': prompt.isoformat(timespec='seconds'), 'expires_at': expires.isoformat(timespec='seconds')})
 
@@ -252,22 +239,22 @@ def register_availability_routes(app) -> None:
     async def release_holds(request: Request):
         context, cid = _session_company(database, request); data = await form_data(request); require_csrf(context, data); token = request.cookies.get(COOKIE_NAME, '')
         with database.connect() as c:
-            held = c.execute('SELECT * FROM element_holds WHERE company_id=? AND session_token=?', (cid, token)).fetchall()
+            held = execute_sql(c, 'SELECT * FROM element_holds WHERE company_id=:q285_0 AND session_token=:q285_1', (cid, token)).fetchall()
             for hold in held:
                 hold_id = int(hold['id'])
-                c.execute('DELETE FROM hold_requirement_people WHERE hold_id=?', (hold_id,))
-                c.execute('DELETE FROM hold_requirement_addons WHERE hold_id=?', (hold_id,))
-            c.execute('DELETE FROM element_holds WHERE company_id=? AND session_token=?', (cid, token))
+                execute_sql(c, 'DELETE FROM hold_requirement_people WHERE hold_id=:q277_0', (hold_id,))
+                execute_sql(c, 'DELETE FROM hold_requirement_addons WHERE hold_id=:q278_0', (hold_id,))
+            execute_sql(c, 'DELETE FROM element_holds WHERE company_id=:q271_0 AND session_token=:q271_1', (cid, token))
         audit(database, context, cid, 'ELEMENT_HOLDS_RELEASED', 'element_hold', token[:12], {'count': len(held)}, {'count': 0})
         return JSONResponse({'ok': True, 'released': len(held)})
 
     @app.get('/setup/elements/availability', response_class=HTMLResponse)
     def element_availability_page(request: Request, element_id: int, edit: int = 0, message: str = ''):
         context = context_for(database, request); cid = working_company(context)
-        element_rows = rows(database, 'SELECT * FROM setup_elements WHERE company_id=? AND id=?', (cid, element_id))
+        element_rows = rows(database, 'SELECT * FROM setup_elements WHERE company_id=:q267_0 AND id=:q267_1', (cid, element_id))
         if not element_rows:
             return HTMLResponse(layout('Element Availability', f'<h1>Element not found</h1>{setup_nav()}', context), 404)
-        element = element_rows[0]; closure_rows = rows(database, 'SELECT * FROM element_closures WHERE company_id=? AND element_id=? ORDER BY start_date', (cid, element_id))
+        element = element_rows[0]; closure_rows = rows(database, 'SELECT * FROM element_closures WHERE company_id=:q268_0 AND element_id=:q268_1 ORDER BY start_date', (cid, element_id))
         current = next((r for r in closure_rows if int(r['id']) == int(edit or 0)), None)
         body = f'<h1>{esc(element["name"])} — Availability</h1>{setup_nav()}'
         if message: body += f'<div class="error">{esc(message)}</div>'
@@ -300,13 +287,13 @@ def register_availability_routes(app) -> None:
             overlap = _closure_conflict(c, cid, element_id, start.isoformat(), end.isoformat(), closure_id or None)
             if overlap:
                 return RedirectResponse(f'/setup/elements/availability?element_id={element_id}&message=That+period+overlaps+an+existing+closure', 303)
-            before = c.execute('SELECT * FROM element_closures WHERE id=? AND company_id=? AND element_id=?', (closure_id, cid, element_id)).fetchone() if closure_id else None
+            before = execute_sql(c, 'SELECT * FROM element_closures WHERE id=:q287_0 AND company_id=:q287_1 AND element_id=:q287_2', (closure_id, cid, element_id)).fetchone() if closure_id else None
             now = iso_now()
             if closure_id:
                 if before is None: return RedirectResponse(f'/setup/elements/availability?element_id={element_id}&message=Closure+not+found', 303)
-                c.execute('UPDATE element_closures SET start_date=?,end_date=?,reason=?,updated_at=? WHERE id=? AND company_id=?', (start.isoformat(), end.isoformat(), reason, now, closure_id, cid)); saved_id = closure_id
+                execute_sql(c, 'UPDATE element_closures SET start_date=:q279_0,end_date=:q279_1,reason=:q279_2,updated_at=:q279_3 WHERE id=:q279_4 AND company_id=:q279_5', (start.isoformat(), end.isoformat(), reason, now, closure_id, cid)); saved_id = closure_id
             else:
-                saved_id = int(c.execute('INSERT INTO element_closures(company_id,element_id,start_date,end_date,reason,created_by_user_id,created_at,updated_at) VALUES (?,?,?,?,?,?,?,?)', (cid, element_id, start.isoformat(), end.isoformat(), reason, context['user_id'], now, now)).lastrowid)
+                saved_id = int(insert_sql(c, 'INSERT INTO element_closures(company_id,element_id,start_date,end_date,reason,created_by_user_id,created_at,updated_at) VALUES (:q288_0,:q288_1,:q288_2,:q288_3,:q288_4,:q288_5,:q288_6,:q288_7)', (cid, element_id, start.isoformat(), end.isoformat(), reason, context['user_id'], now, now)).lastrowid)
         audit(database, context, cid, 'ELEMENT_CLOSURE_SAVED', 'element_closure', saved_id, dict(before) if before else None, {'element_id': element_id, 'start_date': start.isoformat(), 'end_date': end.isoformat(), 'reason': reason})
         return RedirectResponse(f'/setup/elements/availability?element_id={element_id}', 303)
 
@@ -316,7 +303,7 @@ def register_availability_routes(app) -> None:
         try: element_id = int(data.get('element_id', '')); closure_id = int(data.get('id', ''))
         except ValueError: return RedirectResponse('/setup/elements', 303)
         with database.connect() as c:
-            before = c.execute('SELECT * FROM element_closures WHERE id=? AND company_id=? AND element_id=?', (closure_id, cid, element_id)).fetchone()
-            if before: c.execute('DELETE FROM element_closures WHERE id=? AND company_id=?', (closure_id, cid))
+            before = execute_sql(c, 'SELECT * FROM element_closures WHERE id=:q286_0 AND company_id=:q286_1 AND element_id=:q286_2', (closure_id, cid, element_id)).fetchone()
+            if before: execute_sql(c, 'DELETE FROM element_closures WHERE id=:q280_0 AND company_id=:q280_1', (closure_id, cid))
         if before: audit(database, context, cid, 'ELEMENT_CLOSURE_DELETED', 'element_closure', closure_id, dict(before), None)
         return RedirectResponse(f'/setup/elements/availability?element_id={element_id}', 303)

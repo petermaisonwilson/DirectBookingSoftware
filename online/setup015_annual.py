@@ -1,4 +1,5 @@
 from __future__ import annotations
+from .sql import execute_sql, insert_sql
 
 from datetime import date
 
@@ -30,7 +31,7 @@ def _pricing_page(database, context, year: int | None, submitted: dict[str, str]
     cid = working_company(context); available = years(database, cid); selected = selected_year(database, cid, year); errors = errors or set(); submitted = submitted or {}
     body = f'<h1>Seasonal Element pricing</h1>{setup_nav()}{_error_html(message)}{_year_select(available, selected, "/setup/pricing")}'
     if selected is None: return layout('Seasonal pricing', body, context)
-    seasons = rows(database, 'SELECT * FROM setup_seasons WHERE company_id=? AND year=? ORDER BY start_date', (cid, selected)); elements = rows(database, 'SELECT * FROM setup_elements WHERE company_id=? AND active=1 ORDER BY element_type,name', (cid,))
+    seasons = rows(database, 'SELECT * FROM setup_seasons WHERE company_id=:q432_0 AND year=:q432_1 ORDER BY start_date', (cid, selected)); elements = rows(database, 'SELECT * FROM setup_elements WHERE company_id=:q433_0 AND active=1 ORDER BY element_type,name', (cid,))
     season_name = submitted.get('season_name', '') if submitted else ''; season_start = submitted.get('season_start', '') if submitted else ''; season_end = submitted.get('season_end', '') if submitted else ''
     body += f'''<div class="card"><h2>Add season</h2><form method="post" action="/setup/seasons"><input type="hidden" name="csrf" value="{esc(context["csrf_token"])}"><input type="hidden" name="year" value="{selected}"><div class="grid"><div><label>Name</label><input style="{_style("season_name", errors)}" name="name" value="{esc(season_name)}"></div><div><label>Start</label><input style="{_style("season_start", errors)}" type="date" name="start_date" value="{esc(season_start)}"></div><div><label>End</label><input style="{_style("season_end", errors)}" type="date" name="end_date" value="{esc(season_end)}"></div></div><p><button>Add season</button></p></form></div>'''
     body += f'<form method="post" action="/setup/pricing"><input type="hidden" name="csrf" value="{esc(context["csrf_token"])}"><input type="hidden" name="year" value="{selected}"><div class="card" style="overflow:auto"><p><strong>Every visible price cell must contain a value. 0 or 0.00 is valid.</strong></p><table><thead><tr><th>Element</th>' + ''.join(f'<th>{esc(s["name"])}</th>' for s in seasons) + '</tr></thead><tbody>'
@@ -40,7 +41,7 @@ def _pricing_page(database, context, year: int | None, submitted: dict[str, str]
             key = f'r_{element["id"]}_{season["id"]}'
             if submitted and key in submitted: value = submitted.get(key, '')
             else:
-                rate_row = one(database, 'SELECT rate FROM setup_element_rates WHERE company_id=? AND year=? AND element_id=? AND season_id=?', (cid, selected, element['id'], season['id'])); value = '' if rate_row is None else f'{float(rate_row["rate"]):.2f}'
+                rate_row = one(database, 'SELECT rate FROM setup_element_rates WHERE company_id=:q447_0 AND year=:q447_1 AND element_id=:q447_2 AND season_id=:q447_3', (cid, selected, element['id'], season['id'])); value = '' if rate_row is None else f'{float(rate_row["rate"]):.2f}'
             body += f'<td><input style="{_style(key, errors)}" name="{key}" value="{esc(value)}" placeholder="required"></td>'
         body += '</tr>'
     body += '</tbody></table><p><button>Save seasonal prices</button></p></div></form>'
@@ -51,20 +52,20 @@ def _occupancy_page(database, context, year: int | None, submitted: dict[str, st
     cid = working_company(context); available = years(database, cid); selected = selected_year(database, cid, year); submitted = submitted or {}; errors = errors or set()
     body = f'<h1>Occupancy & Person pricing</h1>{setup_nav()}{_error_html(message)}{_year_select(available, selected, "/setup/occupancy")}'
     if selected is None: return layout('Occupancy', body, context)
-    elements = rows(database, 'SELECT * FROM setup_elements WHERE company_id=? AND active=1 ORDER BY element_type,name', (cid,)); people = rows(database, 'SELECT * FROM setup_person_types WHERE company_id=? AND active=1 ORDER BY name', (cid,))
+    elements = rows(database, 'SELECT * FROM setup_elements WHERE company_id=:q434_0 AND active=1 ORDER BY element_type,name', (cid,)); people = rows(database, 'SELECT * FROM setup_person_types WHERE company_id=:q435_0 AND active=1 ORDER BY name', (cid,))
     body += f'<form method="post" action="/setup/occupancy"><input type="hidden" name="csrf" value="{esc(context["csrf_token"])}"><input type="hidden" name="year" value="{selected}"><div class="card" style="overflow:auto"><p><strong>No blanks:</strong> every Min, Max and € box must contain a value. 0 is valid. Use Min 1 where an Element must contain at least one of that Person Type.</p><table><thead><tr><th rowspan="2">Element</th><th rowspan="2">Total max</th>' + ''.join(f'<th colspan="3" style="text-align:center">{esc(p["name"])}</th>' for p in people) + '</tr><tr>' + ''.join('<th style="text-align:center">Min</th><th style="text-align:center">Max</th><th style="text-align:center">€</th>' for _ in people) + '</tr></thead><tbody>'
     for element in elements:
         total_key = f't_{element["id"]}'
         if submitted: total_value = submitted.get(total_key, '')
         else:
-            total = one(database, 'SELECT max_total FROM setup_occupancy WHERE company_id=? AND year=? AND element_id=?', (cid, selected, element['id'])); total_value = '' if total is None else str(total['max_total'])
+            total = one(database, 'SELECT max_total FROM setup_occupancy WHERE company_id=:q444_0 AND year=:q444_1 AND element_id=:q444_2', (cid, selected, element['id'])); total_value = '' if total is None else str(total['max_total'])
         body += f'<tr><td>{esc(element["name"])}</td><td><input style="{_style(total_key, errors, "64px")}" name="{total_key}" value="{esc(total_value)}"></td>'
         for person in people:
             min_key = f'pmin_{element["id"]}_{person["id"]}'; max_key = f'p_{element["id"]}_{person["id"]}'; rate_key = f'pr_{element["id"]}_{person["id"]}'
             if submitted:
                 min_value = submitted.get(min_key, '0'); max_value = submitted.get(max_key, ''); rate_value = submitted.get(rate_key, '')
             else:
-                limit = one(database, 'SELECT min_count,max_count FROM setup_person_limits WHERE company_id=? AND year=? AND element_id=? AND person_type_id=?', (cid, selected, element['id'], person['id'])); price = one(database, 'SELECT rate FROM setup_person_prices WHERE company_id=? AND year=? AND element_id=? AND person_type_id=?', (cid, selected, element['id'], person['id']))
+                limit = one(database, 'SELECT min_count,max_count FROM setup_person_limits WHERE company_id=:q448_0 AND year=:q448_1 AND element_id=:q448_2 AND person_type_id=:q448_3', (cid, selected, element['id'], person['id'])); price = one(database, 'SELECT rate FROM setup_person_prices WHERE company_id=:q449_0 AND year=:q449_1 AND element_id=:q449_2 AND person_type_id=:q449_3', (cid, selected, element['id'], person['id']))
                 min_value = '' if limit is None else str(limit['min_count']); max_value = '' if limit is None else str(limit['max_count']); rate_value = '' if price is None else f'{float(price["rate"]):.2f}'
             body += f'<td><input style="{_style(min_key, errors, "58px")}" name="{min_key}" value="{esc(min_value)}"></td><td><input style="{_style(max_key, errors, "58px")}" name="{max_key}" value="{esc(max_value)}"></td><td><input style="{_style(rate_key, errors, "70px")}" name="{rate_key}" value="{esc(rate_value)}"></td>'
         body += '</tr>'
@@ -76,11 +77,11 @@ def _addon_page(database, context, year: int | None, submitted: dict[str, str] |
     cid = working_company(context); available = years(database, cid); selected = selected_year(database, cid, year); submitted = submitted or {}; errors = errors or set()
     body = f'<h1>Add-on rules</h1>{setup_nav()}{_error_html(message)}{_year_select(available, selected, "/setup/addon-rules")}'
     if selected is None: return layout('Add-on rules', body, context)
-    addons = rows(database, 'SELECT * FROM setup_addons WHERE company_id=? AND active=1 ORDER BY name', (cid,)); elements = rows(database, 'SELECT * FROM setup_elements WHERE company_id=? AND active=1 ORDER BY element_type,name', (cid,)); types = sorted({str(e['element_type']) for e in elements}, key=str.casefold)
+    addons = rows(database, 'SELECT * FROM setup_addons WHERE company_id=:q436_0 AND active=1 ORDER BY name', (cid,)); elements = rows(database, 'SELECT * FROM setup_elements WHERE company_id=:q437_0 AND active=1 ORDER BY element_type,name', (cid,)); types = sorted({str(e['element_type']) for e in elements}, key=str.casefold)
     body += f'<form method="post" action="/setup/addon-rules"><input type="hidden" name="csrf" value="{esc(context["csrf_token"])}"><input type="hidden" name="year" value="{selected}"><div class="card"><h2>Element Type defaults</h2><p>Tick = Y / available. Unticked = N / unavailable.</p><table><thead><tr><th>Element Type</th><th>Add-on</th><th>Y</th><th>Min</th><th>Max</th><th>Price €</th></tr></thead><tbody>'
     for typ in types:
         for addon in addons:
-            base = one(database, 'SELECT * FROM setup_type_addons WHERE company_id=? AND year=? AND element_type=? AND addon_id=?', (cid, selected, typ, addon['id'])); check_key = f'ty_{addon["id"]}_{typ}'; yes = (check_key in submitted) if submitted else bool(base and base['allowed']); chk = 'checked' if yes else ''; vals = []
+            base = one(database, 'SELECT * FROM setup_type_addons WHERE company_id=:q445_0 AND year=:q445_1 AND element_type=:q445_2 AND addon_id=:q445_3', (cid, selected, typ, addon['id'])); check_key = f'ty_{addon["id"]}_{typ}'; yes = (check_key in submitted) if submitted else bool(base and base['allowed']); chk = 'checked' if yes else ''; vals = []
             for prefix, col in (('tymin', 'min_qty'), ('tymax', 'max_qty'), ('tyrate', 'rate')):
                 key = f'{prefix}_{addon["id"]}_{typ}'
                 if submitted: value = submitted.get(key, '')
@@ -90,7 +91,7 @@ def _addon_page(database, context, year: int | None, submitted: dict[str, str] |
     body += '</tbody></table></div><div class="card"><h2>Individual Element overrides</h2><p><strong>I = Inherit Element Type rule &nbsp; Y = Yes &nbsp; N = No.</strong></p><table><thead><tr><th>Element</th><th>Add-on</th><th>I / Y / N</th><th>Min</th><th>Max</th><th>Price €</th></tr></thead><tbody>'
     for element in elements:
         for addon in addons:
-            base = one(database, 'SELECT * FROM setup_element_addons WHERE company_id=? AND year=? AND element_id=? AND addon_id=?', (cid, selected, element['id'], addon['id'])); radio_key = f'ov_{element["id"]}_{addon["id"]}'; state = submitted.get(radio_key, 'I') if submitted else ('I' if not base else base['state']); radios = ' '.join(f'<label style="display:inline;font-weight:normal"><input style="width:auto" type="radio" name="{radio_key}" value="{s}" {"checked" if state == s else ""}> {s}</label>' for s in ('I', 'Y', 'N')); vals = []
+            base = one(database, 'SELECT * FROM setup_element_addons WHERE company_id=:q446_0 AND year=:q446_1 AND element_id=:q446_2 AND addon_id=:q446_3', (cid, selected, element['id'], addon['id'])); radio_key = f'ov_{element["id"]}_{addon["id"]}'; state = submitted.get(radio_key, 'I') if submitted else ('I' if not base else base['state']); radios = ' '.join(f'<label style="display:inline;font-weight:normal"><input style="width:auto" type="radio" name="{radio_key}" value="{s}" {"checked" if state == s else ""}> {s}</label>' for s in ('I', 'Y', 'N')); vals = []
             for prefix, col in (('ovmin', 'min_qty'), ('ovmax', 'max_qty'), ('ovrate', 'rate')):
                 key = f'{prefix}_{element["id"]}_{addon["id"]}'
                 if submitted: value = submitted.get(key, '')
@@ -123,14 +124,14 @@ def register_annual_routes(app) -> None:
         if errors:
             submitted = {'season_name': name, 'season_start': start_raw, 'season_end': end_raw}; return HTMLResponse(_pricing_page(database, context, year, submitted, errors, 'Complete the highlighted season fields. The end date cannot be before the start date.'), 400)
         with database.connect() as c:
-            try: sid = c.execute('INSERT INTO setup_seasons(company_id,year,name,start_date,end_date) VALUES (?,?,?,?,?)', (cid, year, name, start_raw, end_raw)).lastrowid
+            try: sid = insert_sql(c, 'INSERT INTO setup_seasons(company_id,year,name,start_date,end_date) VALUES (:q455_0,:q455_1,:q455_2,:q455_3,:q455_4)', (cid, year, name, start_raw, end_raw)).lastrowid
             except Exception:
                 submitted = {'season_name': name, 'season_start': start_raw, 'season_end': end_raw}; return HTMLResponse(_pricing_page(database, context, year, submitted, {'season_name'}, 'That season name already exists for this year.'), 400)
         audit(database, context, cid, 'SEASON_ADDED', 'season', sid, None, {'year': year, 'name': name}); return RedirectResponse(f'/setup/pricing?year={year}', 303)
 
     @app.post('/setup/pricing')
     async def pricing_save(request: Request):
-        context = context_for(database, request); cid = working_company(context); data = await form_data(request); require_csrf(context, data); year = int(data['year']); seasons = rows(database, 'SELECT id FROM setup_seasons WHERE company_id=? AND year=?', (cid, year)); elements = rows(database, 'SELECT id FROM setup_elements WHERE company_id=? AND active=1', (cid,)); values = []; errors = set()
+        context = context_for(database, request); cid = working_company(context); data = await form_data(request); require_csrf(context, data); year = int(data['year']); seasons = rows(database, 'SELECT id FROM setup_seasons WHERE company_id=:q438_0 AND year=:q438_1', (cid, year)); elements = rows(database, 'SELECT id FROM setup_elements WHERE company_id=:q439_0 AND active=1', (cid,)); values = []; errors = set()
         for element in elements:
             for season in seasons:
                 key = f'r_{element["id"]}_{season["id"]}'; raw = data.get(key, '').strip()
@@ -140,7 +141,7 @@ def register_annual_routes(app) -> None:
                 values.append((element['id'], season['id'], rate))
         if errors: return HTMLResponse(_pricing_page(database, context, year, data, errors, 'Every seasonal price cell must be completed with a valid zero or positive price. Zero is valid.'), 400)
         with database.connect() as c:
-            for eid, sid, rate in values: c.execute('INSERT OR REPLACE INTO setup_element_rates VALUES (?,?,?,?,?)', (cid, year, eid, sid, rate))
+            for eid, sid, rate in values: execute_sql(c, 'INSERT INTO setup_element_rates VALUES (:q450_0,:q450_1,:q450_2,:q450_3,:q450_4) ON CONFLICT(company_id,year,element_id,season_id) DO UPDATE SET rate=excluded.rate', (cid, year, eid, sid, rate))
         audit(database, context, cid, 'SEASONAL_PRICING_SAVED', 'pricing_year', year, None, {'cells': len(values)}); return RedirectResponse(f'/setup/pricing?year={year}', 303)
 
     @app.get('/setup/occupancy', response_class=HTMLResponse)
@@ -149,7 +150,7 @@ def register_annual_routes(app) -> None:
 
     @app.post('/setup/occupancy')
     async def occupancy_save(request: Request):
-        context = context_for(database, request); cid = working_company(context); data = await form_data(request); require_csrf(context, data); year = int(data['year']); elements = rows(database, 'SELECT id FROM setup_elements WHERE company_id=? AND active=1', (cid,)); people = rows(database, 'SELECT id FROM setup_person_types WHERE company_id=? AND active=1', (cid,)); totals = []; limits = []; prices = []; errors = set()
+        context = context_for(database, request); cid = working_company(context); data = await form_data(request); require_csrf(context, data); year = int(data['year']); elements = rows(database, 'SELECT id FROM setup_elements WHERE company_id=:q440_0 AND active=1', (cid,)); people = rows(database, 'SELECT id FROM setup_person_types WHERE company_id=:q441_0 AND active=1', (cid,)); totals = []; limits = []; prices = []; errors = set()
         for element in elements:
             total_key = f't_{element["id"]}'
             try: totals.append((element['id'], valid_whole(data.get(total_key, ''))))
@@ -164,9 +165,9 @@ def register_annual_routes(app) -> None:
                 except (TypeError, ValueError): errors.add(rate_key)
         if errors: return HTMLResponse(_occupancy_page(database, context, year, data, errors, 'Every Total Max, Person Min, Person Max and Person € box must contain a valid zero or positive value. Minimum cannot be greater than maximum.'), 400)
         with database.connect() as c:
-            for eid, total in totals: c.execute('INSERT OR REPLACE INTO setup_occupancy VALUES (?,?,?,?)', (cid, year, eid, total))
-            for eid, pid, minimum, maximum in limits: c.execute('INSERT OR REPLACE INTO setup_person_limits(company_id,year,element_id,person_type_id,max_count,min_count) VALUES (?,?,?,?,?,?)', (cid, year, eid, pid, maximum, minimum))
-            for eid, pid, rate in prices: c.execute('INSERT OR REPLACE INTO setup_person_prices(company_id,year,element_id,person_type_id,rate) VALUES (?,?,?,?,?)', (cid, year, eid, pid, rate))
+            for eid, total in totals: execute_sql(c, 'INSERT INTO setup_occupancy VALUES (:q451_0,:q451_1,:q451_2,:q451_3) ON CONFLICT(company_id,year,element_id) DO UPDATE SET max_total=excluded.max_total', (cid, year, eid, total))
+            for eid, pid, minimum, maximum in limits: execute_sql(c, 'INSERT INTO setup_person_limits(company_id,year,element_id,person_type_id,max_count,min_count) VALUES (:q452_0,:q452_1,:q452_2,:q452_3,:q452_4,:q452_5) ON CONFLICT(company_id,year,element_id,person_type_id) DO UPDATE SET max_count=excluded.max_count,min_count=excluded.min_count', (cid, year, eid, pid, maximum, minimum))
+            for eid, pid, rate in prices: execute_sql(c, 'INSERT INTO setup_person_prices(company_id,year,element_id,person_type_id,rate) VALUES (:q453_0,:q453_1,:q453_2,:q453_3,:q453_4) ON CONFLICT(company_id,year,element_id,person_type_id) DO UPDATE SET rate=excluded.rate', (cid, year, eid, pid, rate))
         audit(database, context, cid, 'OCCUPANCY_SAVED', 'pricing_year', year, None, {'elements': len(elements), 'person_prices': len(prices)}); return RedirectResponse(f'/setup/occupancy?year={year}', 303)
 
     @app.get('/setup/addon-rules', response_class=HTMLResponse)
@@ -175,7 +176,7 @@ def register_annual_routes(app) -> None:
 
     @app.post('/setup/addon-rules')
     async def addon_rules_save(request: Request):
-        context = context_for(database, request); cid = working_company(context); data = await form_data(request); require_csrf(context, data); year = int(data['year']); addons = rows(database, 'SELECT * FROM setup_addons WHERE company_id=? AND active=1', (cid,)); elements = rows(database, 'SELECT * FROM setup_elements WHERE company_id=? AND active=1', (cid,)); types = sorted({str(e['element_type']) for e in elements}, key=str.casefold); type_values = []; override_values = []; errors = set()
+        context = context_for(database, request); cid = working_company(context); data = await form_data(request); require_csrf(context, data); year = int(data['year']); addons = rows(database, 'SELECT * FROM setup_addons WHERE company_id=:q442_0 AND active=1', (cid,)); elements = rows(database, 'SELECT * FROM setup_elements WHERE company_id=:q443_0 AND active=1', (cid,)); types = sorted({str(e['element_type']) for e in elements}, key=str.casefold); type_values = []; override_values = []; errors = set()
         for typ in types:
             for addon in addons:
                 allowed = 1 if f'ty_{addon["id"]}_{typ}' in data else 0
@@ -199,8 +200,8 @@ def register_annual_routes(app) -> None:
                 override_values.append((element['id'], addon['id'], state, mn, mx, rate))
         if errors: return HTMLResponse(_addon_page(database, context, year, data, errors, 'Complete all values required by Y rules. Minimum and maximum must be whole numbers, prices must be zero or positive, and maximum cannot be less than minimum.'), 400)
         with database.connect() as c:
-            for typ, aid, allowed, mn, mx, rate in type_values: c.execute('INSERT OR REPLACE INTO setup_type_addons VALUES (?,?,?,?,?,?,?,?)', (cid, year, typ, aid, allowed, mn, mx, rate))
+            for typ, aid, allowed, mn, mx, rate in type_values: execute_sql(c, 'INSERT INTO setup_type_addons VALUES (:q454_0,:q454_1,:q454_2,:q454_3,:q454_4,:q454_5,:q454_6,:q454_7) ON CONFLICT(company_id,year,element_type,addon_id) DO UPDATE SET allowed=excluded.allowed,min_qty=excluded.min_qty,max_qty=excluded.max_qty,rate=excluded.rate', (cid, year, typ, aid, allowed, mn, mx, rate))
             for eid, aid, state, mn, mx, rate in override_values:
-                if state == 'I': c.execute('DELETE FROM setup_element_addons WHERE company_id=? AND year=? AND element_id=? AND addon_id=?', (cid, year, eid, aid))
-                else: c.execute('INSERT OR REPLACE INTO setup_element_addons VALUES (?,?,?,?,?,?,?,?)', (cid, year, eid, aid, state, mn, mx, rate))
+                if state == 'I': execute_sql(c, 'DELETE FROM setup_element_addons WHERE company_id=:q456_0 AND year=:q456_1 AND element_id=:q456_2 AND addon_id=:q456_3', (cid, year, eid, aid))
+                else: execute_sql(c, 'INSERT INTO setup_element_addons VALUES (:q457_0,:q457_1,:q457_2,:q457_3,:q457_4,:q457_5,:q457_6,:q457_7) ON CONFLICT(company_id,year,element_id,addon_id) DO UPDATE SET state=excluded.state,min_qty=excluded.min_qty,max_qty=excluded.max_qty,rate=excluded.rate', (cid, year, eid, aid, state, mn, mx, rate))
         audit(database, context, cid, 'ADDON_RULES_SAVED', 'pricing_year', year, None, {'element_types': len(types), 'elements': len(elements), 'addons': len(addons)}); return RedirectResponse(f'/setup/addon-rules?year={year}', 303)

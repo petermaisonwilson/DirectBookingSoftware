@@ -1,4 +1,5 @@
 from __future__ import annotations
+from .sql import execute_sql, local_schema, column_rows, table_exists
 
 from .database import iso_now
 
@@ -267,40 +268,38 @@ CREATE TABLE IF NOT EXISTS web_schema_meta (
 def initialise_web_v1(database) -> None:
     """Create the permanent Web V1 lifecycle schema without changing existing Setup data."""
     with database.connect() as connection:
-        connection.executescript(WEB_V1_SCHEMA)
+        local_schema(connection, WEB_V1_SCHEMA)
         # Local SQLite databases pre-date Alembic and are upgraded in place here.
         for table in ('enquiry_people','enquiry_addons','enquiry_addon_days','enquiry_addon_people','enquiry_addon_person_days','enquiry_selected_addons'):
-            exists=connection.execute("SELECT 1 FROM sqlite_master WHERE type='table' AND name=?",(table,)).fetchone()
+            exists=(True if table_exists(connection, table) else None)
             if exists is None:
                 continue
-            columns={str(row['name']) for row in connection.execute(f'PRAGMA table_info({table})').fetchall()}
+            columns={str(row['name']) for row in column_rows(connection, table)}
             if 'enquiry_element_id' not in columns:
-                connection.execute(f'ALTER TABLE {table} ADD COLUMN enquiry_element_id INTEGER')
-            connection.execute(f'CREATE INDEX IF NOT EXISTS idx_{table}_element ON {table}(enquiry_element_id)')
-        booking_columns={str(row['name']) for row in connection.execute('PRAGMA table_info(booking_elements)').fetchall()}
+                execute_sql(connection, f'ALTER TABLE {table} ADD COLUMN enquiry_element_id INTEGER')
+            execute_sql(connection, f'CREATE INDEX IF NOT EXISTS idx_{table}_element ON {table}(enquiry_element_id)')
+        booking_columns={str(row['name']) for row in column_rows(connection, 'booking_elements')}
         if 'lead_name' not in booking_columns:
-            connection.execute("ALTER TABLE booking_elements ADD COLUMN lead_name TEXT NOT NULL DEFAULT ''")
-        connection.execute("""INSERT INTO enquiry_elements(enquiry_id,company_id,element_type,element_id,arrival_date,departure_date,lead_name,party_size,provisional_total,pricing_snapshot_json,sort_order,created_at,updated_at)
+            execute_sql(connection, "ALTER TABLE booking_elements ADD COLUMN lead_name TEXT NOT NULL DEFAULT ''")
+        execute_sql(connection, """INSERT INTO enquiry_elements(enquiry_id,company_id,element_type,element_id,arrival_date,departure_date,lead_name,party_size,provisional_total,pricing_snapshot_json,sort_order,created_at,updated_at)
             SELECT e.id,e.company_id,er.element_type,er.element_id,e.arrival_date,e.departure_date,'',e.party_size,er.provisional_total,er.pricing_snapshot_json,1,e.created_at,e.updated_at
             FROM enquiries e JOIN enquiry_requests er ON er.enquiry_id=e.id AND er.company_id=e.company_id
             WHERE er.element_id IS NOT NULL AND e.arrival_date IS NOT NULL AND e.departure_date IS NOT NULL
               AND NOT EXISTS (SELECT 1 FROM enquiry_elements ee WHERE ee.enquiry_id=e.id AND ee.company_id=e.company_id)""")
         for table in ('enquiry_people','enquiry_addons','enquiry_addon_days','enquiry_addon_people','enquiry_addon_person_days','enquiry_selected_addons'):
-            exists=connection.execute("SELECT 1 FROM sqlite_master WHERE type='table' AND name=?",(table,)).fetchone()
+            exists=(True if table_exists(connection, table) else None)
             if exists is not None:
-                columns={str(row['name']) for row in connection.execute(f'PRAGMA table_info({table})').fetchall()}
+                columns={str(row['name']) for row in column_rows(connection, table)}
                 if 'enquiry_element_id' in columns:
-                    connection.execute(f"""UPDATE {table} SET enquiry_element_id=(SELECT ee.id FROM enquiry_elements ee WHERE ee.enquiry_id={table}.enquiry_id AND ee.company_id={table}.company_id ORDER BY ee.sort_order,ee.id LIMIT 1) WHERE enquiry_element_id IS NULL""")
+                    execute_sql(connection, f'UPDATE {table} SET enquiry_element_id=(SELECT ee.id FROM enquiry_elements ee WHERE ee.enquiry_id={table}.enquiry_id AND ee.company_id={table}.company_id ORDER BY ee.sort_order,ee.id LIMIT 1) WHERE enquiry_element_id IS NULL')
         # Backfill per-element child rows for legacy one-element enquiries.
-        connection.execute('''INSERT OR IGNORE INTO enquiry_element_people(enquiry_element_id,company_id,person_type_id,quantity)
-            SELECT ep.enquiry_element_id,ep.company_id,ep.person_type_id,ep.quantity FROM enquiry_people ep WHERE ep.enquiry_element_id IS NOT NULL''')
-        connection.execute('''INSERT OR IGNORE INTO enquiry_element_addons(enquiry_element_id,company_id,addon_id,quantity)
-            SELECT ea.enquiry_element_id,ea.company_id,ea.addon_id,ea.quantity FROM enquiry_addons ea WHERE ea.enquiry_element_id IS NOT NULL''')
-        connection.execute(
-            "INSERT OR REPLACE INTO web_schema_meta(key,value) VALUES ('schema_version','web-v1-foundation')"
+        execute_sql(connection, 'INSERT INTO enquiry_element_people(enquiry_element_id,company_id,person_type_id,quantity)\n            SELECT ep.enquiry_element_id,ep.company_id,ep.person_type_id,ep.quantity FROM enquiry_people ep WHERE ep.enquiry_element_id IS NOT NULL ON CONFLICT DO NOTHING')
+        execute_sql(connection, 'INSERT INTO enquiry_element_addons(enquiry_element_id,company_id,addon_id,quantity)\n            SELECT ea.enquiry_element_id,ea.company_id,ea.addon_id,ea.quantity FROM enquiry_addons ea WHERE ea.enquiry_element_id IS NOT NULL ON CONFLICT DO NOTHING')
+        execute_sql(connection,
+            "INSERT INTO web_schema_meta(key,value) VALUES ('schema_version','web-v1-foundation') ON CONFLICT(key) DO UPDATE SET value=excluded.value"
         )
-        connection.execute(
-            "INSERT OR IGNORE INTO web_schema_meta(key,value) VALUES ('created_at',?)",
+        execute_sql(connection,
+            "INSERT INTO web_schema_meta(key,value) VALUES ('created_at',:q368_0) ON CONFLICT DO NOTHING",
             (iso_now(),),
         )
 
@@ -310,6 +309,6 @@ def lifecycle_counts(database, company_id: int) -> dict[str, int]:
     result: dict[str, int] = {}
     with database.connect() as connection:
         for table in tables:
-            row = connection.execute(f'SELECT COUNT(*) AS n FROM {table} WHERE company_id=?', (int(company_id),)).fetchone()
+            row = execute_sql(connection, f'SELECT COUNT(*) AS n FROM {table} WHERE company_id=:q373_0', (int(company_id),)).fetchone()
             result[table] = int(row['n'])
     return result

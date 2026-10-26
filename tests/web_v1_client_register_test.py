@@ -1,4 +1,6 @@
 from __future__ import annotations
+from operational_backend import create_app
+from online.sql import execute_sql, insert_sql
 
 import sys
 import tempfile
@@ -8,7 +10,7 @@ sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
 from fastapi.testclient import TestClient
 
-from online.app import COOKIE_NAME, create_app
+from online.app import COOKIE_NAME
 from online.webv1 import register_web_v1
 
 
@@ -31,11 +33,11 @@ def main() -> None:
         client = TestClient(app)
 
         with db.connect() as c:
-            forest = int(c.execute("SELECT id FROM companies WHERE name='Forest View Campsite'").fetchone()['id'])
-            riverside = int(c.execute("SELECT id FROM companies WHERE name='Riverside Cabins'").fetchone()['id'])
+            forest = int(execute_sql(c, "SELECT id FROM companies WHERE name='Forest View Campsite'").fetchone()['id'])
+            riverside = int(execute_sql(c, "SELECT id FROM companies WHERE name='Riverside Cabins'").fetchone()['id'])
             now = '2026-08-22T08:00:00+00:00'
-            river_customer = int(c.execute(
-                "INSERT INTO customer_records(company_id,first_name,last_name,email,phone,created_at,updated_at) VALUES (?,?,?,?,?,?,?)",
+            river_customer = int(insert_sql(c,
+                'INSERT INTO customer_records(company_id,first_name,last_name,email,phone,created_at,updated_at) VALUES (:q270_0,:q270_1,:q270_2,:q270_3,:q270_4,:q270_5,:q270_6)',
                 (riverside, 'River', 'Guest', 'river@example.test', '555-RIVER', now, now),
             ).lastrowid)
 
@@ -53,7 +55,7 @@ def main() -> None:
         assert bad_customer.status_code == 400
         assert 'Enter both Family name and First name.' in bad_customer.text
         with db.connect() as c:
-            assert c.execute('SELECT COUNT(*) AS n FROM customer_records WHERE company_id=?', (forest,)).fetchone()['n'] == 0
+            assert execute_sql(c, 'SELECT COUNT(*) AS n FROM customer_records WHERE company_id=:q278_0', (forest,)).fetchone()['n'] == 0
 
         create = client.post('/operations/customers/new', data={
             'csrf': csrf, 'first_name': 'Alice', 'last_name': 'Walker', 'email': 'alice@example.test',
@@ -65,7 +67,7 @@ def main() -> None:
         customer_id = int(create.headers['location'].split('/')[3].split('?')[0])
 
         with db.connect() as c:
-            saved_customer = c.execute('SELECT * FROM customer_records WHERE id=?', (customer_id,)).fetchone()
+            saved_customer = execute_sql(c, 'SELECT * FROM customer_records WHERE id=:q271_0', (customer_id,)).fetchone()
             assert saved_customer['mobile_phone'] == '0612345678'
             assert saved_customer['fixed_phone'] == '0299001122'
             assert saved_customer['address1'] == '1 Lake Road'
@@ -95,7 +97,7 @@ def main() -> None:
         assert 'Email + Mobile + Fixed telephone' in duplicate.text
         assert 'Use this Customer' in duplicate.text
         with db.connect() as c:
-            assert c.execute('SELECT COUNT(*) AS n FROM customer_records WHERE company_id=?', (forest,)).fetchone()['n'] == 1
+            assert execute_sql(c, 'SELECT COUNT(*) AS n FROM customer_records WHERE company_id=:q279_0', (forest,)).fetchone()['n'] == 1
 
         csrf = csrf_for(client, db)
         bad_enquiry = client.post(f'/operations/customers/{customer_id}/enquiries/new', data={
@@ -106,7 +108,7 @@ def main() -> None:
         assert 'Enter both arrival and departure dates' in bad_enquiry.text
         assert '2026-09-10' in bad_enquiry.text
         with db.connect() as c:
-            assert c.execute('SELECT COUNT(*) AS n FROM enquiries WHERE company_id=?', (forest,)).fetchone()['n'] == 0
+            assert execute_sql(c, 'SELECT COUNT(*) AS n FROM enquiries WHERE company_id=:q280_0', (forest,)).fetchone()['n'] == 0
 
         backwards = client.post(f'/operations/customers/{customer_id}/enquiries/new', data={
             'csrf': csrf, 'arrival_date': '2026-09-10', 'departure_date': '2026-09-09', 'party_size': '2',
@@ -130,21 +132,19 @@ def main() -> None:
         assert vague.status_code == 303
 
         with db.connect() as c:
-            enquiry_rows = c.execute('SELECT * FROM enquiries WHERE company_id=? AND customer_id=? ORDER BY id', (forest, customer_id)).fetchall()
+            enquiry_rows = execute_sql(c, 'SELECT * FROM enquiries WHERE company_id=:q272_0 AND customer_id=:q272_1 ORDER BY id', (forest, customer_id)).fetchall()
             assert len(enquiry_rows) == 2
             assert enquiry_rows[0]['arrival_date'] == '2026-09-10'
             assert enquiry_rows[0]['departure_date'] == '2026-09-12'
             assert enquiry_rows[0]['party_size'] == 2
             assert enquiry_rows[1]['arrival_date'] is None
             assert enquiry_rows[1]['departure_date'] is None
-            actions = [r['action'] for r in c.execute("SELECT action FROM audit_log WHERE company_id=? AND action IN ('CUSTOMER_CREATED','ENQUIRY_CREATED') ORDER BY id", (forest,)).fetchall()]
+            actions = [r['action'] for r in execute_sql(c, "SELECT action FROM audit_log WHERE company_id=:q281_0 AND action IN ('CUSTOMER_CREATED','ENQUIRY_CREATED') ORDER BY id", (forest,)).fetchall()]
             assert actions == ['CUSTOMER_CREATED', 'ENQUIRY_CREATED', 'ENQUIRY_CREATED']
 
             # A newly arrived direct Booking can be explicitly re-linked to the existing master Customer; never automatically.
-            second_customer = int(c.execute('''INSERT INTO customer_records(company_id,first_name,last_name,email,phone,mobile_phone,fixed_phone,created_at,updated_at)
-                VALUES (?,?,?,?,?,?,?,?,?)''', (forest, 'Alice', 'Online', 'alice@example.test', '0612345678', '0612345678', '', now, now)).lastrowid)
-            booking_id = int(c.execute('''INSERT INTO bookings(company_id,reference,customer_id,status,arrival_date,departure_date,total_amount,pricing_snapshot_json,created_at,updated_at)
-                VALUES (?,?,?,?,?,?,?,?,?,?)''', (forest, 'DB26-99999', second_customer, 'confirmed', '2026-10-01', '2026-10-03', 100.0, '{}', now, now)).lastrowid)
+            second_customer = int(insert_sql(c, 'INSERT INTO customer_records(company_id,first_name,last_name,email,phone,mobile_phone,fixed_phone,created_at,updated_at)\n                VALUES (:q273_0,:q273_1,:q273_2,:q273_3,:q273_4,:q273_5,:q273_6,:q273_7,:q273_8)', (forest, 'Alice', 'Online', 'alice@example.test', '0612345678', '0612345678', '', now, now)).lastrowid)
+            booking_id = int(insert_sql(c, 'INSERT INTO bookings(company_id,reference,customer_id,status,arrival_date,departure_date,total_amount,pricing_snapshot_json,created_at,updated_at)\n                VALUES (:q274_0,:q274_1,:q274_2,:q274_3,:q274_4,:q274_5,:q274_6,:q274_7,:q274_8,:q274_9)', (forest, 'DB26-99999', second_customer, 'confirmed', '2026-10-01', '2026-10-03', 100.0, '{}', now, now)).lastrowid)
 
         match_page = client.get(f'/operations/bookings/{booking_id}/customer-matches')
         assert match_page.status_code == 200
@@ -152,13 +152,13 @@ def main() -> None:
         assert 'Alice Walker' in match_page.text
         assert 'Add Booking to this Customer master file' in match_page.text
         with db.connect() as c:
-            assert int(c.execute('SELECT customer_id FROM bookings WHERE id=?', (booking_id,)).fetchone()['customer_id']) == second_customer
+            assert int(execute_sql(c, 'SELECT customer_id FROM bookings WHERE id=:q282_0', (booking_id,)).fetchone()['customer_id']) == second_customer
 
         linked = client.post(f'/operations/bookings/{booking_id}/link-customer', data={'csrf': csrf, 'customer_id': str(customer_id)}, follow_redirects=False)
         assert linked.status_code == 303
         with db.connect() as c:
-            assert int(c.execute('SELECT customer_id FROM bookings WHERE id=?', (booking_id,)).fetchone()['customer_id']) == customer_id
-            linked_audit = c.execute("SELECT action FROM audit_log WHERE company_id=? AND entity_type='booking' AND entity_id=? ORDER BY id DESC LIMIT 1", (forest, str(booking_id))).fetchone()
+            assert int(execute_sql(c, 'SELECT customer_id FROM bookings WHERE id=:q283_0', (booking_id,)).fetchone()['customer_id']) == customer_id
+            linked_audit = execute_sql(c, "SELECT action FROM audit_log WHERE company_id=:q275_0 AND entity_type='booking' AND entity_id=:q275_1 ORDER BY id DESC LIMIT 1", (forest, str(booking_id))).fetchone()
             assert linked_audit['action'] == 'BOOKING_LINKED_TO_CUSTOMER'
 
         detail_after_link = client.get(f'/operations/customers/{customer_id}')

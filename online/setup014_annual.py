@@ -1,4 +1,5 @@
 from __future__ import annotations
+from .sql import execute_sql, insert_sql
 
 from datetime import date
 
@@ -29,7 +30,7 @@ def _pricing_page(database, context, year: int | None, submitted: dict[str,str] 
     cid=working_company(context); available=years(database,cid); selected=selected_year(database,cid,year); errors=errors or set(); submitted=submitted or {}
     body=f'<h1>Seasonal Element pricing</h1>{setup_nav()}{_error_html(message)}{_year_select(available,selected,"/setup/pricing")}'
     if selected is None: return layout("Seasonal pricing",body,context)
-    seasons=rows(database,"SELECT * FROM setup_seasons WHERE company_id=? AND year=? ORDER BY start_date",(cid,selected)); elements=rows(database,"SELECT * FROM setup_elements WHERE company_id=? AND active=1 ORDER BY element_type,name",(cid,))
+    seasons=rows(database,'SELECT * FROM setup_seasons WHERE company_id=:q682_0 AND year=:q682_1 ORDER BY start_date',(cid,selected)); elements=rows(database,'SELECT * FROM setup_elements WHERE company_id=:q683_0 AND active=1 ORDER BY element_type,name',(cid,))
     body+=f'<div class="card"><h2>Add season</h2><form method="post" action="/setup/seasons"><input type="hidden" name="csrf" value="{esc(context["csrf_token"])}"><input type="hidden" name="year" value="{selected}"><div class="grid"><div><label>Name</label><input name="name" required></div><div><label>Start</label><input type="date" name="start_date" required></div><div><label>End</label><input type="date" name="end_date" required></div></div><p><button>Add season</button></p></form></div>'
     body+=f'<form method="post" action="/setup/pricing"><input type="hidden" name="csrf" value="{esc(context["csrf_token"])}"><input type="hidden" name="year" value="{selected}"><div class="card" style="overflow:auto"><p><strong>Every visible price cell must contain a value. 0 or 0.00 is valid.</strong></p><table><thead><tr><th>Element</th>'+''.join(f'<th>{esc(s["name"])}</th>' for s in seasons)+'</tr></thead><tbody>'
     for e in elements:
@@ -39,7 +40,7 @@ def _pricing_page(database, context, year: int | None, submitted: dict[str,str] 
             if submitted:
                 value=submitted.get(key,'')
             else:
-                r=one(database,"SELECT rate FROM setup_element_rates WHERE company_id=? AND year=? AND element_id=? AND season_id=?",(cid,selected,e["id"],s["id"])); value='' if r is None else f'{float(r["rate"]):.2f}'
+                r=one(database,'SELECT rate FROM setup_element_rates WHERE company_id=:q697_0 AND year=:q697_1 AND element_id=:q697_2 AND season_id=:q697_3',(cid,selected,e["id"],s["id"])); value='' if r is None else f'{float(r["rate"]):.2f}'
             body+=f'<td><input style="{_style(key,errors)}" name="{key}" value="{esc(value)}" placeholder="required"></td>'
         body+='</tr>'
     body+='</tbody></table><p><button>Save seasonal prices</button></p></div></form>'
@@ -49,19 +50,19 @@ def _pricing_page(database, context, year: int | None, submitted: dict[str,str] 
 def _occupancy_page(database, context, year: int | None, submitted: dict[str,str] | None=None, errors: set[str] | None=None, message: str='') -> str:
     cid=working_company(context); available=years(database,cid); selected=selected_year(database,cid,year); submitted=submitted or {}; errors=errors or set(); body=f'<h1>Occupancy</h1>{setup_nav()}{_error_html(message)}{_year_select(available,selected,"/setup/occupancy")}'
     if selected is None: return layout("Occupancy",body,context)
-    elements=rows(database,"SELECT * FROM setup_elements WHERE company_id=? AND active=1 ORDER BY element_type,name",(cid,)); people=rows(database,"SELECT * FROM setup_person_types WHERE company_id=? AND active=1 ORDER BY name",(cid,))
+    elements=rows(database,'SELECT * FROM setup_elements WHERE company_id=:q684_0 AND active=1 ORDER BY element_type,name',(cid,)); people=rows(database,'SELECT * FROM setup_person_types WHERE company_id=:q685_0 AND active=1 ORDER BY name',(cid,))
     body+=f'<form method="post" action="/setup/occupancy"><input type="hidden" name="csrf" value="{esc(context["csrf_token"])}"><input type="hidden" name="year" value="{selected}"><div class="card"><p><strong>0 is valid:</strong> for a Person Type it means that type is not allowed on that Element.</p><table><thead><tr><th>Element</th><th>Total max</th>'+''.join(f'<th>{esc(p["name"])}</th>' for p in people)+'</tr></thead><tbody>'
     for e in elements:
         total_key=f't_{e["id"]}'
         if submitted: total_value=submitted.get(total_key,'')
         else:
-            total=one(database,"SELECT max_total FROM setup_occupancy WHERE company_id=? AND year=? AND element_id=?",(cid,selected,e["id"])); total_value='' if total is None else str(total["max_total"])
+            total=one(database,'SELECT max_total FROM setup_occupancy WHERE company_id=:q694_0 AND year=:q694_1 AND element_id=:q694_2',(cid,selected,e["id"])); total_value='' if total is None else str(total["max_total"])
         body+=f'<tr><td>{esc(e["name"])}</td><td><input style="{_style(total_key,errors)}" name="{total_key}" value="{esc(total_value)}" required></td>'
         for p in people:
             key=f'p_{e["id"]}_{p["id"]}'
             if submitted: value=submitted.get(key,'')
             else:
-                lim=one(database,"SELECT max_count FROM setup_person_limits WHERE company_id=? AND year=? AND element_id=? AND person_type_id=?",(cid,selected,e["id"],p["id"])); value='' if lim is None else str(lim["max_count"])
+                lim=one(database,'SELECT max_count FROM setup_person_limits WHERE company_id=:q698_0 AND year=:q698_1 AND element_id=:q698_2 AND person_type_id=:q698_3',(cid,selected,e["id"],p["id"])); value='' if lim is None else str(lim["max_count"])
             body+=f'<td><input style="{_style(key,errors)}" name="{key}" value="{esc(value)}" required></td>'
         body+='</tr>'
     body+='</tbody></table><p><button>Save occupancy</button></p></div></form>'
@@ -71,11 +72,11 @@ def _occupancy_page(database, context, year: int | None, submitted: dict[str,str
 def _addon_page(database, context, year: int | None, submitted: dict[str,str] | None=None, errors: set[str] | None=None, message: str='') -> str:
     cid=working_company(context); available=years(database,cid); selected=selected_year(database,cid,year); submitted=submitted or {}; errors=errors or set(); body=f'<h1>Add-on rules</h1>{setup_nav()}{_error_html(message)}{_year_select(available,selected,"/setup/addon-rules")}'
     if selected is None: return layout("Add-on rules",body,context)
-    addons=rows(database,"SELECT * FROM setup_addons WHERE company_id=? AND active=1 ORDER BY name",(cid,)); elements=rows(database,"SELECT * FROM setup_elements WHERE company_id=? AND active=1 ORDER BY element_type,name",(cid,)); types=sorted({str(e["element_type"]) for e in elements},key=str.casefold)
+    addons=rows(database,'SELECT * FROM setup_addons WHERE company_id=:q686_0 AND active=1 ORDER BY name',(cid,)); elements=rows(database,'SELECT * FROM setup_elements WHERE company_id=:q687_0 AND active=1 ORDER BY element_type,name',(cid,)); types=sorted({str(e["element_type"]) for e in elements},key=str.casefold)
     body+=f'<form method="post" action="/setup/addon-rules"><input type="hidden" name="csrf" value="{esc(context["csrf_token"])}"><input type="hidden" name="year" value="{selected}"><div class="card"><h2>Element Type defaults</h2><p>Tick = Y / available. Unticked = N / unavailable.</p><table><thead><tr><th>Element Type</th><th>Add-on</th><th>Y</th><th>Min</th><th>Max</th><th>Price €</th></tr></thead><tbody>'
     for typ in types:
         for a in addons:
-            base=one(database,"SELECT * FROM setup_type_addons WHERE company_id=? AND year=? AND element_type=? AND addon_id=?",(cid,selected,typ,a["id"])); check_key=f'ty_{a["id"]}_{typ}'; yes=(check_key in submitted) if submitted else bool(base and base["allowed"]); chk='checked' if yes else ''
+            base=one(database,'SELECT * FROM setup_type_addons WHERE company_id=:q695_0 AND year=:q695_1 AND element_type=:q695_2 AND addon_id=:q695_3',(cid,selected,typ,a["id"])); check_key=f'ty_{a["id"]}_{typ}'; yes=(check_key in submitted) if submitted else bool(base and base["allowed"]); chk='checked' if yes else ''
             vals=[]
             for prefix,col in (("tymin","min_qty"),("tymax","max_qty"),("tyrate","rate")):
                 key=f'{prefix}_{a["id"]}_{typ}'
@@ -86,7 +87,7 @@ def _addon_page(database, context, year: int | None, submitted: dict[str,str] | 
     body+='</tbody></table></div><div class="card"><h2>Individual Element overrides</h2><p><strong>I = Inherit Element Type rule &nbsp; Y = Yes &nbsp; N = No.</strong></p><table><thead><tr><th>Element</th><th>Add-on</th><th>I / Y / N</th><th>Min</th><th>Max</th><th>Price €</th></tr></thead><tbody>'
     for e in elements:
         for a in addons:
-            base=one(database,"SELECT * FROM setup_element_addons WHERE company_id=? AND year=? AND element_id=? AND addon_id=?",(cid,selected,e["id"],a["id"])); radio_key=f'ov_{e["id"]}_{a["id"]}'; state=submitted.get(radio_key,'I') if submitted else ('I' if not base else base["state"]); radios=' '.join(f'<label style="display:inline;font-weight:normal"><input style="width:auto" type="radio" name="{radio_key}" value="{s}" {"checked" if state==s else ""}> {s}</label>' for s in ('I','Y','N'))
+            base=one(database,'SELECT * FROM setup_element_addons WHERE company_id=:q696_0 AND year=:q696_1 AND element_id=:q696_2 AND addon_id=:q696_3',(cid,selected,e["id"],a["id"])); radio_key=f'ov_{e["id"]}_{a["id"]}'; state=submitted.get(radio_key,'I') if submitted else ('I' if not base else base["state"]); radios=' '.join(f'<label style="display:inline;font-weight:normal"><input style="width:auto" type="radio" name="{radio_key}" value="{s}" {"checked" if state==s else ""}> {s}</label>' for s in ('I','Y','N'))
             vals=[]
             for prefix,col in (("ovmin","min_qty"),("ovmax","max_qty"),("ovrate","rate")):
                 key=f'{prefix}_{e["id"]}_{a["id"]}'
@@ -113,12 +114,12 @@ def register_annual_routes(app) -> None:
         except ValueError:
             return HTMLResponse(_pricing_page(database,context,year,message='Enter a valid season start and end date.'),status_code=400)
         if end<start: return HTMLResponse(_pricing_page(database,context,year,message='Season end cannot be before start.'),status_code=400)
-        with database.connect() as c: sid=c.execute("INSERT INTO setup_seasons(company_id,year,name,start_date,end_date) VALUES (?,?,?,?,?)",(cid,year,data.get("name",'').strip(),data["start_date"],data["end_date"])).lastrowid
+        with database.connect() as c: sid=insert_sql(c, 'INSERT INTO setup_seasons(company_id,year,name,start_date,end_date) VALUES (:q699_0,:q699_1,:q699_2,:q699_3,:q699_4)',(cid,year,data.get("name",'').strip(),data["start_date"],data["end_date"])).lastrowid
         audit(database,context,cid,"SEASON_ADDED","season",sid,None,{"year":year,"name":data.get("name",'')}); return RedirectResponse(f'/setup/pricing?year={year}',303)
 
     @app.post("/setup/pricing")
     async def pricing_save(request: Request):
-        context=context_for(database,request); cid=working_company(context); data=await form_data(request); require_csrf(context,data); year=int(data["year"]); seasons=rows(database,"SELECT id FROM setup_seasons WHERE company_id=? AND year=?",(cid,year)); elements=rows(database,"SELECT id FROM setup_elements WHERE company_id=? AND active=1",(cid,)); values=[]; errors=set()
+        context=context_for(database,request); cid=working_company(context); data=await form_data(request); require_csrf(context,data); year=int(data["year"]); seasons=rows(database,'SELECT id FROM setup_seasons WHERE company_id=:q688_0 AND year=:q688_1',(cid,year)); elements=rows(database,'SELECT id FROM setup_elements WHERE company_id=:q689_0 AND active=1',(cid,)); values=[]; errors=set()
         for e in elements:
             for s in seasons:
                 key=f'r_{e["id"]}_{s["id"]}'; raw=data.get(key,'').strip()
@@ -128,7 +129,7 @@ def register_annual_routes(app) -> None:
                 values.append((e["id"],s["id"],rate))
         if errors: return HTMLResponse(_pricing_page(database,context,year,data,errors,'Every seasonal price cell must be completed with a valid zero or positive price. Zero is valid.'),status_code=400)
         with database.connect() as c:
-            for eid,sid,rate in values: c.execute("INSERT OR REPLACE INTO setup_element_rates VALUES (?,?,?,?,?)",(cid,year,eid,sid,rate))
+            for eid,sid,rate in values: execute_sql(c, 'INSERT INTO setup_element_rates VALUES (:q700_0,:q700_1,:q700_2,:q700_3,:q700_4) ON CONFLICT(company_id,year,element_id,season_id) DO UPDATE SET rate=excluded.rate',(cid,year,eid,sid,rate))
         audit(database,context,cid,"SEASONAL_PRICING_SAVED","pricing_year",year,None,{"cells":len(values)}); return RedirectResponse(f'/setup/pricing?year={year}',303)
 
     @app.get("/setup/occupancy", response_class=HTMLResponse)
@@ -137,7 +138,7 @@ def register_annual_routes(app) -> None:
 
     @app.post("/setup/occupancy")
     async def occupancy_save(request: Request):
-        context=context_for(database,request); cid=working_company(context); data=await form_data(request); require_csrf(context,data); year=int(data["year"]); elements=rows(database,"SELECT id FROM setup_elements WHERE company_id=? AND active=1",(cid,)); people=rows(database,"SELECT id FROM setup_person_types WHERE company_id=? AND active=1",(cid,)); totals=[]; limits=[]; errors=set()
+        context=context_for(database,request); cid=working_company(context); data=await form_data(request); require_csrf(context,data); year=int(data["year"]); elements=rows(database,'SELECT id FROM setup_elements WHERE company_id=:q690_0 AND active=1',(cid,)); people=rows(database,'SELECT id FROM setup_person_types WHERE company_id=:q691_0 AND active=1',(cid,)); totals=[]; limits=[]; errors=set()
         for e in elements:
             key=f't_{e["id"]}'
             try: totals.append((e["id"],valid_whole(data.get(key,''))))
@@ -148,8 +149,8 @@ def register_annual_routes(app) -> None:
                 except (TypeError,ValueError): errors.add(key)
         if errors: return HTMLResponse(_occupancy_page(database,context,year,data,errors,'Occupancy values must be whole numbers of zero or more. Zero remains valid.'),status_code=400)
         with database.connect() as c:
-            for eid,total in totals: c.execute("INSERT OR REPLACE INTO setup_occupancy VALUES (?,?,?,?)",(cid,year,eid,total))
-            for eid,pid,limit in limits: c.execute("INSERT OR REPLACE INTO setup_person_limits VALUES (?,?,?,?,?)",(cid,year,eid,pid,limit))
+            for eid,total in totals: execute_sql(c, 'INSERT INTO setup_occupancy VALUES (:q701_0,:q701_1,:q701_2,:q701_3) ON CONFLICT(company_id,year,element_id) DO UPDATE SET max_total=excluded.max_total',(cid,year,eid,total))
+            for eid,pid,limit in limits: execute_sql(c, 'INSERT INTO setup_person_limits VALUES (:q702_0,:q702_1,:q702_2,:q702_3,:q702_4) ON CONFLICT(company_id,year,element_id,person_type_id) DO UPDATE SET max_count=excluded.max_count,min_count=excluded.min_count',(cid,year,eid,pid,limit))
         audit(database,context,cid,"OCCUPANCY_SAVED","pricing_year",year,None,{"elements":len(elements)}); return RedirectResponse(f'/setup/occupancy?year={year}',303)
 
     @app.get("/setup/addon-rules", response_class=HTMLResponse)
@@ -158,7 +159,7 @@ def register_annual_routes(app) -> None:
 
     @app.post("/setup/addon-rules")
     async def addon_rules_save(request: Request):
-        context=context_for(database,request); cid=working_company(context); data=await form_data(request); require_csrf(context,data); year=int(data["year"]); addons=rows(database,"SELECT * FROM setup_addons WHERE company_id=? AND active=1",(cid,)); elements=rows(database,"SELECT * FROM setup_elements WHERE company_id=? AND active=1",(cid,)); types=sorted({str(e["element_type"]) for e in elements},key=str.casefold); type_values=[]; override_values=[]; errors=set()
+        context=context_for(database,request); cid=working_company(context); data=await form_data(request); require_csrf(context,data); year=int(data["year"]); addons=rows(database,'SELECT * FROM setup_addons WHERE company_id=:q692_0 AND active=1',(cid,)); elements=rows(database,'SELECT * FROM setup_elements WHERE company_id=:q693_0 AND active=1',(cid,)); types=sorted({str(e["element_type"]) for e in elements},key=str.casefold); type_values=[]; override_values=[]; errors=set()
         for typ in types:
             for a in addons:
                 allowed=1 if f'ty_{a["id"]}_{typ}' in data else 0
@@ -182,8 +183,8 @@ def register_annual_routes(app) -> None:
                 override_values.append((e["id"],a["id"],state,mn,mx,rate))
         if errors: return HTMLResponse(_addon_page(database,context,year,data,errors,'Complete all values required by Y rules. Minimum and maximum must be whole numbers, prices must be zero or positive, and maximum cannot be less than minimum.'),status_code=400)
         with database.connect() as c:
-            for typ,aid,allowed,mn,mx,rate in type_values: c.execute("INSERT OR REPLACE INTO setup_type_addons VALUES (?,?,?,?,?,?,?,?)",(cid,year,typ,aid,allowed,mn,mx,rate))
+            for typ,aid,allowed,mn,mx,rate in type_values: execute_sql(c, 'INSERT INTO setup_type_addons VALUES (:q703_0,:q703_1,:q703_2,:q703_3,:q703_4,:q703_5,:q703_6,:q703_7) ON CONFLICT(company_id,year,element_type,addon_id) DO UPDATE SET allowed=excluded.allowed,min_qty=excluded.min_qty,max_qty=excluded.max_qty,rate=excluded.rate',(cid,year,typ,aid,allowed,mn,mx,rate))
             for eid,aid,state,mn,mx,rate in override_values:
-                if state=='I': c.execute("DELETE FROM setup_element_addons WHERE company_id=? AND year=? AND element_id=? AND addon_id=?",(cid,year,eid,aid))
-                else: c.execute("INSERT OR REPLACE INTO setup_element_addons VALUES (?,?,?,?,?,?,?,?)",(cid,year,eid,aid,state,mn,mx,rate))
+                if state=='I': execute_sql(c, 'DELETE FROM setup_element_addons WHERE company_id=:q704_0 AND year=:q704_1 AND element_id=:q704_2 AND addon_id=:q704_3',(cid,year,eid,aid))
+                else: execute_sql(c, 'INSERT INTO setup_element_addons VALUES (:q705_0,:q705_1,:q705_2,:q705_3,:q705_4,:q705_5,:q705_6,:q705_7) ON CONFLICT(company_id,year,element_id,addon_id) DO UPDATE SET state=excluded.state,min_qty=excluded.min_qty,max_qty=excluded.max_qty,rate=excluded.rate',(cid,year,eid,aid,state,mn,mx,rate))
         audit(database,context,cid,"ADDON_RULES_SAVED","pricing_year",year,None,{"element_types":len(types),"elements":len(elements),"addons":len(addons)}); return RedirectResponse(f'/setup/addon-rules?year={year}',303)

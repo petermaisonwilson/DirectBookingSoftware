@@ -1,4 +1,6 @@
 from __future__ import annotations
+from operational_backend import create_app
+from online.sql import execute_sql, insert_sql
 
 import sys
 import tempfile
@@ -8,7 +10,7 @@ sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
 from fastapi.testclient import TestClient
 
-from online.app import COOKIE_NAME, create_app
+from online.app import COOKIE_NAME
 from online.webv1 import register_web_v1
 
 
@@ -28,20 +30,20 @@ def main() -> None:
         db = app.state.database
         client = TestClient(app)
         with db.connect() as c:
-            forest = int(c.execute("SELECT id FROM companies WHERE name='Forest View Campsite'").fetchone()['id'])
-            c.execute("INSERT OR IGNORE INTO setup_element_types(company_id,name) VALUES (?,?)", (forest, 'Camping Pitch'))
-            element_id = int(c.execute("INSERT INTO setup_elements(company_id,name,element_type,pricing_method,base_price) VALUES (?,?,?,?,?)", (forest, 'Pitch A', 'Camping Pitch', 'Per night', 0)).lastrowid)
-            adult_id = int(c.execute("INSERT INTO setup_person_types(company_id,name,short_name) VALUES (?,?,?)", (forest, 'Adult', 'A')).lastrowid)
-            breakfast_id = int(c.execute("INSERT INTO setup_addons(company_id,name,pricing_method) VALUES (?,?,?)", (forest, 'Breakfast', 'Per quantity per day')).lastrowid)
-            c.execute("INSERT INTO setup_years(company_id,year) VALUES (?,?)", (forest, 2026))
-            season_id = int(c.execute("INSERT INTO setup_seasons(company_id,year,name,start_date,end_date) VALUES (?,?,?,?,?)", (forest, 2026, 'All Year 2026', '2026-01-01', '2026-12-31')).lastrowid)
-            c.execute("INSERT INTO setup_element_rates(company_id,year,element_id,season_id,rate) VALUES (?,?,?,?,?)", (forest, 2026, element_id, season_id, 25.0))
-            c.execute("INSERT INTO setup_occupancy(company_id,year,element_id,max_total) VALUES (?,?,?,?)", (forest, 2026, element_id, 6))
-            c.execute("INSERT INTO setup_person_limits(company_id,year,element_id,person_type_id,max_count) VALUES (?,?,?,?,?)", (forest, 2026, element_id, adult_id, 6))
-            c.execute("INSERT INTO setup_person_prices(company_id,year,element_id,person_type_id,rate) VALUES (?,?,?,?,?)", (forest, 2026, element_id, adult_id, 5.0))
-            c.execute("INSERT INTO setup_type_addons(company_id,year,element_type,addon_id,allowed,min_qty,max_qty,rate) VALUES (?,?,?,?,?,?,?,?)", (forest, 2026, 'Camping Pitch', breakfast_id, 1, 1, 4, 10.0))
+            forest = int(execute_sql(c, "SELECT id FROM companies WHERE name='Forest View Campsite'").fetchone()['id'])
+            execute_sql(c, 'INSERT INTO setup_element_types(company_id,name) VALUES (:q363_0,:q363_1) ON CONFLICT DO NOTHING', (forest, 'Camping Pitch'))
+            element_id = int(insert_sql(c, 'INSERT INTO setup_elements(company_id,name,element_type,pricing_method,base_price) VALUES (:q370_0,:q370_1,:q370_2,:q370_3,:q370_4)', (forest, 'Pitch A', 'Camping Pitch', 'Per night', 0)).lastrowid)
+            adult_id = int(insert_sql(c, 'INSERT INTO setup_person_types(company_id,name,short_name) VALUES (:q371_0,:q371_1,:q371_2)', (forest, 'Adult', 'A')).lastrowid)
+            breakfast_id = int(insert_sql(c, 'INSERT INTO setup_addons(company_id,name,pricing_method) VALUES (:q372_0,:q372_1,:q372_2)', (forest, 'Breakfast', 'Per quantity per day')).lastrowid)
+            execute_sql(c, 'INSERT INTO setup_years(company_id,year) VALUES (:q364_0,:q364_1)', (forest, 2026))
+            season_id = int(insert_sql(c, 'INSERT INTO setup_seasons(company_id,year,name,start_date,end_date) VALUES (:q373_0,:q373_1,:q373_2,:q373_3,:q373_4)', (forest, 2026, 'All Year 2026', '2026-01-01', '2026-12-31')).lastrowid)
+            execute_sql(c, 'INSERT INTO setup_element_rates(company_id,year,element_id,season_id,rate) VALUES (:q365_0,:q365_1,:q365_2,:q365_3,:q365_4)', (forest, 2026, element_id, season_id, 25.0))
+            execute_sql(c, 'INSERT INTO setup_occupancy(company_id,year,element_id,max_total) VALUES (:q366_0,:q366_1,:q366_2,:q366_3)', (forest, 2026, element_id, 6))
+            execute_sql(c, 'INSERT INTO setup_person_limits(company_id,year,element_id,person_type_id,max_count) VALUES (:q367_0,:q367_1,:q367_2,:q367_3,:q367_4)', (forest, 2026, element_id, adult_id, 6))
+            execute_sql(c, 'INSERT INTO setup_person_prices(company_id,year,element_id,person_type_id,rate) VALUES (:q368_0,:q368_1,:q368_2,:q368_3,:q368_4)', (forest, 2026, element_id, adult_id, 5.0))
+            execute_sql(c, 'INSERT INTO setup_type_addons(company_id,year,element_type,addon_id,allowed,min_qty,max_qty,rate) VALUES (:q369_0,:q369_1,:q369_2,:q369_3,:q369_4,:q369_5,:q369_6,:q369_7)', (forest, 2026, 'Camping Pitch', breakfast_id, 1, 1, 4, 10.0))
             now = '2026-08-22T10:00:00+00:00'
-            customer_id = int(c.execute("INSERT INTO customer_records(company_id,first_name,last_name,email,phone,created_at,updated_at) VALUES (?,?,?,?,?,?,?)", (forest, 'Alice', 'Walker', 'alice@example.test', '', now, now)).lastrowid)
+            customer_id = int(insert_sql(c, 'INSERT INTO customer_records(company_id,first_name,last_name,email,phone,created_at,updated_at) VALUES (:q374_0,:q374_1,:q374_2,:q374_3,:q374_4,:q374_5,:q374_6)', (forest, 'Alice', 'Walker', 'alice@example.test', '', now, now)).lastrowid)
 
         from online.webv1_addon_when import initialise_addon_when
         initialise_addon_when(db)
@@ -96,8 +98,8 @@ def main() -> None:
         assert saved.status_code == 303
         enquiry_id = int(saved.headers['location'].split('/')[3].split('?')[0])
         with db.connect() as c:
-            assert int(c.execute('SELECT quantity FROM enquiry_addons WHERE enquiry_id=? AND addon_id=?', (enquiry_id, breakfast_id)).fetchone()['quantity']) == 6
-            daily = c.execute('SELECT service_date,quantity FROM enquiry_addon_days WHERE enquiry_id=? AND addon_id=? ORDER BY service_date', (enquiry_id, breakfast_id)).fetchall()
+            assert int(execute_sql(c, 'SELECT quantity FROM enquiry_addons WHERE enquiry_id=:q377_0 AND addon_id=:q377_1', (enquiry_id, breakfast_id)).fetchone()['quantity']) == 6
+            daily = execute_sql(c, 'SELECT service_date,quantity FROM enquiry_addon_days WHERE enquiry_id=:q375_0 AND addon_id=:q375_1 ORDER BY service_date', (enquiry_id, breakfast_id)).fetchall()
             assert [(str(x['service_date']), int(x['quantity'])) for x in daily] == [('2026-09-10', 2), ('2026-09-12', 4)]
 
         edit = client.get(f'/operations/enquiries/{enquiry_id}/edit')

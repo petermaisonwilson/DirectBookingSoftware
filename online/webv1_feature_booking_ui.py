@@ -35,21 +35,19 @@ def install_feature_booking_ui(app) -> None:
 
         if request.url.path in {'/availability/start','/availability/requirements-v2'} and 'Booking requirements' in text:
             caps = _addon_caps(database,cid)
-            years = [int(r['year']) for r in rows(database,'SELECT year FROM setup_years WHERE company_id=? ORDER BY year',(cid,))]
-            types = [str(r['name']) for r in rows(database,'SELECT name FROM setup_element_types WHERE company_id=? AND active=1 ORDER BY name',(cid,))]
+            years = [int(r['year']) for r in rows(database,'SELECT year FROM setup_years WHERE company_id=:q170_0 ORDER BY year',(cid,))]
+            types = [str(r['name']) for r in rows(database,'SELECT name FROM setup_element_types WHERE company_id=:q171_0 AND active=1 ORDER BY name',(cid,))]
             definitions = []
-            for item in rows(database, '''SELECT id,name,item_kind,feature_group FROM setup_addons
-                                          WHERE company_id=? AND active=1 AND ask_before_availability=1
-                                          ORDER BY item_kind,feature_group,name COLLATE NOCASE''',(cid,)):
+            for item in rows(database, 'SELECT id,name,item_kind,feature_group FROM setup_addons\n                                          WHERE company_id=:q168_0 AND active=1 AND ask_before_availability=1\n                                          ORDER BY item_kind,feature_group,lower(name)',(cid,)):
                 aid = int(item['id']); availability = {}
                 for year in years:
                     allowed = [typ for typ in types if aid in _relevant_addon_ids_for_type(database,cid,typ,year)]
                     availability[str(year)] = allowed
                 definitions.append({'id':aid,'name':str(item['name']),'kind':str(item['item_kind'] or 'Extra'),'group':str(item['feature_group'] or ''),'cap':int(caps.get(aid,0)),'availability':availability})
             token = request.cookies.get(COOKIE_NAME, '')
-            saved_session = one(database, 'SELECT ready FROM booking_requirement_sessions WHERE company_id=? AND session_token=?', (cid, token))
+            saved_session = one(database, 'SELECT ready FROM booking_requirement_sessions WHERE company_id=:q169_0 AND session_token=:q169_1', (cid, token))
             restore_saved = bool(saved_session and int(saved_session['ready'] or 0))
-            saved_values = {int(r['addon_id']): int(r['quantity'] or 0) for r in rows(database, 'SELECT addon_id,quantity FROM booking_requirement_addons WHERE company_id=? AND session_token=?', (cid, token))}
+            saved_values = {int(r['addon_id']): int(r['quantity'] or 0) for r in rows(database, 'SELECT addon_id,quantity FROM booking_requirement_addons WHERE company_id=:q172_0 AND session_token=:q172_1', (cid, token))}
             data = json.dumps(definitions,ensure_ascii=False).replace('</','<\\/')
             saved_data = json.dumps(saved_values).replace('</','<\\/')
             injection = f'''

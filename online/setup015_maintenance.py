@@ -1,4 +1,5 @@
 from __future__ import annotations
+from .sql import execute_sql, insert_sql, table_exists
 
 from datetime import date
 from urllib.parse import quote_plus
@@ -13,18 +14,18 @@ from .setup015_core import ADDON_PRICING_METHODS, audit, context_for, require_cs
 
 
 def _table_exists(connection, table: str) -> bool:
-    return connection.execute("SELECT 1 FROM sqlite_master WHERE type='table' AND name=?", (table,)).fetchone() is not None
+    return (True if table_exists(connection, table) else None) is not None
 
 
 def _count_if_table(connection, table: str, where: str, params: tuple[object, ...]) -> int:
     if not _table_exists(connection, table):
         return 0
-    return int(connection.execute(f'SELECT COUNT(*) AS n FROM {table} WHERE {where}', params).fetchone()['n'])
+    return int(execute_sql(connection, f'SELECT COUNT(*) AS n FROM {table} WHERE {where}', params).fetchone()['n'])
 
 
 def _delete_if_table(connection, table: str, where: str, params: tuple[object, ...]) -> None:
     if _table_exists(connection, table):
-        connection.execute(f'DELETE FROM {table} WHERE {where}', params)
+        execute_sql(connection, f'DELETE FROM {table} WHERE {where}', params)
 
 
 def _append_before_main_end(html: str, extra: str) -> str:
@@ -44,7 +45,7 @@ def _catalog_page(database, context, kind: str, *, edit: int = 0, message: str =
         table = 'setup_person_types'; title = 'Person Types'; singular = 'Person Type'; methods: tuple[str, ...] = ()
     else:
         table = 'setup_addons'; title = 'Add-ons'; singular = 'Add-on'; methods = ADDON_PRICING_METHODS
-    items = rows(database, f'SELECT * FROM {table} WHERE company_id=? ORDER BY active DESC,name COLLATE NOCASE', (cid,))
+    items = rows(database, f'SELECT * FROM {table} WHERE company_id=:q35_0 ORDER BY active DESC,lower(name)', (cid,))
     current = next((r for r in items if int(r['id']) == int(edit or 0)), None)
     name = str(current['name']) if current else ''
     short = str(current['short_name']) if current and kind == 'person' else ''
@@ -77,22 +78,22 @@ def _catalog_page(database, context, kind: str, *, edit: int = 0, message: str =
 def _historical_count(connection, kind: str, item_id: int, company_id: int) -> int:
     checks: list[tuple[str, str, tuple[object, ...]]] = []
     if kind == 'element':
-        checks = [('enquiry_requests', 'company_id=? AND element_id=?', (company_id, item_id)), ('booking_elements', 'company_id=? AND element_id=?', (company_id, item_id))]
+        checks = [('enquiry_requests', 'company_id=:extra10001_0 AND element_id=:extra10001_1', (company_id, item_id)), ('booking_elements', 'company_id=:extra10002_0 AND element_id=:extra10002_1', (company_id, item_id))]
     elif kind == 'person':
         checks = [
-            ('enquiry_people', 'company_id=? AND person_type_id=?', (company_id, item_id)),
-            ('enquiry_addon_people', 'company_id=? AND person_type_id=?', (company_id, item_id)),
-            ('enquiry_addon_person_days', 'company_id=? AND person_type_id=?', (company_id, item_id)),
-            ('booking_people', 'company_id=? AND person_type_id=?', (company_id, item_id)),
+            ('enquiry_people', 'company_id=:extra10006_0 AND person_type_id=:extra10006_1', (company_id, item_id)),
+            ('enquiry_addon_people', 'company_id=:extra10007_0 AND person_type_id=:extra10007_1', (company_id, item_id)),
+            ('enquiry_addon_person_days', 'company_id=:extra10008_0 AND person_type_id=:extra10008_1', (company_id, item_id)),
+            ('booking_people', 'company_id=:extra10009_0 AND person_type_id=:extra10009_1', (company_id, item_id)),
         ]
     elif kind == 'addon':
         checks = [
-            ('enquiry_addons', 'company_id=? AND addon_id=?', (company_id, item_id)),
-            ('enquiry_selected_addons', 'company_id=? AND addon_id=?', (company_id, item_id)),
-            ('enquiry_addon_days', 'company_id=? AND addon_id=?', (company_id, item_id)),
-            ('enquiry_addon_people', 'company_id=? AND addon_id=?', (company_id, item_id)),
-            ('enquiry_addon_person_days', 'company_id=? AND addon_id=?', (company_id, item_id)),
-            ('booking_addons', 'company_id=? AND addon_id=?', (company_id, item_id)),
+            ('enquiry_addons', 'company_id=:extra10015_0 AND addon_id=:extra10015_1', (company_id, item_id)),
+            ('enquiry_selected_addons', 'company_id=:extra10016_0 AND addon_id=:extra10016_1', (company_id, item_id)),
+            ('enquiry_addon_days', 'company_id=:extra10017_0 AND addon_id=:extra10017_1', (company_id, item_id)),
+            ('enquiry_addon_people', 'company_id=:extra10018_0 AND addon_id=:extra10018_1', (company_id, item_id)),
+            ('enquiry_addon_person_days', 'company_id=:extra10019_0 AND addon_id=:extra10019_1', (company_id, item_id)),
+            ('booking_addons', 'company_id=:extra10020_0 AND addon_id=:extra10020_1', (company_id, item_id)),
         ]
     return sum(_count_if_table(connection, table, where, params) for table, where, params in checks)
 
@@ -102,7 +103,7 @@ def _year_has_history(connection, company_id: int, year: int) -> bool:
     for table in ('enquiries', 'bookings'):
         if not _table_exists(connection, table):
             continue
-        row = connection.execute(f'''SELECT 1 FROM {table} WHERE company_id=? AND arrival_date IS NOT NULL AND departure_date IS NOT NULL AND date(arrival_date) < date(?) AND date(departure_date) > date(?) LIMIT 1''', (company_id, end, start)).fetchone()
+        row = execute_sql(connection, f'SELECT 1 FROM {table} WHERE company_id=:q39_0 AND arrival_date IS NOT NULL AND departure_date IS NOT NULL AND date(arrival_date) < date(:q39_1) AND date(departure_date) > date(:q39_2) LIMIT 1', (company_id, end, start)).fetchone()
         if row:
             return True
     return False
@@ -115,7 +116,7 @@ def register_setup_maintenance_routes(app) -> None:
     def elements_maintenance(request: Request, edit: int = 0, saved: int = 0, message: str = ''):
         context = context_for(database, request); cid = working_company(context)
         html = _elements_page(database, context, message=message, edit=edit, saved=saved)
-        for row in rows(database, 'SELECT * FROM setup_elements WHERE company_id=? ORDER BY element_type,name', (cid,)):
+        for row in rows(database, 'SELECT * FROM setup_elements WHERE company_id=:q18_0 ORDER BY element_type,name', (cid,)):
             iid = int(row['id']); link = f'<a href="/setup/elements?edit={iid}">Edit</a>'
             toggle = _confirm_form(context, '/setup/maintenance/catalog/toggle', {'kind': 'element', 'id': iid}, 'Deactivate' if row['active'] else 'Reactivate', secondary=True)
             delete = _confirm_form(context, '/setup/maintenance/catalog/delete', {'kind': 'element', 'id': iid}, 'Delete', secondary=True, confirm='Delete this Element? Used Elements are protected and cannot be deleted.')
@@ -128,7 +129,7 @@ def register_setup_maintenance_routes(app) -> None:
     def element_types_maintenance(request: Request, edit: int = 0, message: str = ''):
         context = context_for(database, request); cid = working_company(context)
         html = _element_types_page(database, context, message=message, edit=edit)
-        for row in rows(database, 'SELECT * FROM setup_element_types WHERE company_id=? ORDER BY active DESC,name', (cid,)):
+        for row in rows(database, 'SELECT * FROM setup_element_types WHERE company_id=:q19_0 ORDER BY active DESC,name', (cid,)):
             iid = int(row['id']); toggle_label = 'Reactivate' if not row['active'] else 'Deactivate'
             old = f'<a href="/setup/element-types?edit={iid}">Rename</a> &nbsp; <form method="post" action="/setup/element-types/toggle" style="display:inline"><input type="hidden" name="csrf" value="{esc(context["csrf_token"])}"><input type="hidden" name="id" value="{iid}"><button class="secondary">{toggle_label}</button></form>'
             delete = _confirm_form(context, '/setup/maintenance/element-types/delete', {'id': iid}, 'Delete', secondary=True, confirm='Delete this Element Type? Types still used by Elements or Add-on rules cannot be deleted.')
@@ -159,7 +160,7 @@ def register_setup_maintenance_routes(app) -> None:
         html = _pricing_page(database, context, selected, message=message)
         if selected is not None:
             extra = '<div class="card"><h2>Season maintenance</h2><p>Seasons in years already used by Enquiries or Bookings are protected from destructive changes.</p><table><thead><tr><th>Season</th><th>Dates</th><th>Actions</th></tr></thead><tbody>'
-            for s in rows(database, 'SELECT * FROM setup_seasons WHERE company_id=? AND year=? ORDER BY start_date', (cid, selected)):
+            for s in rows(database, 'SELECT * FROM setup_seasons WHERE company_id=:q21_0 AND year=:q21_1 ORDER BY start_date', (cid, selected)):
                 sid = int(s['id']); extra += f'<tr><td>{esc(s["name"])}</td><td>{esc(s["start_date"])} to {esc(s["end_date"])}</td><td><a href="/setup/maintenance/seasons/edit?id={sid}">Edit</a> &nbsp; ' + _confirm_form(context, '/setup/maintenance/seasons/delete', {'id': sid}, 'Delete', secondary=True, confirm='Delete this Season and its Element price cells?') + '</td></tr>'
             extra += '</tbody></table></div>'
             html = _append_before_main_end(html, extra)
@@ -186,15 +187,15 @@ def register_setup_maintenance_routes(app) -> None:
             return RedirectResponse(path + '?message=' + quote_plus('Choose a valid pricing method.'), 303)
         try:
             with database.connect() as c:
-                before = c.execute(f'SELECT * FROM {table} WHERE id=? AND company_id=?', (item_id, cid)).fetchone() if item_id else None
+                before = execute_sql(c, f'SELECT * FROM {table} WHERE id=:q43_0 AND company_id=:q43_1', (item_id, cid)).fetchone() if item_id else None
                 if item_id and before is None: return RedirectResponse(path + '?message=' + quote_plus('Item was not found.'), 303)
                 if kind == 'person':
-                    if item_id: c.execute('UPDATE setup_person_types SET name=?,short_name=? WHERE id=? AND company_id=?', (name, short, item_id, cid)); entity_id = item_id
-                    else: entity_id = int(c.execute('INSERT INTO setup_person_types(company_id,name,short_name) VALUES (?,?,?)', (cid, name, short)).lastrowid)
+                    if item_id: execute_sql(c, 'UPDATE setup_person_types SET name=:q31_0,short_name=:q31_1 WHERE id=:q31_2 AND company_id=:q31_3', (name, short, item_id, cid)); entity_id = item_id
+                    else: entity_id = int(insert_sql(c, 'INSERT INTO setup_person_types(company_id,name,short_name) VALUES (:q33_0,:q33_1,:q33_2)', (cid, name, short)).lastrowid)
                     after = {'name': name, 'short_name': short}
                 else:
-                    if item_id: c.execute('UPDATE setup_addons SET name=?,pricing_method=? WHERE id=? AND company_id=?', (name, method, item_id, cid)); entity_id = item_id
-                    else: entity_id = int(c.execute('INSERT INTO setup_addons(company_id,name,pricing_method) VALUES (?,?,?)', (cid, name, method)).lastrowid)
+                    if item_id: execute_sql(c, 'UPDATE setup_addons SET name=:q32_0,pricing_method=:q32_1 WHERE id=:q32_2 AND company_id=:q32_3', (name, method, item_id, cid)); entity_id = item_id
+                    else: entity_id = int(insert_sql(c, 'INSERT INTO setup_addons(company_id,name,pricing_method) VALUES (:q34_0,:q34_1,:q34_2)', (cid, name, method)).lastrowid)
                     after = {'name': name, 'pricing_method': method}
         except Exception:
             return RedirectResponse(path + '?message=' + quote_plus('That name already exists or could not be saved.'), 303)
@@ -208,9 +209,9 @@ def register_setup_maintenance_routes(app) -> None:
         if kind not in {'element', 'person', 'addon'} or not raw_id.isdigit(): raise ValueError('Invalid maintenance item')
         item_id = int(raw_id); table = {'element':'setup_elements','person':'setup_person_types','addon':'setup_addons'}[kind]; path = {'element':'/setup/elements','person':'/setup/person-types','addon':'/setup/addons'}[kind]
         with database.connect() as c:
-            before = c.execute(f'SELECT * FROM {table} WHERE id=? AND company_id=?', (item_id, cid)).fetchone()
+            before = execute_sql(c, f'SELECT * FROM {table} WHERE id=:q41_0 AND company_id=:q41_1', (item_id, cid)).fetchone()
             if before is None: return RedirectResponse(path + '?message=' + quote_plus('Item was not found.'), 303)
-            new_state = 0 if before['active'] else 1; c.execute(f'UPDATE {table} SET active=? WHERE id=? AND company_id=?', (new_state, item_id, cid))
+            new_state = 0 if before['active'] else 1; execute_sql(c, f'UPDATE {table} SET active=:q37_0 WHERE id=:q37_1 AND company_id=:q37_2', (new_state, item_id, cid))
         audit(database, context, cid, f'{kind.upper()}_STATUS_CHANGED', kind, item_id, dict(before), {'active': new_state})
         return RedirectResponse(path, 303)
 
@@ -221,17 +222,17 @@ def register_setup_maintenance_routes(app) -> None:
         if kind not in {'element', 'person', 'addon'} or not raw_id.isdigit(): raise ValueError('Invalid maintenance item')
         item_id = int(raw_id); table = {'element':'setup_elements','person':'setup_person_types','addon':'setup_addons'}[kind]; path = {'element':'/setup/elements','person':'/setup/person-types','addon':'/setup/addons'}[kind]
         with database.connect() as c:
-            before = c.execute(f'SELECT * FROM {table} WHERE id=? AND company_id=?', (item_id, cid)).fetchone()
+            before = execute_sql(c, f'SELECT * FROM {table} WHERE id=:q42_0 AND company_id=:q42_1', (item_id, cid)).fetchone()
             if before is None: return RedirectResponse(path + '?message=' + quote_plus('Item was not found.'), 303)
             if _historical_count(c, kind, item_id, cid):
                 return RedirectResponse(path + '?message=' + quote_plus('This item has saved Enquiry/Booking history and cannot be deleted. Deactivate it instead.'), 303)
             if kind == 'element':
-                for child in ('setup_element_rates','setup_occupancy','setup_person_limits','setup_person_prices','setup_element_addons'): _delete_if_table(c, child, 'company_id=? AND element_id=?', (cid, item_id))
+                for child in ('setup_element_rates','setup_occupancy','setup_person_limits','setup_person_prices','setup_element_addons'): _delete_if_table(c, child, 'company_id=:extra10021_0 AND element_id=:extra10021_1', (cid, item_id))
             elif kind == 'person':
-                for child in ('setup_person_limits','setup_person_prices','setup_addon_person_rates'): _delete_if_table(c, child, 'company_id=? AND person_type_id=?', (cid, item_id))
+                for child in ('setup_person_limits','setup_person_prices','setup_addon_person_rates'): _delete_if_table(c, child, 'company_id=:extra10022_0 AND person_type_id=:extra10022_1', (cid, item_id))
             else:
-                for child in ('setup_type_addons','setup_element_addons','setup_addon_when_options','setup_addon_person_rates','setup_addon_person_pricing'): _delete_if_table(c, child, 'company_id=? AND addon_id=?', (cid, item_id))
-            c.execute(f'DELETE FROM {table} WHERE id=? AND company_id=?', (item_id, cid))
+                for child in ('setup_type_addons','setup_element_addons','setup_addon_when_options','setup_addon_person_rates','setup_addon_person_pricing'): _delete_if_table(c, child, 'company_id=:extra10023_0 AND addon_id=:extra10023_1', (cid, item_id))
+            execute_sql(c, f'DELETE FROM {table} WHERE id=:q38_0 AND company_id=:q38_1', (item_id, cid))
         audit(database, context, cid, f'{kind.upper()}_DELETED', kind, item_id, dict(before), None)
         return RedirectResponse(path, 303)
 
@@ -241,11 +242,11 @@ def register_setup_maintenance_routes(app) -> None:
         if not raw_id.isdigit(): return RedirectResponse('/setup/element-types?message=' + quote_plus('Invalid Element Type.'), 303)
         item_id = int(raw_id)
         with database.connect() as c:
-            before = c.execute('SELECT * FROM setup_element_types WHERE id=? AND company_id=?', (item_id, cid)).fetchone()
+            before = execute_sql(c, 'SELECT * FROM setup_element_types WHERE id=:q27_0 AND company_id=:q27_1', (item_id, cid)).fetchone()
             if before is None: return RedirectResponse('/setup/element-types?message=' + quote_plus('Element Type was not found.'), 303)
-            name = str(before['name']); used = _count_if_table(c, 'setup_elements', 'company_id=? AND element_type=?', (cid, name)) + _count_if_table(c, 'setup_type_addons', 'company_id=? AND element_type=?', (cid, name))
+            name = str(before['name']); used = _count_if_table(c, 'setup_elements', 'company_id=:extra10010_0 AND element_type=:extra10010_1', (cid, name)) + _count_if_table(c, 'setup_type_addons', 'company_id=:extra10011_0 AND element_type=:extra10011_1', (cid, name))
             if used: return RedirectResponse('/setup/element-types?message=' + quote_plus('This Element Type is still used by Elements or Add-on rules. Deactivate it instead.'), 303)
-            c.execute('DELETE FROM setup_element_types WHERE id=? AND company_id=?', (item_id, cid))
+            execute_sql(c, 'DELETE FROM setup_element_types WHERE id=:q22_0 AND company_id=:q22_1', (item_id, cid))
         audit(database, context, cid, 'ELEMENT_TYPE_DELETED', 'element_type', item_id, dict(before), None); return RedirectResponse('/setup/element-types', 303)
 
     @app.post('/setup/maintenance/years/delete')
@@ -254,16 +255,16 @@ def register_setup_maintenance_routes(app) -> None:
         try: year = int(data.get('year',''))
         except ValueError: return RedirectResponse('/setup/years?message=' + quote_plus('Invalid year.'), 303)
         with database.connect() as c:
-            before = c.execute('SELECT * FROM setup_years WHERE company_id=? AND year=?', (cid, year)).fetchone()
+            before = execute_sql(c, 'SELECT * FROM setup_years WHERE company_id=:q28_0 AND year=:q28_1', (cid, year)).fetchone()
             if before is None: return RedirectResponse('/setup/years?message=' + quote_plus('Year was not found.'), 303)
             if _year_has_history(c, cid, year): return RedirectResponse('/setup/years?message=' + quote_plus('This year is used by saved Enquiries or Bookings and cannot be deleted.'), 303)
-            for table in ('setup_addon_person_rates','setup_element_addons','setup_type_addons','setup_person_prices','setup_person_limits','setup_occupancy','setup_element_rates','setup_seasons'): _delete_if_table(c, table, 'company_id=? AND year=?', (cid, year))
-            c.execute('DELETE FROM setup_years WHERE company_id=? AND year=?', (cid, year))
+            for table in ('setup_addon_person_rates','setup_element_addons','setup_type_addons','setup_person_prices','setup_person_limits','setup_occupancy','setup_element_rates','setup_seasons'): _delete_if_table(c, table, 'company_id=:extra10012_0 AND year=:extra10012_1', (cid, year))
+            execute_sql(c, 'DELETE FROM setup_years WHERE company_id=:q23_0 AND year=:q23_1', (cid, year))
         audit(database, context, cid, 'PRICING_YEAR_DELETED', 'pricing_year', year, dict(before), None); return RedirectResponse('/setup/years', 303)
 
     @app.get('/setup/maintenance/seasons/edit', response_class=HTMLResponse)
     def season_edit(request: Request, id: int):
-        context = context_for(database, request); cid = working_company(context); found = rows(database, 'SELECT * FROM setup_seasons WHERE company_id=? AND id=?', (cid, id))
+        context = context_for(database, request); cid = working_company(context); found = rows(database, 'SELECT * FROM setup_seasons WHERE company_id=:q20_0 AND id=:q20_1', (cid, id))
         if not found: return HTMLResponse(layout('Season not found', f'<h1>Season not found</h1>{setup_nav()}', context), 404)
         s = found[0]; body = f'''<h1>Edit Season</h1>{setup_nav()}<div class="card"><form method="post" action="/setup/maintenance/seasons/save"><input type="hidden" name="csrf" value="{esc(context["csrf_token"])}"><input type="hidden" name="id" value="{id}"><div class="grid"><div><label>Name</label><input name="name" value="{esc(s["name"])}"></div><div><label>Start</label><input type="date" name="start_date" value="{esc(s["start_date"])}"></div><div><label>End</label><input type="date" name="end_date" value="{esc(s["end_date"])}"></div></div><p><button>Save Season</button> &nbsp; <a class="button secondary" href="/setup/pricing?year={int(s["year"])}">Cancel</a></p></form></div>'''; return HTMLResponse(layout('Edit Season', body, context))
 
@@ -274,12 +275,12 @@ def register_setup_maintenance_routes(app) -> None:
         except ValueError: return RedirectResponse('/setup/pricing?message=' + quote_plus('Enter valid Season dates.'), 303)
         name = data.get('name','').strip()
         with database.connect() as c:
-            before = c.execute('SELECT * FROM setup_seasons WHERE company_id=? AND id=?', (cid, sid)).fetchone()
+            before = execute_sql(c, 'SELECT * FROM setup_seasons WHERE company_id=:q29_0 AND id=:q29_1', (cid, sid)).fetchone()
             if before is None: return RedirectResponse('/setup/pricing?message=' + quote_plus('Season was not found.'), 303)
             year = int(before['year'])
             if _year_has_history(c, cid, year): return RedirectResponse(f'/setup/pricing?year={year}&message=' + quote_plus('This year has saved Enquiry/Booking history, so Season dates are protected.'), 303)
             if not name or end < start: return RedirectResponse(f'/setup/pricing?year={year}&message=' + quote_plus('Enter a name and an end date on or after the start date.'), 303)
-            c.execute('UPDATE setup_seasons SET name=?,start_date=?,end_date=? WHERE company_id=? AND id=?', (name, start.isoformat(), end.isoformat(), cid, sid))
+            execute_sql(c, 'UPDATE setup_seasons SET name=:q24_0,start_date=:q24_1,end_date=:q24_2 WHERE company_id=:q24_3 AND id=:q24_4', (name, start.isoformat(), end.isoformat(), cid, sid))
         audit(database, context, cid, 'SEASON_SAVED', 'season', sid, dict(before), {'year': year, 'name': name, 'start_date': start.isoformat(), 'end_date': end.isoformat()}); return RedirectResponse(f'/setup/pricing?year={year}', 303)
 
     @app.post('/setup/maintenance/seasons/delete')
@@ -288,11 +289,11 @@ def register_setup_maintenance_routes(app) -> None:
         try: sid = int(data.get('id',''))
         except ValueError: return RedirectResponse('/setup/pricing?message=' + quote_plus('Invalid Season.'), 303)
         with database.connect() as c:
-            before = c.execute('SELECT * FROM setup_seasons WHERE company_id=? AND id=?', (cid, sid)).fetchone()
+            before = execute_sql(c, 'SELECT * FROM setup_seasons WHERE company_id=:q30_0 AND id=:q30_1', (cid, sid)).fetchone()
             if before is None: return RedirectResponse('/setup/pricing?message=' + quote_plus('Season was not found.'), 303)
             year = int(before['year'])
             if _year_has_history(c, cid, year): return RedirectResponse(f'/setup/pricing?year={year}&message=' + quote_plus('This year has saved Enquiry/Booking history, so the Season cannot be deleted.'), 303)
-            _delete_if_table(c, 'setup_element_rates', 'company_id=? AND year=? AND season_id=?', (cid, year, sid)); c.execute('DELETE FROM setup_seasons WHERE company_id=? AND id=?', (cid, sid))
+            _delete_if_table(c, 'setup_element_rates', 'company_id=:extra10003_0 AND year=:extra10003_1 AND season_id=:extra10003_2', (cid, year, sid)); execute_sql(c, 'DELETE FROM setup_seasons WHERE company_id=:q25_0 AND id=:q25_1', (cid, sid))
         audit(database, context, cid, 'SEASON_DELETED', 'season', sid, dict(before), None); return RedirectResponse(f'/setup/pricing?year={year}', 303)
 
     @app.post('/setup/maintenance/addon-rules/reset')
@@ -301,6 +302,6 @@ def register_setup_maintenance_routes(app) -> None:
         try: year = int(data.get('year',''))
         except ValueError: return RedirectResponse('/setup/addon-rules?message=' + quote_plus('Invalid year.'), 303)
         with database.connect() as c:
-            before = {'type_rules': _count_if_table(c, 'setup_type_addons', 'company_id=? AND year=?', (cid, year)), 'element_overrides': _count_if_table(c, 'setup_element_addons', 'company_id=? AND year=?', (cid, year))}
-            _delete_if_table(c, 'setup_type_addons', 'company_id=? AND year=?', (cid, year)); _delete_if_table(c, 'setup_element_addons', 'company_id=? AND year=?', (cid, year))
+            before = {'type_rules': _count_if_table(c, 'setup_type_addons', 'company_id=:extra10013_0 AND year=:extra10013_1', (cid, year)), 'element_overrides': _count_if_table(c, 'setup_element_addons', 'company_id=:extra10014_0 AND year=:extra10014_1', (cid, year))}
+            _delete_if_table(c, 'setup_type_addons', 'company_id=:extra10004_0 AND year=:extra10004_1', (cid, year)); _delete_if_table(c, 'setup_element_addons', 'company_id=:extra10005_0 AND year=:extra10005_1', (cid, year))
         audit(database, context, cid, 'ADDON_RULES_RESET', 'pricing_year', year, before, {'type_rules': 0, 'element_overrides': 0}); return RedirectResponse(f'/setup/addon-rules?year={year}', 303)

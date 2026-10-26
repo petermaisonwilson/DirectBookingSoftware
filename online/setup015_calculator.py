@@ -12,7 +12,7 @@ from .setup015_core import audit, context_for, one, require_csrf, rows, valid_wh
 
 
 def _season_for_date(database, company_id: int, year: int, day: date):
-    candidates = rows(database, 'SELECT * FROM setup_seasons WHERE company_id=? AND year=? AND start_date<=? AND end_date>=?', (company_id, year, day.isoformat(), day.isoformat()))
+    candidates = rows(database, 'SELECT * FROM setup_seasons WHERE company_id=:q418_0 AND year=:q418_1 AND start_date<=:q418_2 AND end_date>=:q418_3', (company_id, year, day.isoformat(), day.isoformat()))
     if not candidates: return None
     return min(candidates, key=lambda r: (date.fromisoformat(r['end_date']) - date.fromisoformat(r['start_date'])).days)
 
@@ -20,16 +20,16 @@ def _season_for_date(database, company_id: int, year: int, day: date):
 def _element_rate_for_date(database, company_id: int, element_id: int, day: date):
     season = _season_for_date(database, company_id, day.year, day)
     if not season: return None, None
-    rate = one(database, 'SELECT rate FROM setup_element_rates WHERE company_id=? AND year=? AND element_id=? AND season_id=?', (company_id, day.year, element_id, season['id']))
+    rate = one(database, 'SELECT rate FROM setup_element_rates WHERE company_id=:q419_0 AND year=:q419_1 AND element_id=:q419_2 AND season_id=:q419_3', (company_id, day.year, element_id, season['id']))
     return season, (None if rate is None else float(rate['rate']))
 
 
 def _addon_rule(database, company_id: int, year: int, element, addon_id: int):
-    override = one(database, 'SELECT * FROM setup_element_addons WHERE company_id=? AND year=? AND element_id=? AND addon_id=?', (company_id, year, element['id'], addon_id))
+    override = one(database, 'SELECT * FROM setup_element_addons WHERE company_id=:q420_0 AND year=:q420_1 AND element_id=:q420_2 AND addon_id=:q420_3', (company_id, year, element['id'], addon_id))
     if override:
         if override['state'] == 'N': return {'allowed': False, 'source': 'Element override N', 'min': None, 'max': None, 'rate': None}
         return {'allowed': True, 'source': 'Element override Y', 'min': int(override['min_qty']), 'max': int(override['max_qty']), 'rate': float(override['rate'])}
-    type_rule = one(database, 'SELECT * FROM setup_type_addons WHERE company_id=? AND year=? AND element_type=? AND addon_id=?', (company_id, year, element['element_type'], addon_id))
+    type_rule = one(database, 'SELECT * FROM setup_type_addons WHERE company_id=:q421_0 AND year=:q421_1 AND element_type=:q421_2 AND addon_id=:q421_3', (company_id, year, element['element_type'], addon_id))
     if not type_rule or not type_rule['allowed']: return {'allowed': False, 'source': 'Element Type default N', 'min': None, 'max': None, 'rate': None}
     return {'allowed': True, 'source': 'Element Type default Y', 'min': int(type_rule['min_qty']), 'max': int(type_rule['max_qty']), 'rate': float(type_rule['rate'])}
 
@@ -57,13 +57,13 @@ def _price_addon(method: str, rate: float, qty: int, nights: int) -> float:
 
 def _page(database, context, element_id: int = 0, submitted=None, errors=None, message='', result=None):
     cid = working_company(context); submitted = submitted or {}; errors = errors or set()
-    elements = rows(database, 'SELECT * FROM setup_elements WHERE company_id=? AND active=1 ORDER BY element_type,name', (cid,)); selected = next((e for e in elements if int(e['id']) == int(element_id or 0)), None)
+    elements = rows(database, 'SELECT * FROM setup_elements WHERE company_id=:q422_0 AND active=1 ORDER BY element_type,name', (cid,)); selected = next((e for e in elements if int(e['id']) == int(element_id or 0)), None)
     options = '<option value="">-- choose Element --</option>' + ''.join(f'<option value="{e["id"]}" {"selected" if selected and e["id"] == selected["id"] else ""}>{esc(e["element_type"])} — {esc(e["name"])}</option>' for e in elements)
     body = f'<h1>Price / Rules test</h1>{setup_nav()}{error_box(message)}<div class="card"><p>This is a test calculator, not yet a Booking. It proves that Setup rules drive occupancy, Person charges, Add-ons and price.</p><p><strong>Season rule:</strong> if seasons overlap, the narrowest matching season wins.</p></div><form method="get" action="/setup/price-test" class="card"><label>Element</label><select name="element" onchange="this.form.submit()">{options}</select></form>'
     if not selected:
         return layout('Price / Rules test', body + '<div class="card">Choose an Element to load its rules.</div>', context)
 
-    people = rows(database, 'SELECT * FROM setup_person_types WHERE company_id=? AND active=1 ORDER BY name', (cid,)); addons = rows(database, 'SELECT * FROM setup_addons WHERE company_id=? AND active=1 ORDER BY name', (cid,)); year_rows = rows(database, 'SELECT year FROM setup_years WHERE company_id=? ORDER BY year', (cid,))
+    people = rows(database, 'SELECT * FROM setup_person_types WHERE company_id=:q423_0 AND active=1 ORDER BY name', (cid,)); addons = rows(database, 'SELECT * FROM setup_addons WHERE company_id=:q424_0 AND active=1 ORDER BY name', (cid,)); year_rows = rows(database, 'SELECT year FROM setup_years WHERE company_id=:q425_0 ORDER BY year', (cid,))
     start_value = submitted.get('start_date', ''); end_value = submitted.get('end_date', ''); pricing_year = None
     try:
         if start_value: pricing_year = date.fromisoformat(start_value).year
@@ -131,7 +131,7 @@ def register_calculator_routes(app) -> None:
         context = context_for(database, request); cid = working_company(context); data = await form_data(request); require_csrf(context, data); errors = set()
         try: element_id = int(data.get('element_id', ''))
         except ValueError: element_id = 0
-        element = one(database, 'SELECT * FROM setup_elements WHERE company_id=? AND id=? AND active=1', (cid, element_id))
+        element = one(database, 'SELECT * FROM setup_elements WHERE company_id=:q426_0 AND id=:q426_1 AND active=1', (cid, element_id))
         if not element: return HTMLResponse(_page(database, context, message='Choose a valid Element.'), 400)
         try: start = date.fromisoformat(data.get('start_date', ''))
         except ValueError: start = None; errors.add('start_date')
@@ -142,7 +142,7 @@ def register_calculator_routes(app) -> None:
             errors.update({'start_date', 'end_date'}); message = 'Build 015 test calculator currently requires the stay to remain within one pricing year.'
         else: message = 'Complete every highlighted field with a valid value.'
 
-        people_rows = rows(database, 'SELECT * FROM setup_person_types WHERE company_id=? AND active=1 ORDER BY name', (cid,)); people_counts = {}; people_total = 0
+        people_rows = rows(database, 'SELECT * FROM setup_person_types WHERE company_id=:q427_0 AND active=1 ORDER BY name', (cid,)); people_counts = {}; people_total = 0
         for person in people_rows:
             key = f'person_{person["id"]}'
             try: qty = valid_whole(data.get(key, '0'))
@@ -151,12 +151,12 @@ def register_calculator_routes(app) -> None:
         if people_total <= 0: errors.update(f'person_{p["id"]}' for p in people_rows); message = 'Enter at least one person, and correct every highlighted field.'
         if errors: return HTMLResponse(_page(database, context, element_id, data, errors, message), 400)
 
-        year = start.year; nights = (end - start).days; occupancy = one(database, 'SELECT max_total FROM setup_occupancy WHERE company_id=? AND year=? AND element_id=?', (cid, year, element_id))
+        year = start.year; nights = (end - start).days; occupancy = one(database, 'SELECT max_total FROM setup_occupancy WHERE company_id=:q428_0 AND year=:q428_1 AND element_id=:q428_2', (cid, year, element_id))
         if occupancy is None: return HTMLResponse(_page(database, context, element_id, data, set(), 'Occupancy setup is incomplete for this Element and year.'), 400)
         occupancy_errors = set()
         if people_total > int(occupancy['max_total']): occupancy_errors.update(f'person_{p["id"]}' for p in people_rows)
         for person in people_rows:
-            limit = one(database, 'SELECT max_count FROM setup_person_limits WHERE company_id=? AND year=? AND element_id=? AND person_type_id=?', (cid, year, element_id, person['id']))
+            limit = one(database, 'SELECT max_count FROM setup_person_limits WHERE company_id=:q430_0 AND year=:q430_1 AND element_id=:q430_2 AND person_type_id=:q430_3', (cid, year, element_id, person['id']))
             if limit is None or people_counts[int(person['id'])] > int(limit['max_count']): occupancy_errors.add(f'person_{person["id"]}')
         if occupancy_errors: return HTMLResponse(_page(database, context, element_id, data, occupancy_errors, 'The selected people exceed the configured occupancy rules for this Element.'), 400)
 
@@ -170,13 +170,13 @@ def register_calculator_routes(app) -> None:
         person_price_errors = set()
         for person in people_rows:
             qty = people_counts[int(person['id'])]
-            price = one(database, 'SELECT rate FROM setup_person_prices WHERE company_id=? AND year=? AND element_id=? AND person_type_id=?', (cid, year, element_id, person['id']))
+            price = one(database, 'SELECT rate FROM setup_person_prices WHERE company_id=:q431_0 AND year=:q431_1 AND element_id=:q431_2 AND person_type_id=:q431_3', (cid, year, element_id, person['id']))
             if price is None: person_price_errors.add(f'person_{person["id"]}'); continue
             if qty:
                 rate = float(price['rate']); amount = _price_person(element['pricing_method'], rate, qty, nights); lines.append({'item': person['name'], 'rule': f'{qty} × €{rate:.2f}; follows Element pricing method {element["pricing_method"]}', 'amount': amount}); total += amount
         if person_price_errors: return HTMLResponse(_page(database, context, element_id, data, person_price_errors, 'Person pricing setup is incomplete for this Element and year.'), 400)
 
-        addons = rows(database, 'SELECT * FROM setup_addons WHERE company_id=? AND active=1 ORDER BY name', (cid,)); addon_errors = set()
+        addons = rows(database, 'SELECT * FROM setup_addons WHERE company_id=:q429_0 AND active=1 ORDER BY name', (cid,)); addon_errors = set()
         for addon in addons:
             key = f'addon_{addon["id"]}'
             try: qty = valid_whole(data.get(key, '0'))

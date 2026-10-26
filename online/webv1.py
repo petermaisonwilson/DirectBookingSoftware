@@ -1,4 +1,5 @@
 from __future__ import annotations
+from .sql import execute_sql
 
 import json
 from datetime import date
@@ -143,7 +144,7 @@ def register_web_v1(app) -> None:
         try:
             element_id = int(data.get('element_id', ''))
             arrival = str(data.get('arrival_date', '') or '')
-            element = one(app.state.database, 'SELECT * FROM setup_elements WHERE id=? AND company_id=? AND active=1', (element_id, cid))
+            element = one(app.state.database, 'SELECT * FROM setup_elements WHERE id=:q173_0 AND company_id=:q173_1 AND active=1', (element_id, cid))
             if element is None:
                 raise ValueError('That Element is no longer active.')
             people, requirements, ready, _, _ = _saved_requirements(app.state.database, cid, token)
@@ -165,8 +166,8 @@ def register_web_v1(app) -> None:
                 data.get('departure_date', ''),
             )
             with app.state.database.connect() as c:
-                working = c.execute('SELECT lead_name FROM booking_requirement_sessions WHERE company_id=? AND session_token=?', (cid, token)).fetchone()
-                c.execute('UPDATE element_holds SET lead_name=? WHERE id=? AND company_id=? AND session_token=?', (str(working['lead_name'] or '') if working else '', int(hold['id']), cid, token))
+                working = execute_sql(c, 'SELECT lead_name FROM booking_requirement_sessions WHERE company_id=:q181_0 AND session_token=:q181_1', (cid, token)).fetchone()
+                execute_sql(c, 'UPDATE element_holds SET lead_name=:q174_0 WHERE id=:q174_1 AND company_id=:q174_2 AND session_token=:q174_3', (str(working['lead_name'] or '') if working else '', int(hold['id']), cid, token))
             _snapshot_hold_requirements(app.state.database, cid, token, int(hold['id']))
         except (TypeError, ValueError) as exc:
             return JSONResponse({'ok': False, 'error': str(exc)}, status_code=409)
@@ -182,14 +183,12 @@ def register_web_v1(app) -> None:
         if company_id and token:
             cid = int(company_id)
             with app.state.database.connect() as c:
-                hold_ids = [int(r['id']) for r in c.execute('SELECT id FROM element_holds WHERE session_token=? AND company_id=?', (token, cid)).fetchall()]
+                hold_ids = [int(r['id']) for r in execute_sql(c, 'SELECT id FROM element_holds WHERE session_token=:q182_0 AND company_id=:q182_1', (token, cid)).fetchall()]
                 for hold_id in hold_ids:
-                    c.execute('DELETE FROM hold_requirement_people WHERE hold_id=?', (hold_id,))
-                    c.execute('DELETE FROM hold_requirement_addons WHERE hold_id=?', (hold_id,))
-                c.execute('DELETE FROM element_holds WHERE session_token=? AND company_id=?', (token, cid))
-                c.execute('DELETE FROM booking_requirement_people WHERE session_token=? AND company_id=?', (token, cid))
-                c.execute('DELETE FROM booking_requirement_addons WHERE session_token=? AND company_id=?', (token, cid))
-                c.execute('''INSERT INTO booking_requirement_sessions(session_token,company_id,ready,arrival_date,departure_date,lead_name,updated_at)
-                             VALUES (?,?,0,'','','',CURRENT_TIMESTAMP)
-                             ON CONFLICT(session_token,company_id) DO UPDATE SET ready=0,arrival_date='',departure_date='',lead_name='',updated_at=CURRENT_TIMESTAMP''', (token, cid))
+                    execute_sql(c, 'DELETE FROM hold_requirement_people WHERE hold_id=:q179_0', (hold_id,))
+                    execute_sql(c, 'DELETE FROM hold_requirement_addons WHERE hold_id=:q180_0', (hold_id,))
+                execute_sql(c, 'DELETE FROM element_holds WHERE session_token=:q175_0 AND company_id=:q175_1', (token, cid))
+                execute_sql(c, 'DELETE FROM booking_requirement_people WHERE session_token=:q176_0 AND company_id=:q176_1', (token, cid))
+                execute_sql(c, 'DELETE FROM booking_requirement_addons WHERE session_token=:q177_0 AND company_id=:q177_1', (token, cid))
+                execute_sql(c, "INSERT INTO booking_requirement_sessions(session_token,company_id,ready,arrival_date,departure_date,lead_name,updated_at)\n                             VALUES (:q178_0,:q178_1,0,'','','',CURRENT_TIMESTAMP)\n                             ON CONFLICT(session_token,company_id) DO UPDATE SET ready=0,arrival_date='',departure_date='',lead_name='',updated_at=CURRENT_TIMESTAMP", (token, cid))
         return RedirectResponse('/availability/start', 303)

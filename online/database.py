@@ -152,7 +152,11 @@ class OnlineDatabase:
         translated.
         """
         if not self.is_sqlite:
-            raise RuntimeError("This feature still requires source-owned PostgreSQL conversion")
+            assert self.engine is not None
+            with self.engine.connect().execution_options(isolation_level='READ COMMITTED') as connection:
+                with connection.begin():
+                    yield connection
+            return
         connection = sqlite3.connect(self.path)
         connection.row_factory = sqlite3.Row
         connection.execute("PRAGMA foreign_keys = ON")

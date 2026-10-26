@@ -1,4 +1,5 @@
 from __future__ import annotations
+from .sql import lock_inventory, execute_sql, insert_sql
 
 import json
 from datetime import date, timedelta
@@ -12,11 +13,8 @@ from .webv1_booking_finance import sync_payment_status
 
 def _assert_amendable_booking(connection, company_id: int, booking_id: int) -> None:
     """Cancellation is terminal for accommodation amendments, not financial records."""
-    booking = connection.execute(
-        """SELECT b.id, s.internal_state, s.blocks_availability
-           FROM bookings b LEFT JOIN booking_status_definitions s
-             ON s.id=b.workflow_status_id AND s.company_id=b.company_id
-           WHERE b.company_id=? AND b.id=?""",
+    booking = execute_sql(connection,
+        'SELECT b.id, s.internal_state, s.blocks_availability\n           FROM bookings b LEFT JOIN booking_status_definitions s\n             ON s.id=b.workflow_status_id AND s.company_id=b.company_id\n           WHERE b.company_id=:q528_0 AND b.id=:q528_1',
         (company_id, booking_id),
     ).fetchone()
     if booking is None:
@@ -33,10 +31,8 @@ def _dates(a: str, d: str):
 
 def amendment_quote(database, company_id: int, booking_id: int, booking_element_id: int,
                     new_arrival: str, new_departure: str, manual_discount: float | None=None) -> dict:
-    be=one(database,'''SELECT be.*,se.name AS element_name,se.pricing_method
-        FROM booking_elements be JOIN setup_elements se ON se.id=be.element_id AND se.company_id=be.company_id
-        WHERE be.company_id=? AND be.booking_id=? AND be.id=?''',(company_id,booking_id,booking_element_id))
-    booking=one(database,'SELECT * FROM bookings WHERE company_id=? AND id=?',(company_id,booking_id))
+    be=one(database,'SELECT be.*,se.name AS element_name,se.pricing_method\n        FROM booking_elements be JOIN setup_elements se ON se.id=be.element_id AND se.company_id=be.company_id\n        WHERE be.company_id=:q520_0 AND be.booking_id=:q520_1 AND be.id=:q520_2',(company_id,booking_id,booking_element_id))
+    booking=one(database,'SELECT * FROM bookings WHERE company_id=:q521_0 AND id=:q521_1',(company_id,booking_id))
     if be is None or booking is None: raise ValueError('Booking element does not exist.')
     with database.connect() as guard:
         _assert_amendable_booking(guard, company_id, booking_id)
@@ -54,8 +50,8 @@ def amendment_quote(database, company_id: int, booking_id: int, booking_element_
     old_discount=float(snap.get('discount_amount') or 0)
     if old_package<=0:
         old_package=float(be['total_amount'] or 0)
-        old_package+=sum(float(r['total_amount'] or 0) for r in rows(database,'SELECT total_amount FROM booking_people WHERE company_id=? AND booking_element_id=?',(company_id,booking_element_id)))
-        old_package+=sum(float(r['total_amount'] or 0) for r in rows(database,'SELECT total_amount FROM booking_addons WHERE company_id=? AND booking_element_id=?',(company_id,booking_element_id)))
+        old_package+=sum(float(r['total_amount'] or 0) for r in rows(database,'SELECT total_amount FROM booking_people WHERE company_id=:q534_0 AND booking_element_id=:q534_1',(company_id,booking_element_id)))
+        old_package+=sum(float(r['total_amount'] or 0) for r in rows(database,'SELECT total_amount FROM booking_addons WHERE company_id=:q535_0 AND booking_element_id=:q535_1',(company_id,booking_element_id)))
         old_package+=old_discount
 
     overlap_start=max(old_start,new_start); overlap_end=min(old_end,new_end)
@@ -74,9 +70,9 @@ def amendment_quote(database, company_id: int, booking_id: int, booking_element_
     # recurring frozen components extend at their frozen per-night average; fixed-once
     # components are not charged again.
     recurring_added=0.0
-    for r in rows(database,'SELECT quantity,total_amount FROM booking_people WHERE company_id=? AND booking_element_id=?',(company_id,booking_element_id)):
+    for r in rows(database,'SELECT quantity,total_amount FROM booking_people WHERE company_id=:q522_0 AND booking_element_id=:q522_1',(company_id,booking_element_id)):
         recurring_added+=float(r['total_amount'] or 0)/old_nights*len(added_dates) if old_nights else 0
-    for r in rows(database,'SELECT total_amount,rule_snapshot_json FROM booking_addons WHERE company_id=? AND booking_element_id=?',(company_id,booking_element_id)):
+    for r in rows(database,'SELECT total_amount,rule_snapshot_json FROM booking_addons WHERE company_id=:q523_0 AND booking_element_id=:q523_1',(company_id,booking_element_id)):
         try: rule=json.loads(r['rule_snapshot_json'] or '{}')
         except (TypeError,json.JSONDecodeError): rule={}
         method=str(rule.get('pricing_method') or rule.get('method') or '')
@@ -85,7 +81,7 @@ def amendment_quote(database, company_id: int, booking_id: int, booking_element_
 
     mixed_base=round(retained_historic+added_element+recurring_added,2)
     discount=duration_discount(database,company_id,int(be['element_id']),new_nights,mixed_base)
-    prior=one(database,'SELECT calculation_json,manual_discount FROM booking_amendments WHERE company_id=? AND booking_id=? AND booking_element_id=? ORDER BY id DESC LIMIT 1',(company_id,booking_id,booking_element_id))
+    prior=one(database,'SELECT calculation_json,manual_discount FROM booking_amendments WHERE company_id=:q524_0 AND booking_id=:q524_1 AND booking_element_id=:q524_2 ORDER BY id DESC LIMIT 1',(company_id,booking_id,booking_element_id))
     prior_manual=float(prior['manual_discount'] or 0) if prior is not None else 0.0
     requested_manual=prior_manual if manual_discount is None else float(manual_discount or 0)
     manual=max(0.0,min(requested_manual,float(discount['final_amount'])))
@@ -115,16 +111,16 @@ def apply_amendment(database, context, quote: dict) -> int:
     now=__import__('online.database',fromlist=['iso_now']).iso_now()
     calculation=json.dumps(quote,separators=(',',':'),sort_keys=True)
     with database.connect() as c:
-        be=c.execute('SELECT * FROM booking_elements WHERE company_id=? AND booking_id=? AND id=?',(cid,booking_id,beid)).fetchone()
-        booking=c.execute('SELECT * FROM bookings WHERE company_id=? AND id=?',(cid,booking_id)).fetchone()
+        be=execute_sql(c, 'SELECT * FROM booking_elements WHERE company_id=:q529_0 AND booking_id=:q529_1 AND id=:q529_2',(cid,booking_id,beid)).fetchone()
+        booking=execute_sql(c, 'SELECT * FROM bookings WHERE company_id=:q530_0 AND id=:q530_1',(cid,booking_id)).fetchone()
         if be is None or booking is None: raise ValueError('Booking element does not exist.')
         # Lock before checking competing allocations: a quote is not a reservation.
         # The checks and subsequent update must be one serialised write operation.
         from .webv1_status_availability import _booking_conflict, _enquiry_conflict
         from .webv1_availability import _closure_conflict
-        c.execute('BEGIN IMMEDIATE')
+        lock_inventory(c, cid)
         _assert_amendable_booking(c, cid, booking_id)
-        current = c.execute('SELECT arrival_date,departure_date FROM booking_elements WHERE id=? AND company_id=?', (beid,cid)).fetchone()
+        current = execute_sql(c, 'SELECT arrival_date,departure_date FROM booking_elements WHERE id=:q531_0 AND company_id=:q531_1', (beid,cid)).fetchone()
         if current is None or str(current['arrival_date']) != str(quote['old_arrival']) or str(current['departure_date']) != str(quote['old_departure']):
             raise ValueError('This Booking has changed since the amendment was calculated. Recalculate before saving.')
         from .webv1_reservation_core import migrated_inventory_conflict
@@ -136,19 +132,16 @@ def apply_amendment(database, context, quote: dict) -> int:
             raise ValueError('The amended dates overlap an Enquiry holding this Element.')
         if _closure_conflict(c,cid,int(be['element_id']),quote['new_arrival'],quote['new_departure']):
             raise ValueError('The amended dates overlap an Element closure.')
-        for other in c.execute('SELECT arrival_date,departure_date FROM booking_elements WHERE company_id=? AND booking_id=? AND element_id=? AND id<>?', (cid,booking_id,int(be['element_id']),beid)):
+        for other in execute_sql(c, 'SELECT arrival_date,departure_date FROM booking_elements WHERE company_id=:q525_0 AND booking_id=:q525_1 AND element_id=:q525_2 AND id<>:q525_3', (cid,booking_id,int(be['element_id']),beid)):
             if str(other['arrival_date']) < str(quote['new_departure']) and str(other['departure_date']) > str(quote['new_arrival']):
                 raise ValueError('The amended dates overlap another Element allocation in this Booking.')
-        amendment_id=int(c.execute('''INSERT INTO booking_amendments
-            (company_id,booking_id,booking_element_id,old_arrival_date,old_departure_date,new_arrival_date,new_departure_date,
-             old_booking_total,new_booking_total,manual_discount,calculation_json,created_by_user_id,created_at)
-            VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?)''',
+        amendment_id=int(insert_sql(c, 'INSERT INTO booking_amendments\n            (company_id,booking_id,booking_element_id,old_arrival_date,old_departure_date,new_arrival_date,new_departure_date,\n             old_booking_total,new_booking_total,manual_discount,calculation_json,created_by_user_id,created_at)\n            VALUES (:q532_0,:q532_1,:q532_2,:q532_3,:q532_4,:q532_5,:q532_6,:q532_7,:q532_8,:q532_9,:q532_10,:q532_11,:q532_12)',
             (cid,booking_id,beid,quote['old_arrival'],quote['old_departure'],quote['new_arrival'],quote['new_departure'],
              quote['old_booking_total'],quote['new_booking_total'],quote['manual_discount'],calculation,context['user_id'],now)).lastrowid)
-        c.execute('UPDATE booking_elements SET arrival_date=?,departure_date=? WHERE id=? AND company_id=?',
+        execute_sql(c, 'UPDATE booking_elements SET arrival_date=:q526_0,departure_date=:q526_1 WHERE id=:q526_2 AND company_id=:q526_3',
                   (quote['new_arrival'],quote['new_departure'],beid,cid))
-        bounds=c.execute('SELECT MIN(arrival_date) AS a,MAX(departure_date) AS d FROM booking_elements WHERE booking_id=? AND company_id=?',(booking_id,cid)).fetchone()
-        c.execute('UPDATE bookings SET arrival_date=?,departure_date=?,total_amount=?,updated_at=? WHERE id=? AND company_id=?',
+        bounds=execute_sql(c, 'SELECT MIN(arrival_date) AS a,MAX(departure_date) AS d FROM booking_elements WHERE booking_id=:q533_0 AND company_id=:q533_1',(booking_id,cid)).fetchone()
+        execute_sql(c, 'UPDATE bookings SET arrival_date=:q527_0,departure_date=:q527_1,total_amount=:q527_2,updated_at=:q527_3 WHERE id=:q527_4 AND company_id=:q527_5',
                   (bounds['a'],bounds['d'],quote['new_booking_total'],now,booking_id,cid))
         sync_payment_status(database,cid,booking_id,connection=c,context=context)
     return amendment_id

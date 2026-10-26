@@ -1,4 +1,6 @@
 from __future__ import annotations
+from operational_backend import create_app
+from online.sql import execute_sql
 
 import sys
 import tempfile
@@ -8,7 +10,7 @@ sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
 from fastapi.testclient import TestClient
 
-from online.app import COOKIE_NAME, create_app
+from online.app import COOKIE_NAME
 from online.webv1 import register_web_v1
 
 
@@ -51,7 +53,7 @@ def main() -> None:
         assert supervisor_dashboard.status_code == 200
         assert '<a href="/operations">Operations</a>' not in supervisor_dashboard.text
         with db.connect() as connection:
-            forest = int(connection.execute("SELECT id FROM companies WHERE name='Forest View Campsite'").fetchone()['id'])
+            forest = int(execute_sql(connection, "SELECT id FROM companies WHERE name='Forest View Campsite'").fetchone()['id'])
         csrf = csrf_for(client, db)
         enter = client.post(f'/support/start/{forest}', data={'csrf': csrf}, follow_redirects=False)
         assert enter.status_code == 303

@@ -1,4 +1,5 @@
 from __future__ import annotations
+from .sql import INTEGRITY_ERRORS, execute_sql, insert_sql
 
 import sqlite3
 
@@ -13,9 +14,9 @@ from .setup015_maintenance import _confirm_form
 
 def _page(database, context, submitted=None, errors=None, message: str = '', edit: int = 0, saved: int = 0) -> str:
     cid = int(working_company(context)); submitted = submitted or {}; errors = errors or set()
-    element_rows = rows(database, 'SELECT * FROM setup_elements WHERE company_id=? ORDER BY element_type,name', (cid,))
+    element_rows = rows(database, 'SELECT * FROM setup_elements WHERE company_id=:q488_0 ORDER BY element_type,name', (cid,))
     current = next((r for r in element_rows if int(r['id']) == int(edit or 0)), None)
-    active_types = list(rows(database, 'SELECT * FROM setup_element_types WHERE company_id=? AND active=1 ORDER BY name', (cid,)))
+    active_types = list(rows(database, 'SELECT * FROM setup_element_types WHERE company_id=:q489_0 AND active=1 ORDER BY name', (cid,)))
     selected_type = submitted.get('element_type', current['element_type'] if current else '')
     if current and selected_type and not any(str(t['name']) == selected_type for t in active_types):
         active_types.append({'name': selected_type})
@@ -64,7 +65,7 @@ def register_elements_no_base_price(app) -> None:
         context = context_for(database, request); cid = int(working_company(context)); data = await form_data(request); require_csrf(context, data)
         name = data.get('name', '').strip(); element_type = data.get('element_type', '').strip(); method = data.get('pricing_method', ''); errors = set()
         if not name: errors.add('name')
-        if not element_type or not rows(database, 'SELECT id FROM setup_element_types WHERE company_id=? AND name=?', (cid, element_type)): errors.add('element_type')
+        if not element_type or not rows(database, 'SELECT id FROM setup_element_types WHERE company_id=:q490_0 AND name=:q490_1', (cid, element_type)): errors.add('element_type')
         if method not in ELEMENT_PRICING_METHODS: errors.add('pricing_method')
         edit_id = int(data['id']) if data.get('id', '').isdigit() else 0
         if errors:
@@ -72,15 +73,15 @@ def register_elements_no_base_price(app) -> None:
         try:
             with database.connect() as connection:
                 if edit_id:
-                    old = connection.execute('SELECT * FROM setup_elements WHERE id=? AND company_id=?', (edit_id, cid)).fetchone()
+                    old = execute_sql(connection, 'SELECT * FROM setup_elements WHERE id=:q493_0 AND company_id=:q493_1', (edit_id, cid)).fetchone()
                     if not old:
                         return HTMLResponse(_page(database, context, data, {'name'}, 'Element was not found.'), 404)
                     before = dict(old); entity_id = edit_id
-                    connection.execute('UPDATE setup_elements SET name=?,element_type=?,pricing_method=? WHERE id=? AND company_id=?', (name, element_type, method, edit_id, cid))
+                    execute_sql(connection, 'UPDATE setup_elements SET name=:q491_0,element_type=:q491_1,pricing_method=:q491_2 WHERE id=:q491_3 AND company_id=:q491_4', (name, element_type, method, edit_id, cid))
                 else:
                     before = None
-                    entity_id = connection.execute('INSERT INTO setup_elements(company_id,name,element_type,pricing_method) VALUES (?,?,?,?)', (cid, name, element_type, method)).lastrowid
-        except sqlite3.IntegrityError:
+                    entity_id = insert_sql(connection, 'INSERT INTO setup_elements(company_id,name,element_type,pricing_method) VALUES (:q492_0,:q492_1,:q492_2,:q492_3)', (cid, name, element_type, method)).lastrowid
+        except INTEGRITY_ERRORS:
             return HTMLResponse(_page(database, context, data, {'name'}, 'An Element with that name already exists.', edit=edit_id), 400)
         audit(database, context, cid, 'ELEMENT_SAVED', 'element', entity_id, before, {'name': name, 'element_type': element_type, 'pricing_method': method})
         return RedirectResponse('/setup/elements?saved=1', 303)

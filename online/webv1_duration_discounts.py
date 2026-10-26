@@ -7,14 +7,10 @@ def duration_discount(database, company_id: int, element_id: int, nights: int, b
     amount=round(max(0.0,float(base_amount or 0)),2)
     if nights < 1:
         return {'base_amount':amount,'discount_amount':0.0,'final_amount':amount,'rule':None}
-    element=one(database,'SELECT id,element_type,pricing_method FROM setup_elements WHERE company_id=? AND id=?',(company_id,element_id))
+    element=one(database,'SELECT id,element_type,pricing_method FROM setup_elements WHERE company_id=:q486_0 AND id=:q486_1',(company_id,element_id))
     if element is None:
         raise ValueError('Element does not exist.')
-    candidates=rows(database,'''SELECT * FROM setup_duration_discounts
-        WHERE company_id=? AND active=1 AND min_nights<=?
-          AND (scope_type='All elements' OR (scope_type='Element Type' AND element_type=?)
-               OR (scope_type='Element' AND element_id=?))
-        ORDER BY min_nights DESC,id''',(company_id,nights,str(element['element_type']),element_id))
+    candidates=rows(database,"SELECT * FROM setup_duration_discounts\n        WHERE company_id=:q487_0 AND active=1 AND min_nights<=:q487_1\n          AND (scope_type='All elements' OR (scope_type='Element Type' AND element_type=:q487_2)\n               OR (scope_type='Element' AND element_id=:q487_3))\n        ORDER BY min_nights DESC,id",(company_id,nights,str(element['element_type']),element_id))
     best=None; best_amount=0.0
     for rule in candidates:
         value=float(rule['discount_value'] or 0)

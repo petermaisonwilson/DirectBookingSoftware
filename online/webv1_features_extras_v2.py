@@ -1,4 +1,5 @@
 from __future__ import annotations
+from .sql import INTEGRITY_ERRORS, execute_sql, insert_sql, column_rows
 
 import sqlite3
 from urllib.parse import quote_plus
@@ -11,16 +12,16 @@ from .setup015_core import ADDON_PRICING_METHODS, audit, context_for, require_cs
 
 
 def _ensure_column(c, table: str, column: str, definition: str) -> None:
-    names = {str(r['name']) for r in c.execute(f'PRAGMA table_info({table})').fetchall()}
+    names = {str(r['name']) for r in column_rows(c, table)}
     if column not in names:
-        c.execute(f'ALTER TABLE {table} ADD COLUMN {column} {definition}')
+        execute_sql(c, f'ALTER TABLE {table} ADD COLUMN {column} {definition}')
 
 
 def initialise_features_extras(database) -> None:
     with database.connect() as c:
         _ensure_column(c, 'setup_addons', 'item_kind', "TEXT NOT NULL DEFAULT 'Extra'")
         _ensure_column(c, 'setup_addons', 'feature_group', "TEXT NOT NULL DEFAULT ''")
-        c.execute("UPDATE setup_addons SET item_kind='Extra' WHERE item_kind IS NULL OR item_kind NOT IN ('Feature','Extra')")
+        execute_sql(c, "UPDATE setup_addons SET item_kind='Extra' WHERE item_kind IS NULL OR item_kind NOT IN ('Feature','Extra')")
 
 
 def _nav() -> str:
@@ -38,7 +39,7 @@ def _nav() -> str:
 
 def _features_page(database, context, submitted=None, message='', edit=0) -> str:
     cid = int(working_company(context)); submitted = submitted or {}
-    items = rows(database, 'SELECT * FROM setup_addons WHERE company_id=? ORDER BY active DESC,item_kind,name COLLATE NOCASE', (cid,))
+    items = rows(database, 'SELECT * FROM setup_addons WHERE company_id=:q593_0 ORDER BY active DESC,item_kind,lower(name)', (cid,))
     current = next((r for r in items if int(r['id']) == int(edit or 0)), None)
     def pick(name, default=''):
         if name in submitted:
@@ -74,11 +75,11 @@ def _features_page(database, context, submitted=None, message='', edit=0) -> str
 def _rules_page(database, context, year=None, element_type='', element_id=0, submitted=None, message='') -> str:
     cid = int(working_company(context)); submitted = submitted or {}
     available_years = years(database, cid); selected = selected_year(database, cid, year)
-    types = [str(r['name']) for r in rows(database, 'SELECT name FROM setup_element_types WHERE company_id=? AND active=1 ORDER BY name COLLATE NOCASE', (cid,))]
+    types = [str(r['name']) for r in rows(database, 'SELECT name FROM setup_element_types WHERE company_id=:q598_0 AND active=1 ORDER BY lower(name)', (cid,))]
     typ = element_type if element_type in types else (types[0] if types else '')
-    elements = rows(database, 'SELECT * FROM setup_elements WHERE company_id=? AND active=1 AND element_type=? ORDER BY name COLLATE NOCASE', (cid,typ)) if typ else []
+    elements = rows(database, 'SELECT * FROM setup_elements WHERE company_id=:q596_0 AND active=1 AND element_type=:q596_1 ORDER BY lower(name)', (cid,typ)) if typ else []
     chosen = next((e for e in elements if int(e['id']) == int(element_id or 0)), elements[0] if elements else None)
-    addons = rows(database, 'SELECT * FROM setup_addons WHERE company_id=? AND active=1 ORDER BY item_kind DESC,feature_group,name COLLATE NOCASE', (cid,))
+    addons = rows(database, 'SELECT * FROM setup_addons WHERE company_id=:q594_0 AND active=1 ORDER BY item_kind DESC,feature_group,lower(name)', (cid,))
     year_options = ''.join(f'<option value="{y}" {"selected" if y == selected else ""}>{y}</option>' for y in available_years)
     tabs = ''.join(f'<a data-dirty-nav class="button {"" if t == typ else "secondary"}" href="/setup/addon-rules?year={selected or ""}&element_type={quote_plus(t)}">{esc(t)}</a>' for t in types)
     error = f'<div class="error">{esc(message)}</div>' if message else ''
@@ -91,7 +92,7 @@ def _rules_page(database, context, year=None, element_type='', element_id=0, sub
     <div class="card"><div style="display:flex;justify-content:space-between;align-items:center;gap:12px"><div><h2 style="margin:0">{esc(typ)} defaults</h2><p class="muted" style="margin:4px 0 0">Set the normal rule once for the whole Element Type.</p></div><button>SAVE CHANGES</button></div>
     <table><thead><tr><th>Feature / Extra</th><th>Type</th><th>Allowed</th><th>Min</th><th>Max</th><th>Price €</th></tr></thead><tbody>'''
     with database.connect() as c:
-        type_map = {int(r['addon_id']):r for r in c.execute('SELECT * FROM setup_type_addons WHERE company_id=? AND year=? AND element_type=?',(cid,selected,typ)).fetchall()}
+        type_map = {int(r['addon_id']):r for r in execute_sql(c, 'SELECT * FROM setup_type_addons WHERE company_id=:q603_0 AND year=:q603_1 AND element_type=:q603_2',(cid,selected,typ)).fetchall()}
     for a in addons:
         aid = int(a['id']); base = type_map.get(aid); yes = bool(base and int(base['allowed']))
         mn = '' if not base or base['min_qty'] is None else str(base['min_qty']); mx = '' if not base or base['max_qty'] is None else str(base['max_qty']); rate = '' if not base or base['rate'] is None else f'{float(base["rate"]):.2f}'
@@ -105,7 +106,7 @@ def _rules_page(database, context, year=None, element_type='', element_id=0, sub
     override_map = {}
     if chosen:
         with database.connect() as c:
-            override_map = {int(r['addon_id']):r for r in c.execute('SELECT * FROM setup_element_addons WHERE company_id=? AND year=? AND element_id=?',(cid,selected,chosen_id)).fetchall()}
+            override_map = {int(r['addon_id']):r for r in execute_sql(c, 'SELECT * FROM setup_element_addons WHERE company_id=:q605_0 AND year=:q605_1 AND element_id=:q605_2',(cid,selected,chosen_id)).fetchall()}
     for a in addons:
         aid=int(a['id']); base=override_map.get(aid); state='I' if not base else str(base['state']); mn=mx=rate=''
         if base:
@@ -141,13 +142,13 @@ def register_features_extras_routes(app) -> None:
         try:
             with database.connect() as c:
                 if raw_id.isdigit():
-                    old=c.execute('SELECT * FROM setup_addons WHERE company_id=? AND id=?',(cid,int(raw_id))).fetchone()
+                    old=execute_sql(c, 'SELECT * FROM setup_addons WHERE company_id=:q606_0 AND id=:q606_1',(cid,int(raw_id))).fetchone()
                     if old is None: raise HTTPException(status_code=404,detail='Feature / Extra not found')
                     entity_id=int(raw_id); before=dict(old)
-                    c.execute('UPDATE setup_addons SET name=?,pricing_method=?,item_kind=?,feature_group=?,ask_before_availability=? WHERE company_id=? AND id=?',(name,method,kind,group,ask,cid,entity_id))
+                    execute_sql(c, 'UPDATE setup_addons SET name=:q600_0,pricing_method=:q600_1,item_kind=:q600_2,feature_group=:q600_3,ask_before_availability=:q600_4 WHERE company_id=:q600_5 AND id=:q600_6',(name,method,kind,group,ask,cid,entity_id))
                 else:
-                    before=None; entity_id=c.execute('INSERT INTO setup_addons(company_id,name,pricing_method,item_kind,feature_group,ask_before_availability) VALUES (?,?,?,?,?,?)',(cid,name,method,kind,group,ask)).lastrowid
-        except sqlite3.IntegrityError:
+                    before=None; entity_id=insert_sql(c, 'INSERT INTO setup_addons(company_id,name,pricing_method,item_kind,feature_group,ask_before_availability) VALUES (:q604_0,:q604_1,:q604_2,:q604_3,:q604_4,:q604_5)',(cid,name,method,kind,group,ask)).lastrowid
+        except INTEGRITY_ERRORS:
             return HTMLResponse(_features_page(database,context,data,'That Feature / Extra name already exists.',int(raw_id) if raw_id.isdigit() else 0),400)
         audit(database,context,cid,'FEATURE_EXTRA_SAVED','addon',entity_id,before,{'name':name,'item_kind':kind,'feature_group':group,'ask_before_availability':ask})
         return RedirectResponse('/setup/addons',303)
@@ -161,7 +162,7 @@ def register_features_extras_routes(app) -> None:
         context=context_for(database,request); cid=int(working_company(context)); data=await form_data(request); require_csrf(context,data)
         try: year=int(data.get('year',''))
         except ValueError: return HTMLResponse(_rules_page(database,context,message='Choose a valid pricing year.'),400)
-        typ=str(data.get('element_type','')).strip(); eid=int(data.get('element_id','0') or 0); addons=rows(database,'SELECT * FROM setup_addons WHERE company_id=? AND active=1 ORDER BY name',(cid,)); errors=[]; type_values=[]; override_values=[]
+        typ=str(data.get('element_type','')).strip(); eid=int(data.get('element_id','0') or 0); addons=rows(database,'SELECT * FROM setup_addons WHERE company_id=:q597_0 AND active=1 ORDER BY name',(cid,)); errors=[]; type_values=[]; override_values=[]
         for a in addons:
             aid=int(a['id']); allowed=1 if f'ty_{aid}' in data else 0
             if allowed:
@@ -182,9 +183,9 @@ def register_features_extras_routes(app) -> None:
             return HTMLResponse(_rules_page(database,context,year,typ,eid,data,'Complete valid Min, Max and Price values for every Yes rule. Max cannot be lower than Min.'),400)
         with database.connect() as c:
             for aid,allowed,mn,mx,rate in type_values:
-                c.execute('INSERT OR REPLACE INTO setup_type_addons VALUES (?,?,?,?,?,?,?,?)',(cid,year,typ,aid,allowed,mn,mx,rate))
+                execute_sql(c, 'INSERT INTO setup_type_addons VALUES (:q599_0,:q599_1,:q599_2,:q599_3,:q599_4,:q599_5,:q599_6,:q599_7) ON CONFLICT(company_id,year,element_type,addon_id) DO UPDATE SET allowed=excluded.allowed,min_qty=excluded.min_qty,max_qty=excluded.max_qty,rate=excluded.rate',(cid,year,typ,aid,allowed,mn,mx,rate))
             for aid,state,mn,mx,rate in override_values:
-                if state=='I': c.execute('DELETE FROM setup_element_addons WHERE company_id=? AND year=? AND element_id=? AND addon_id=?',(cid,year,eid,aid))
-                else: c.execute('INSERT OR REPLACE INTO setup_element_addons VALUES (?,?,?,?,?,?,?,?)',(cid,year,eid,aid,state,mn,mx,rate))
+                if state=='I': execute_sql(c, 'DELETE FROM setup_element_addons WHERE company_id=:q601_0 AND year=:q601_1 AND element_id=:q601_2 AND addon_id=:q601_3',(cid,year,eid,aid))
+                else: execute_sql(c, 'INSERT INTO setup_element_addons VALUES (:q602_0,:q602_1,:q602_2,:q602_3,:q602_4,:q602_5,:q602_6,:q602_7) ON CONFLICT(company_id,year,element_id,addon_id) DO UPDATE SET state=excluded.state,min_qty=excluded.min_qty,max_qty=excluded.max_qty,rate=excluded.rate',(cid,year,eid,aid,state,mn,mx,rate))
         audit(database,context,cid,'FEATURE_EXTRA_RULES_SAVED','pricing_year',year,None,{'element_type':typ,'element_id':eid,'items':len(addons)})
         return RedirectResponse(f'/setup/addon-rules?year={year}&element_type={quote_plus(typ)}&element={eid}',303)

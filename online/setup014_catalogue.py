@@ -1,4 +1,5 @@
 from __future__ import annotations
+from .sql import execute_sql, insert_sql
 
 from datetime import date
 
@@ -27,7 +28,7 @@ def register_catalogue_routes(app) -> None:
 
     @app.get("/setup/elements", response_class=HTMLResponse)
     def elements(request: Request, edit: int = 0, saved: int = 0):
-        context=context_for(database,request); cid=working_company(context); element_rows=rows(database,"SELECT * FROM setup_elements WHERE company_id=? ORDER BY element_type,name",(cid,)); current=next((r for r in element_rows if int(r["id"])==edit),None)
+        context=context_for(database,request); cid=working_company(context); element_rows=rows(database,'SELECT * FROM setup_elements WHERE company_id=:q536_0 ORDER BY element_type,name',(cid,)); current=next((r for r in element_rows if int(r["id"])==edit),None)
         options=''.join(f'<option {"selected" if current and current["pricing_method"]==m else ""}>{m}</option>' for m in ELEMENT_PRICING_METHODS)
         body=f'<h1>Elements</h1>{setup_nav()}' + ('<div class="ok">Saved and audited.</div>' if saved else '')
         body+=f'''<div class="card"><h2>{"Edit" if current else "Add"} Element</h2><form method="post" action="/setup/elements"><input type="hidden" name="csrf" value="{esc(context["csrf_token"])}"><input type="hidden" name="id" value="{esc(current["id"] if current else "")}"><div class="grid"><div><label>Name</label><input name="name" required value="{esc(current["name"] if current else "")}"></div><div><label>Element Type</label><input name="element_type" required value="{esc(current["element_type"] if current else "")}" placeholder="Camping, Fishing, Gites..."></div><div><label>Pricing method</label><select name="pricing_method">{options}</select></div><div><label>Base price</label><input name="base_price" value="{esc(f'{float(current["base_price"]):.2f}' if current else '0.00')}"></div></div><p><button>Save Element</button></p></form></div>'''
@@ -44,14 +45,14 @@ def register_catalogue_routes(app) -> None:
         raw_id=data.get("id","")
         with database.connect() as c:
             if raw_id.isdigit():
-                old=c.execute("SELECT * FROM setup_elements WHERE id=? AND company_id=?",(int(raw_id),cid)).fetchone()
+                old=execute_sql(c, 'SELECT * FROM setup_elements WHERE id=:q543_0 AND company_id=:q543_1',(int(raw_id),cid)).fetchone()
                 if not old: raise HTTPException(404,"Element not found")
-                before=dict(old); c.execute("UPDATE setup_elements SET name=?,element_type=?,pricing_method=?,base_price=? WHERE id=? AND company_id=?",(name,etype,method,price,int(raw_id),cid)); eid=int(raw_id)
-            else: before=None; eid=c.execute("INSERT INTO setup_elements(company_id,name,element_type,pricing_method,base_price) VALUES (?,?,?,?,?)",(cid,name,etype,method,price)).lastrowid
+                before=dict(old); execute_sql(c, 'UPDATE setup_elements SET name=:q539_0,element_type=:q539_1,pricing_method=:q539_2,base_price=:q539_3 WHERE id=:q539_4 AND company_id=:q539_5',(name,etype,method,price,int(raw_id),cid)); eid=int(raw_id)
+            else: before=None; eid=insert_sql(c, 'INSERT INTO setup_elements(company_id,name,element_type,pricing_method,base_price) VALUES (:q542_0,:q542_1,:q542_2,:q542_3,:q542_4)',(cid,name,etype,method,price)).lastrowid
         audit(database,context,cid,"ELEMENT_SAVED","element",eid,before,{"name":name,"element_type":etype,"pricing_method":method,"base_price":price}); return RedirectResponse("/setup/elements?saved=1",303)
 
     def simple_catalog_page(request: Request, table: str, title: str, action: str, methods=()):
-        context=context_for(database,request); cid=working_company(context); catalog_rows=rows(database,f"SELECT * FROM {table} WHERE company_id=? ORDER BY name",(cid,)); method_html=''
+        context=context_for(database,request); cid=working_company(context); catalog_rows=rows(database,f'SELECT * FROM {table} WHERE company_id=:q544_0 ORDER BY name',(cid,)); method_html=''
         if methods: method_html='<div><label>Pricing method</label><select name="pricing_method">'+''.join(f'<option>{m}</option>' for m in methods)+'</select></div>'
         short_html='<div><label>Short name</label><input name="short_name" maxlength="8"></div>' if table=="setup_person_types" else ''
         body=f'<h1>{title}</h1>{setup_nav()}<div class="card"><form method="post" action="{action}"><input type="hidden" name="csrf" value="{esc(context["csrf_token"])}"><div class="grid"><div><label>Name</label><input name="name" required></div>{short_html}{method_html}</div><p><button>Add {title[:-1] if title.endswith("s") else title}</button></p></form></div><div class="card"><table><thead><tr><th>Name</th>'+('<th>Short name</th>' if table=="setup_person_types" else '')+('<th>Pricing method</th>' if methods else '')+'</tr></thead><tbody>'
@@ -65,7 +66,7 @@ def register_catalogue_routes(app) -> None:
     async def person_types_save(request: Request):
         context=context_for(database,request); cid=working_company(context); data=await form_data(request); require_csrf(context,data); name=data.get("name","").strip()
         if not name: raise HTTPException(400,"Name required")
-        with database.connect() as c: pid=c.execute("INSERT INTO setup_person_types(company_id,name,short_name) VALUES (?,?,?)",(cid,name,data.get("short_name","").strip())).lastrowid
+        with database.connect() as c: pid=insert_sql(c, 'INSERT INTO setup_person_types(company_id,name,short_name) VALUES (:q540_0,:q540_1,:q540_2)',(cid,name,data.get("short_name","").strip())).lastrowid
         audit(database,context,cid,"PERSON_TYPE_ADDED","person_type",pid,None,{"name":name}); return RedirectResponse("/setup/person-types",303)
 
     @app.get("/setup/addons", response_class=HTMLResponse)
@@ -75,7 +76,7 @@ def register_catalogue_routes(app) -> None:
     async def addons_save(request: Request):
         context=context_for(database,request); cid=working_company(context); data=await form_data(request); require_csrf(context,data); name=data.get("name","").strip(); method=data.get("pricing_method","")
         if not name or method not in ADDON_PRICING_METHODS: raise HTTPException(400,"Complete the Add-on details")
-        with database.connect() as c: aid=c.execute("INSERT INTO setup_addons(company_id,name,pricing_method) VALUES (?,?,?)",(cid,name,method)).lastrowid
+        with database.connect() as c: aid=insert_sql(c, 'INSERT INTO setup_addons(company_id,name,pricing_method) VALUES (:q541_0,:q541_1,:q541_2)',(cid,name,method)).lastrowid
         audit(database,context,cid,"ADDON_ADDED","addon",aid,None,{"name":name,"pricing_method":method}); return RedirectResponse("/setup/addons",303)
 
     @app.get("/setup/years", response_class=HTMLResponse)
@@ -85,7 +86,7 @@ def register_catalogue_routes(app) -> None:
     @app.post("/setup/years/new")
     async def year_new(request: Request):
         context=context_for(database,request); cid=working_company(context); data=await form_data(request); require_csrf(context,data); year=int(data["year"])
-        with database.connect() as c: c.execute("INSERT INTO setup_years(company_id,year) VALUES (?,?)",(cid,year)); c.execute("INSERT INTO setup_seasons(company_id,year,name,start_date,end_date) VALUES (?,?,?,?,?)",(cid,year,f"All Year {year}",f"{year}-01-01",f"{year}-12-31"))
+        with database.connect() as c: execute_sql(c, 'INSERT INTO setup_years(company_id,year) VALUES (:q537_0,:q537_1)',(cid,year)); execute_sql(c, 'INSERT INTO setup_seasons(company_id,year,name,start_date,end_date) VALUES (:q538_0,:q538_1,:q538_2,:q538_3,:q538_4)',(cid,year,f"All Year {year}",f"{year}-01-01",f"{year}-12-31"))
         audit(database,context,cid,"PRICING_YEAR_CREATED","pricing_year",year,None,{"year":year}); return RedirectResponse("/setup/years",303)
 
     @app.post("/setup/years/copy")

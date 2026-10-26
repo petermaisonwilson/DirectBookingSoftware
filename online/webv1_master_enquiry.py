@@ -3,6 +3,7 @@
 Kept at a separate URL until the existing booking and finance pages have
 been replaced. Uses the same master record for subsequent lifecycle actions.
 """
+from .sql import execute_sql
 import json
 from datetime import date
 from uuid import uuid4
@@ -29,14 +30,13 @@ def register_master_enquiry_routes(app):
         context = context_for(database, request)
         company_id = working_company(context)
         with database.connect() as c:
-            elements = c.execute(
-                'SELECT id,name FROM setup_elements WHERE company_id=? AND active=1 ORDER BY name,id',
+            elements = execute_sql(c,
+                'SELECT id,name FROM setup_elements WHERE company_id=:q494_0 AND active=1 ORDER BY name,id',
                 (company_id,)).fetchall()
-            people = c.execute('SELECT id,name FROM setup_person_types WHERE company_id=? AND active=1 ORDER BY name,id', (company_id,)).fetchall()
-            addons = c.execute('SELECT id,name FROM setup_addons WHERE company_id=? AND active=1 ORDER BY name,id', (company_id,)).fetchall()
-            customers = c.execute(
-                'SELECT id,first_name,last_name FROM customer_records WHERE company_id=? AND active=1 '
-                'ORDER BY last_name,first_name,id', (company_id,)).fetchall()
+            people = execute_sql(c, 'SELECT id,name FROM setup_person_types WHERE company_id=:q495_0 AND active=1 ORDER BY name,id', (company_id,)).fetchall()
+            addons = execute_sql(c, 'SELECT id,name FROM setup_addons WHERE company_id=:q496_0 AND active=1 ORDER BY name,id', (company_id,)).fetchall()
+            customers = execute_sql(c,
+                'SELECT id,first_name,last_name FROM customer_records WHERE company_id=:q497_0 AND active=1 ORDER BY last_name,first_name,id', (company_id,)).fetchall()
         body = ('<h1>New single-record Enquiry — development</h1>'
                 '<p class="muted">This separate screen does not replace the existing booking workflow. '
                 'Standard pricing and occupancy checks are connected; payment and full requirements are not yet available.</p>'
@@ -128,7 +128,7 @@ def register_master_enquiry_routes(app):
                                         '<div class="error">Choose a valid customer, Element and date range.</div>',
                                         context), status_code=400)
         with database.connect() as c:
-            customer = c.execute('SELECT id FROM customer_records WHERE company_id=? AND id=? AND active=1',
+            customer = execute_sql(c, 'SELECT id FROM customer_records WHERE company_id=:q498_0 AND id=:q498_1 AND active=1',
                                  (company_id, customer_id)).fetchone()
         if customer is None:
             return HTMLResponse(layout('Invalid customer',
@@ -137,19 +137,19 @@ def register_master_enquiry_routes(app):
         reference = 'ENQ-' + uuid4().hex[:12].upper()
         with database.connect() as c:
             elements_by_id = {
-                int(row['id']): row for row in c.execute(
-                    'SELECT id,element_type FROM setup_elements WHERE company_id=? AND active=1',
+                int(row['id']): row for row in execute_sql(c,
+                    'SELECT id,element_type FROM setup_elements WHERE company_id=:q501_0 AND active=1',
                     (company_id,)).fetchall()}
         if any(eid not in elements_by_id for eid in selected_ids):
             return HTMLResponse(layout('Invalid Element', '<div class="error">Element unavailable.</div>', context), status_code=400)
         with database.connect() as c:
-            people = c.execute('SELECT id,name FROM setup_person_types WHERE company_id=? AND active=1', (company_id,)).fetchall()
+            people = execute_sql(c, 'SELECT id,name FROM setup_person_types WHERE company_id=:q499_0 AND active=1', (company_id,)).fetchall()
         values = dict(data)
         # A standard quantity applies to the whole stay; make the intended mode
         # explicit rather than depending on an Add-on's default selection.
         with database.connect() as c:
-            addon_ids = [int(row['id']) for row in c.execute(
-                'SELECT id FROM setup_addons WHERE company_id=? AND active=1', (company_id,))]
+            addon_ids = [int(row['id']) for row in execute_sql(c,
+                'SELECT id FROM setup_addons WHERE company_id=:q500_0 AND active=1', (company_id,))]
         for addon_id in addon_ids:
             if values.get(f'addon_when_{addon_id}') == 'selected_days':
                 person_mode = addon_person_mode(database, company_id, addon_id) == 'person_type'
@@ -170,8 +170,8 @@ def register_master_enquiry_routes(app):
                         if person_mode:
                             person_id = int(parts[1])
                             with database.connect() as c:
-                                valid_person = c.execute(
-                                    'SELECT 1 FROM setup_person_types WHERE company_id=? AND id=? AND active=1',
+                                valid_person = execute_sql(c,
+                                    'SELECT 1 FROM setup_person_types WHERE company_id=:q502_0 AND id=:q502_1 AND active=1',
                                     (company_id, person_id)).fetchone()
                             if valid_person is None:
                                 raise ValueError('Unknown Person Type')

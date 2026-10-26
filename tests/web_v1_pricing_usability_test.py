@@ -1,4 +1,6 @@
 from __future__ import annotations
+from operational_backend import create_app
+from online.sql import execute_sql, insert_sql
 
 import sys
 import tempfile
@@ -9,7 +11,7 @@ sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
 from fastapi.testclient import TestClient
 
-from online.app import COOKIE_NAME, create_app
+from online.app import COOKIE_NAME
 from online.setup015_readiness import element_available_setup_ready
 from online.webv1 import register_web_v1
 
@@ -32,7 +34,7 @@ def main() -> None:
         login(client, 'supervisor@directbooking.test', 'Supervisor013!')
         ctx = db.session_context(client.cookies.get(COOKIE_NAME)); assert ctx
         with db.connect() as c:
-            forest = int(c.execute("SELECT id FROM companies WHERE name='Forest View Campsite'").fetchone()['id'])
+            forest = int(execute_sql(c, "SELECT id FROM companies WHERE name='Forest View Campsite'").fetchone()['id'])
         r = client.post(f'/support/start/{forest}', data={'csrf': ctx['csrf_token']}, follow_redirects=False)
         assert r.status_code == 303
         ctx = db.session_context(client.cookies.get(COOKIE_NAME)); assert ctx
@@ -42,7 +44,7 @@ def main() -> None:
         changed = client.post('/company/base-currency', data={'csrf': ctx['csrf_token'], 'base_currency': 'GBP'}, follow_redirects=False)
         assert changed.status_code == 303
         with db.connect() as c:
-            assert c.execute('SELECT base_currency FROM companies WHERE id=?', (forest,)).fetchone()['base_currency'] == 'GBP'
+            assert execute_sql(c, 'SELECT base_currency FROM companies WHERE id=:q257_0', (forest,)).fetchone()['base_currency'] == 'GBP'
         assert POUND in client.get('/company/settings').text
 
         client.post('/logout')
@@ -54,16 +56,16 @@ def main() -> None:
 
         # Build a self-contained Element/Season setup.
         with db.connect() as c:
-            c.execute("INSERT INTO setup_element_types(company_id,name,active) VALUES (?,?,1)", (company, 'Test Type'))
-            element_id = int(c.execute("INSERT INTO setup_elements(company_id,name,element_type,pricing_method,base_price,active) VALUES (?,?,?,?,0,1)", (company, 'Test Cabin', 'Test Type', 'Per night')).lastrowid)
-            person_id = int(c.execute("INSERT INTO setup_person_types(company_id,name,short_name,active) VALUES (?,?,?,1)", (company, 'Adult', 'Adult')).lastrowid)
-            c.execute('INSERT INTO setup_years(company_id,year) VALUES (?,?)', (company, 2041))
-            season_id = int(c.execute("INSERT INTO setup_seasons(company_id,year,name,start_date,end_date) VALUES (?,?,?,?,?)", (company, 2041, 'Autumn', '2041-05-01', '2041-09-30')).lastrowid)
-            c.execute('INSERT INTO setup_element_rates(company_id,year,element_id,season_id,rate) VALUES (?,?,?,?,?)', (company, 2041, element_id, season_id, 25.0))
-            c.execute('INSERT INTO setup_occupancy(company_id,year,element_id,max_total) VALUES (?,?,?,?)', (company, 2041, element_id, 4))
-            c.execute('INSERT INTO setup_person_limits(company_id,year,element_id,person_type_id,max_count) VALUES (?,?,?,?,?)', (company, 2041, element_id, person_id, 4))
-            c.execute('INSERT INTO setup_person_prices(company_id,year,element_id,person_type_id,rate) VALUES (?,?,?,?,?)', (company, 2041, element_id, person_id, 0.0))
-            c.execute("INSERT INTO setup_duration_discounts(company_id,name,min_nights,discount_type,discount_value,scope_type,element_id,created_at) VALUES (?,?,?,?,?,?,?,datetime('now'))", (company,'7 nights',7,'Percentage',10.0,'Element',element_id))
+            execute_sql(c, 'INSERT INTO setup_element_types(company_id,name,active) VALUES (:q241_0,:q241_1,1)', (company, 'Test Type'))
+            element_id = int(insert_sql(c, 'INSERT INTO setup_elements(company_id,name,element_type,pricing_method,base_price,active) VALUES (:q250_0,:q250_1,:q250_2,:q250_3,0,1)', (company, 'Test Cabin', 'Test Type', 'Per night')).lastrowid)
+            person_id = int(insert_sql(c, 'INSERT INTO setup_person_types(company_id,name,short_name,active) VALUES (:q251_0,:q251_1,:q251_2,1)', (company, 'Adult', 'Adult')).lastrowid)
+            execute_sql(c, 'INSERT INTO setup_years(company_id,year) VALUES (:q242_0,:q242_1)', (company, 2041))
+            season_id = int(insert_sql(c, 'INSERT INTO setup_seasons(company_id,year,name,start_date,end_date) VALUES (:q252_0,:q252_1,:q252_2,:q252_3,:q252_4)', (company, 2041, 'Autumn', '2041-05-01', '2041-09-30')).lastrowid)
+            execute_sql(c, 'INSERT INTO setup_element_rates(company_id,year,element_id,season_id,rate) VALUES (:q243_0,:q243_1,:q243_2,:q243_3,:q243_4)', (company, 2041, element_id, season_id, 25.0))
+            execute_sql(c, 'INSERT INTO setup_occupancy(company_id,year,element_id,max_total) VALUES (:q244_0,:q244_1,:q244_2,:q244_3)', (company, 2041, element_id, 4))
+            execute_sql(c, 'INSERT INTO setup_person_limits(company_id,year,element_id,person_type_id,max_count) VALUES (:q245_0,:q245_1,:q245_2,:q245_3,:q245_4)', (company, 2041, element_id, person_id, 4))
+            execute_sql(c, 'INSERT INTO setup_person_prices(company_id,year,element_id,person_type_id,rate) VALUES (:q246_0,:q246_1,:q246_2,:q246_3,:q246_4)', (company, 2041, element_id, person_id, 0.0))
+            execute_sql(c, "INSERT INTO setup_duration_discounts(company_id,name,min_nights,discount_type,discount_value,scope_type,element_id,created_at) VALUES (:q247_0,:q247_1,:q247_2,:q247_3,:q247_4,:q247_5,:q247_6,datetime('now'))", (company,'7 nights',7,'Percentage',10.0,'Element',element_id))
 
         # Existing Season extension inherits the stored Season price automatically.
         ready, _ = element_available_setup_ready(db, company, element_id, date(2041, 9, 20), date(2041, 9, 22))
@@ -80,7 +82,7 @@ def main() -> None:
 
         # A brand-new Season extends the operating window but is off sale until its price exists.
         with db.connect() as c:
-            extra_id = int(c.execute("INSERT INTO setup_seasons(company_id,year,name,start_date,end_date) VALUES (?,?,?,?,?)", (company, 2041, 'Extra Month', '2041-11-01', '2041-11-30')).lastrowid)
+            extra_id = int(insert_sql(c, 'INSERT INTO setup_seasons(company_id,year,name,start_date,end_date) VALUES (:q253_0,:q253_1,:q253_2,:q253_3,:q253_4)', (company, 2041, 'Extra Month', '2041-11-01', '2041-11-30')).lastrowid)
         state = availability_state(db, company, element_id, '2041-11-05', '2041-11-06')
         assert state['available'] is False and state['state'] == 'SETUP_INCOMPLETE'
         guide = client.get(f'/setup/guidance?year=2041&focus_element_id={element_id}').json()
@@ -88,7 +90,7 @@ def main() -> None:
         audit_page = client.get(f'/setup/audit/element?year=2041&element_id={element_id}')
         assert 'Setup Audit — Test Cabin' in audit_page.text and 'Extra Month price missing' in audit_page.text
         with db.connect() as c:
-            c.execute('INSERT INTO setup_element_rates(company_id,year,element_id,season_id,rate) VALUES (?,?,?,?,?)', (company, 2041, element_id, extra_id, 25.0))
+            execute_sql(c, 'INSERT INTO setup_element_rates(company_id,year,element_id,season_id,rate) VALUES (:q248_0,:q248_1,:q248_2,:q248_3,:q248_4)', (company, 2041, element_id, extra_id, 25.0))
         state = availability_state(db, company, element_id, '2041-11-05', '2041-11-06')
         assert state['available'] is True
         guide = client.get(f'/setup/guidance?year=2041&focus_element_id={element_id}').json()
@@ -105,9 +107,9 @@ def main() -> None:
         assert discounts_page.status_code==200 and 'Duration Discounts' in discounts_page.text and '7 nights' in discounts_page.text
         # Enquiry pricing shows duration/basis, and min=max=1 Add-ons get the auto-one UI helper.
         with db.connect() as c:
-            addon_id = int(c.execute("INSERT INTO setup_addons(company_id,name,pricing_method,active) VALUES (?,?,?,1)", (company, 'Linen', 'Per night')).lastrowid)
-            c.execute('INSERT INTO setup_type_addons(company_id,year,element_type,addon_id,allowed,min_qty,max_qty,rate) VALUES (?,?,?,?,1,1,1,?)', (company, 2041, 'Test Type', addon_id, 5.0))
-            customer_id = int(c.execute("INSERT INTO customer_records(company_id,first_name,last_name,email,phone,created_at,updated_at) VALUES (?,?,?,?,?,datetime('now'),datetime('now'))", (company, 'Test', 'Guest', 'test@example.test', '')).lastrowid)
+            addon_id = int(insert_sql(c, 'INSERT INTO setup_addons(company_id,name,pricing_method,active) VALUES (:q254_0,:q254_1,:q254_2,1)', (company, 'Linen', 'Per night')).lastrowid)
+            execute_sql(c, 'INSERT INTO setup_type_addons(company_id,year,element_type,addon_id,allowed,min_qty,max_qty,rate) VALUES (:q249_0,:q249_1,:q249_2,:q249_3,1,1,1,:q249_4)', (company, 2041, 'Test Type', addon_id, 5.0))
+            customer_id = int(insert_sql(c, "INSERT INTO customer_records(company_id,first_name,last_name,email,phone,created_at,updated_at) VALUES (:q255_0,:q255_1,:q255_2,:q255_3,:q255_4,datetime('now'),datetime('now'))", (company, 'Test', 'Guest', 'test@example.test', '')).lastrowid)
         new_page = client.get(f'/operations/customers/{customer_id}/enquiries/new')
         assert new_page.status_code == 200 and 'addon-auto-one' in new_page.text
         calc = client.post(f'/operations/customers/{customer_id}/enquiries/new', data={

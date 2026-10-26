@@ -1,4 +1,5 @@
 from __future__ import annotations
+from .sql import execute_sql, insert_sql
 from fastapi import Request
 from fastapi.responses import HTMLResponse, RedirectResponse
 from .app import esc, form_data, layout
@@ -14,8 +15,8 @@ def register_duration_discount_routes(app) -> None:
     @app.get('/setup/duration-discounts',response_class=HTMLResponse)
     def page(request:Request):
         ctx=context_for(database,request); cid=int(working_company(ctx))
-        rules=rows(database,'SELECT d.*,e.name AS element_name FROM setup_duration_discounts d LEFT JOIN setup_elements e ON e.id=d.element_id AND e.company_id=d.company_id WHERE d.company_id=? ORDER BY d.active DESC,d.min_nights,d.name',(cid,))
-        elements=rows(database,'SELECT id,name,element_type FROM setup_elements WHERE company_id=? AND active=1 ORDER BY element_type,name',(cid,))
+        rules=rows(database,'SELECT d.*,e.name AS element_name FROM setup_duration_discounts d LEFT JOIN setup_elements e ON e.id=d.element_id AND e.company_id=d.company_id WHERE d.company_id=:q660_0 ORDER BY d.active DESC,d.min_nights,d.name',(cid,))
+        elements=rows(database,'SELECT id,name,element_type FROM setup_elements WHERE company_id=:q661_0 AND active=1 ORDER BY element_type,name',(cid,))
         types=sorted({str(e['element_type']) for e in elements},key=str.casefold)
         scope_opts=''.join(f'<option>{esc(x)}</option>' for x in SCOPES); type_opts='<option value="">—</option>'+''.join(f'<option>{esc(x)}</option>' for x in types); element_opts='<option value="">—</option>'+''.join(f'<option value="{int(e["id"])}">{esc(e["name"])}</option>' for e in elements)
         rows_html=''.join(f'<tr><td>{esc(r["name"])}</td><td>{int(r["min_nights"])}+</td><td>{esc(r["discount_type"])} {float(r["discount_value"]):g}</td><td>{esc(r["scope_type"])}</td><td>{"Active" if int(r["active"]) else "Inactive"}</td><td><form method="post" action="/setup/duration-discounts/toggle"><input type="hidden" name="csrf" value="{esc(ctx["csrf_token"])}"><input type="hidden" name="id" value="{int(r["id"])}"><button class="secondary">{"Deactivate" if int(r["active"]) else "Activate"}</button></form></td></tr>' for r in rules) or '<tr><td colspan="6">No duration discounts configured.</td></tr>'
@@ -30,17 +31,17 @@ def register_duration_discount_routes(app) -> None:
         if not name or nights<1 or value<0 or scope not in SCOPES or dtype not in TYPES: return RedirectResponse('/setup/duration-discounts',303)
         etype=str(data.get('element_type','')).strip(); raw=str(data.get('element_id','')).strip(); eid=int(raw) if raw.isdigit() else None
         if scope=='Element Type' and not etype: return RedirectResponse('/setup/duration-discounts',303)
-        if scope=='Element' and (eid is None or one(database,'SELECT id FROM setup_elements WHERE company_id=? AND id=?',(cid,eid)) is None): return RedirectResponse('/setup/duration-discounts',303)
+        if scope=='Element' and (eid is None or one(database,'SELECT id FROM setup_elements WHERE company_id=:q664_0 AND id=:q664_1',(cid,eid)) is None): return RedirectResponse('/setup/duration-discounts',303)
         with database.connect() as c:
-            rid=int(c.execute('INSERT INTO setup_duration_discounts(company_id,name,min_nights,discount_type,discount_value,scope_type,element_type,element_id,active,created_at) VALUES (?,?,?,?,?,?,?,?,1,?)',(cid,name,nights,dtype,value,scope,etype if scope=='Element Type' else '',eid if scope=='Element' else None,iso_now())).lastrowid)
+            rid=int(insert_sql(c, 'INSERT INTO setup_duration_discounts(company_id,name,min_nights,discount_type,discount_value,scope_type,element_type,element_id,active,created_at) VALUES (:q665_0,:q665_1,:q665_2,:q665_3,:q665_4,:q665_5,:q665_6,:q665_7,1,:q665_8)',(cid,name,nights,dtype,value,scope,etype if scope=='Element Type' else '',eid if scope=='Element' else None,iso_now())).lastrowid)
         audit(database,ctx,cid,'DURATION_DISCOUNT_CREATED','duration_discount',rid,after={'name':name,'min_nights':nights,'discount_type':dtype,'discount_value':value,'scope_type':scope,'element_type':etype,'element_id':eid})
         return RedirectResponse('/setup/duration-discounts',303)
     @app.post('/setup/duration-discounts/toggle')
     async def toggle(request:Request):
         ctx=context_for(database,request); cid=int(working_company(ctx)); data=await form_data(request); require_csrf(ctx,data)
-        raw=str(data.get('id','')); rid=int(raw) if raw.isdigit() else 0; rule=one(database,'SELECT * FROM setup_duration_discounts WHERE company_id=? AND id=?',(cid,rid))
+        raw=str(data.get('id','')); rid=int(raw) if raw.isdigit() else 0; rule=one(database,'SELECT * FROM setup_duration_discounts WHERE company_id=:q662_0 AND id=:q662_1',(cid,rid))
         if rule:
             active=0 if int(rule['active']) else 1
-            with database.connect() as c: c.execute('UPDATE setup_duration_discounts SET active=? WHERE company_id=? AND id=?',(active,cid,rid))
+            with database.connect() as c: execute_sql(c, 'UPDATE setup_duration_discounts SET active=:q663_0 WHERE company_id=:q663_1 AND id=:q663_2',(active,cid,rid))
             audit(database,ctx,cid,'DURATION_DISCOUNT_STATUS_CHANGED','duration_discount',rid,before={'active':int(rule['active'])},after={'active':active})
         return RedirectResponse('/setup/duration-discounts',303)
