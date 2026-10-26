@@ -166,16 +166,6 @@ class OnlineDatabase:
             connection.close()
 
     @contextmanager
-    def reservation_write_connection(self):
-        """Transaction boundary for reservation writes on both database engines.
-
-        SQLite obtains its write lock before availability checks. PostgreSQL
-        serializes reservation writers per tenant via a transaction-scoped
-        advisory lock; callers must pass the company ID before reading inventory.
-        """
-        raise RuntimeError('Use reservation_write_transaction(company_id)')
-
-    @contextmanager
     def reservation_write_transaction(self, company_id: int):
         if self.is_sqlite:
             with self.connect() as connection:
