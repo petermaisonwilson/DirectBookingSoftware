@@ -217,6 +217,39 @@ def register_master_enquiry_routes(app):
                                 return HTMLResponse(layout('Add-on dates outside Element stay',
                                     f'<div class="error">Selected Add-on dates must fall within every selected Element stay. Element {element_id} is incompatible.</div>',
                                     context), status_code=400)
+            for addon_id in addon_ids:
+                raw = data.get(f'element_selected_days_{element_id}_{addon_id}', '').strip()
+                if not raw:
+                    continue
+                person_mode = addon_person_mode(database, company_id, addon_id) == 'person_type'
+                for key in list(element_values):
+                    if key.startswith((f'addon_day_{addon_id}_', f'addon_day_person_{addon_id}_')):
+                        element_values.pop(key)
+                for line in raw.splitlines():
+                    if not line.strip():
+                        continue
+                    parts = [part.strip() for part in line.split(',')]
+                    try:
+                        if len(parts) != (3 if person_mode else 2):
+                            raise ValueError('Invalid columns')
+                        day = date.fromisoformat(parts[0])
+                        qty = int(parts[-1])
+                        if qty < 0 or not element_arrival <= day < element_departure:
+                            raise ValueError('Invalid day or quantity')
+                        if person_mode:
+                            pid = int(parts[1])
+                            if pid not in {int(p['id']) for p in people}:
+                                raise ValueError('Invalid Person Type')
+                            key = f'addon_day_person_{addon_id}_{pid}_{day.isoformat()}'
+                        else:
+                            key = f'addon_day_{addon_id}_{day.isoformat()}'
+                        if key in element_values:
+                            raise ValueError('Duplicate day')
+                        element_values[key] = str(qty)
+                    except (ValueError, TypeError):
+                        return HTMLResponse(layout('Invalid Add-on days', f'<div class="error">Invalid individual Add-on dates for Element {element_id}.</div>', context), status_code=400)
+                element_values[f'addon_when_{addon_id}'] = 'selected_days'
+                element_values[f'addon_selected_{addon_id}'] = '1'
             for person_id in [int(person['id']) for person in people]:
                 override = data.get(f'element_person_{element_id}_{person_id}', '').strip()
                 if override != '':
