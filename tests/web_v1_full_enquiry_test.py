@@ -192,17 +192,24 @@ def main() -> None:
         lock_observed = []
         def checking_availability(*args, **kwargs):
             result = original_availability(*args, **kwargs)
-            other = sqlite3.connect(db.path, timeout=0.02)
-            try:
+            if db.is_sqlite:
+                other = sqlite3.connect(db.path, timeout=0.02)
                 try:
-                    execute_sql(other, 'BEGIN IMMEDIATE')
-                    other.rollback()
-                    lock_observed.append(False)
-                except sqlite3.OperationalError as exc:
-                    assert 'locked' in str(exc).lower()
-                    lock_observed.append(True)
-            finally:
-                other.close()
+                    try:
+                        execute_sql(other, 'BEGIN IMMEDIATE')
+                        other.rollback()
+                        lock_observed.append(False)
+                    except sqlite3.OperationalError as exc:
+                        assert 'locked' in str(exc).lower()
+                        lock_observed.append(True)
+                finally:
+                    other.close()
+            else:
+                with db.connect() as other:
+                    acquired = execute_sql(other,
+                        'SELECT pg_try_advisory_xact_lock(:namespace,:tenant) AS acquired',
+                        {'namespace': 302, 'tenant': cid}).fetchone()['acquired']
+                    lock_observed.append(not acquired)
             return result
         enquiry_builder.availability_state = checking_availability
         try:

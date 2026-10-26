@@ -1,4 +1,5 @@
 from __future__ import annotations
+from .database import iso_now
 
 import json
 from datetime import date, timedelta
@@ -87,8 +88,8 @@ def install_duration_display(app) -> None:
         # on the calendar, so show only the useful stay length here.
         if path == '/availability/calendar-v2':
             hold_map = {}
-            for r in rows(database, "SELECT h.id,h.arrival_date,h.departure_date,e.pricing_method\n                                      FROM element_holds h\n                                      JOIN setup_elements e ON e.id=h.element_id AND e.company_id=h.company_id\n                                      WHERE h.company_id=:q645_0 AND h.session_token=:q645_1 AND h.expires_at>datetime('now')",
-                          (company_id, token)):
+            for r in rows(database, "SELECT h.id,h.arrival_date,h.departure_date,e.pricing_method\n                                      FROM element_holds h\n                                      JOIN setup_elements e ON e.id=h.element_id AND e.company_id=h.company_id\n                                      WHERE h.company_id=:q645_0 AND h.session_token=:q645_1 AND h.expires_at>:utc_now",
+                          (company_id, token, iso_now())):
                 hold_map[str(int(r['id']))] = _progress_label(r['arrival_date'], r['departure_date'], r['pricing_method'])
             script = f'''<style id="duration-display-style">.duration-summary{{display:block;color:#4f5d6b;font-size:11px;line-height:1.25;margin-top:3px}}</style>
 <script id="duration-display-script">(()=>{{

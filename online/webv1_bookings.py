@@ -641,7 +641,7 @@ def register_booking_routes(app) -> None:
         method=one(database,'SELECT * FROM payment_method_definitions WHERE company_id=:q207_0 AND id=:q207_1 AND active=1',(cid,method_id))
         if method is None: return RedirectResponse(f'/operations/bookings/{booking_id}?message=Choose+an+active+Payment+Method',303)
         if str(method['method_type'])=='card': return RedirectResponse(f'/operations/bookings/{booking_id}?message=Card+provider+connection+is+not+configured+yet',303)
-        with database.connect() as c:
+        with database.reservation_write_transaction(cid) as c:
             payment_id = int(insert_sql(c, 'INSERT INTO booking_payments(company_id,booking_id,amount,payment_date,method,reference,notes,created_by_user_id,created_at)\n                VALUES (:q228_0,:q228_1,:q228_2,:q228_3,:q228_4,:q228_5,:q228_6,:q228_7,:q228_8)', (cid, booking_id, amount, payment_date, str(method['name']), str(data.get('reference','')).strip(), str(data.get('notes','')).strip(), context['user_id'], iso_now())).lastrowid)
             total=float(execute_sql(c, 'SELECT total_amount FROM bookings WHERE id=:q236_0 AND company_id=:q236_1',(booking_id,cid)).fetchone()['total_amount'])
             paid=float(execute_sql(c, 'SELECT COALESCE(SUM(amount),0) AS n FROM booking_payments WHERE booking_id=:q237_0 AND company_id=:q237_1',(booking_id,cid)).fetchone()['n'])

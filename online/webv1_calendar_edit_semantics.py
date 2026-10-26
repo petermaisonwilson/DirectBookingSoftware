@@ -1,4 +1,5 @@
 from __future__ import annotations
+from .database import iso_now
 
 import json
 from urllib.parse import quote_plus
@@ -60,8 +61,8 @@ def install_calendar_edit_semantics(app) -> None:
             }
             for r in rows(
                 database,
-                "SELECT h.id AS hold_id,h.element_id,h.arrival_date,h.departure_date,e.name AS element_name\n                   FROM element_holds h\n                   JOIN setup_elements e ON e.id=h.element_id AND e.company_id=h.company_id\n                   WHERE h.company_id=:q304_0 AND h.session_token=:q304_1\n                     AND h.expires_at>datetime('now')\n                     AND lower(e.pricing_method)='per night'\n                   ORDER BY h.created_at,h.id",
-                (company_id, token),
+                "SELECT h.id AS hold_id,h.element_id,h.arrival_date,h.departure_date,e.name AS element_name\n                   FROM element_holds h\n                   JOIN setup_elements e ON e.id=h.element_id AND e.company_id=h.company_id\n                   WHERE h.company_id=:q304_0 AND h.session_token=:q304_1\n                     AND h.expires_at>:utc_now\n                     AND lower(e.pricing_method)='per night'\n                   ORDER BY h.created_at,h.id",
+                (company_id, token, iso_now()),
             )
         ]
 

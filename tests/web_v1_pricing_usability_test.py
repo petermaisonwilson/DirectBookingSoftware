@@ -65,7 +65,7 @@ def main() -> None:
             execute_sql(c, 'INSERT INTO setup_occupancy(company_id,year,element_id,max_total) VALUES (:q244_0,:q244_1,:q244_2,:q244_3)', (company, 2041, element_id, 4))
             execute_sql(c, 'INSERT INTO setup_person_limits(company_id,year,element_id,person_type_id,max_count) VALUES (:q245_0,:q245_1,:q245_2,:q245_3,:q245_4)', (company, 2041, element_id, person_id, 4))
             execute_sql(c, 'INSERT INTO setup_person_prices(company_id,year,element_id,person_type_id,rate) VALUES (:q246_0,:q246_1,:q246_2,:q246_3,:q246_4)', (company, 2041, element_id, person_id, 0.0))
-            execute_sql(c, "INSERT INTO setup_duration_discounts(company_id,name,min_nights,discount_type,discount_value,scope_type,element_id,created_at) VALUES (:q247_0,:q247_1,:q247_2,:q247_3,:q247_4,:q247_5,:q247_6,datetime('now'))", (company,'7 nights',7,'Percentage',10.0,'Element',element_id))
+            execute_sql(c, "INSERT INTO setup_duration_discounts(company_id,name,min_nights,discount_type,discount_value,scope_type,element_id,created_at) VALUES (:q247_0,:q247_1,:q247_2,:q247_3,:q247_4,:q247_5,:q247_6,CURRENT_TIMESTAMP)", (company,'7 nights',7,'Percentage',10.0,'Element',element_id))
 
         # Existing Season extension inherits the stored Season price automatically.
         ready, _ = element_available_setup_ready(db, company, element_id, date(2041, 9, 20), date(2041, 9, 22))
@@ -109,7 +109,7 @@ def main() -> None:
         with db.connect() as c:
             addon_id = int(insert_sql(c, 'INSERT INTO setup_addons(company_id,name,pricing_method,active) VALUES (:q254_0,:q254_1,:q254_2,1)', (company, 'Linen', 'Per night')).lastrowid)
             execute_sql(c, 'INSERT INTO setup_type_addons(company_id,year,element_type,addon_id,allowed,min_qty,max_qty,rate) VALUES (:q249_0,:q249_1,:q249_2,:q249_3,1,1,1,:q249_4)', (company, 2041, 'Test Type', addon_id, 5.0))
-            customer_id = int(insert_sql(c, "INSERT INTO customer_records(company_id,first_name,last_name,email,phone,created_at,updated_at) VALUES (:q255_0,:q255_1,:q255_2,:q255_3,:q255_4,datetime('now'),datetime('now'))", (company, 'Test', 'Guest', 'test@example.test', '')).lastrowid)
+            customer_id = int(insert_sql(c, "INSERT INTO customer_records(company_id,first_name,last_name,email,phone,created_at,updated_at) VALUES (:q255_0,:q255_1,:q255_2,:q255_3,:q255_4,CURRENT_TIMESTAMP,CURRENT_TIMESTAMP)", (company, 'Test', 'Guest', 'test@example.test', '')).lastrowid)
         new_page = client.get(f'/operations/customers/{customer_id}/enquiries/new')
         assert new_page.status_code == 200 and 'addon-auto-one' in new_page.text
         calc = client.post(f'/operations/customers/{customer_id}/enquiries/new', data={

@@ -1,6 +1,6 @@
 from __future__ import annotations
 from operational_backend import create_app
-from online.sql import execute_sql, insert_sql
+from online.sql import table_exists, execute_sql, insert_sql
 
 import tempfile
 import sys
@@ -88,7 +88,7 @@ def main() -> None:
             meta = execute_sql(c, "SELECT value FROM web_schema_meta WHERE key='schema_version'").fetchone()
             assert meta and meta['value'] == 'web-v1-foundation'
             for table in ('customer_records','enquiries','offers','bookings','booking_elements','booking_people','booking_addons','arrivals','self_checkin_tokens'):
-                exists = execute_sql(c, "SELECT 1 FROM sqlite_master WHERE type='table' AND name=:q267_0", (table,)).fetchone()
+                exists = table_exists(c, table)
                 assert exists, f'Missing Web V1 table: {table}'
 
     print('Direct Booking Web V1 foundation test: passed')

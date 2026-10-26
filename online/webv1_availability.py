@@ -88,13 +88,15 @@ def operating_window(database, company_id: int, year: int) -> tuple[date, date] 
     return _parse_day(row['first_day']), _parse_day(row['last_day']) + timedelta(days=1)
 
 
-def _purge_expired_holds(connection) -> None:
-    expired = [int(r['id']) for r in execute_sql(connection, 'SELECT id FROM element_holds WHERE expires_at<=:q281_0', (iso_now(),)).fetchall()]
-    for hold_id in expired:
-        execute_sql(connection, 'DELETE FROM hold_requirement_people WHERE hold_id=:q263_0', (hold_id,))
-        execute_sql(connection, 'DELETE FROM hold_requirement_addons WHERE hold_id=:q264_0', (hold_id,))
-    if expired:
-        execute_sql(connection, 'DELETE FROM element_holds WHERE expires_at<=:q265_0', (iso_now(),))
+def _purge_expired_holds(connection, company_id) -> None:
+    params = {'company_id': int(company_id), 'now': iso_now()}
+    expired = execute_sql(connection,
+        'SELECT id FROM element_holds WHERE company_id=:company_id AND expires_at<=:now', params).fetchall()
+    for row in expired:
+        params['hold_id'] = int(row['id'])
+        for table in ('hold_requirement_people', 'hold_requirement_addons'):
+            execute_sql(connection, f'DELETE FROM {table} WHERE company_id=:company_id AND hold_id=:hold_id', params)
+        execute_sql(connection, 'DELETE FROM element_holds WHERE company_id=:company_id AND id=:hold_id', params)
 
 
 def _booking_conflict(connection, company_id: int, element_id: int, start: str, end: str, exclude_booking_id: int | None = None):
@@ -173,7 +175,7 @@ def create_or_replace_hold(database, context, company_id: int, session_token: st
     with database.connect() as c:
         # Hold allocation and conflict checks must be atomic across sessions.
         lock_inventory(c, company_id)
-        _purge_expired_holds(c)
+        _purge_expired_holds(c, company_id)
         from .webv1_status_availability import _enquiry_conflict
         conflict = execute_sql(c, 'SELECT id FROM element_holds WHERE company_id=:q275_0 AND element_id=:q275_1 AND session_token<>:q275_2\n                                AND date(arrival_date)<date(:q275_3) AND date(departure_date)>date(:q275_4) AND expires_at>:q275_5 LIMIT 1',
                              (company_id, element_id, session_token, departure, arrival, iso_now())).fetchone()
@@ -229,7 +231,7 @@ def register_availability_routes(app) -> None:
         context, cid = _session_company(database, request); data = await form_data(request); require_csrf(context, data); token = request.cookies.get(COOKIE_NAME, '')
         now = _now(); prompt = now + timedelta(minutes=HOLD_MINUTES); expires = prompt + timedelta(minutes=HOLD_GRACE_MINUTES)
         with database.connect() as c:
-            _purge_expired_holds(c)
+            _purge_expired_holds(c, cid)
             held = execute_sql(c, 'SELECT * FROM element_holds WHERE company_id=:q284_0 AND session_token=:q284_1', (cid, token)).fetchall()
             execute_sql(c, 'UPDATE element_holds SET renewal_required_at=:q270_0,expires_at=:q270_1,updated_at=:q270_2 WHERE company_id=:q270_3 AND session_token=:q270_4', (prompt.isoformat(timespec='seconds'), expires.isoformat(timespec='seconds'), now.isoformat(timespec='seconds'), cid, token))
         audit(database, context, cid, 'ELEMENT_HOLDS_RENEWED', 'element_hold', token[:12], {'count': len(held)}, {'count': len(held), 'expires_at': expires.isoformat(timespec='seconds')})

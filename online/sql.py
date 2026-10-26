@@ -17,10 +17,10 @@ _BIND = re.compile(r'(?<!:):([A-Za-z_]\w*)')
 class DataRow(Mapping):
     def __init__(self, row):
         self.data = dict(row._mapping)
-        self.values = tuple(row)
+        self._values = tuple(row)
 
     def __getitem__(self, key):
-        return self.values[key] if isinstance(key, (int, slice)) else self.data[key]
+        return self._values[key] if isinstance(key, (int, slice)) else self.data[key]
 
     def __iter__(self):
         return iter(self.data)

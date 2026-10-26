@@ -62,8 +62,8 @@ def _validate(raw: str, minimum: int, maximum: int, label: str) -> int:
 def create_or_replace_hold(database, context, company_id: int, session_token: str, element_id: int, arrival: str, departure: str):
     # A hold already in this basket is immutable during normal ADD Element / NEW
     # BOOKING work. It can only be changed through the explicit basket EDIT route.
-    with database.connect() as c:
-        legacy._purge_expired_holds(c)
+    with database.reservation_write_transaction(company_id) as c:
+        legacy._purge_expired_holds(c, company_id)
         existing = execute_sql(c,
             'SELECT * FROM element_holds WHERE company_id=:q88_0 AND element_id=:q88_1 AND session_token=:q88_2',
             (company_id, element_id, session_token),
@@ -78,13 +78,17 @@ def create_or_replace_hold(database, context, company_id: int, session_token: st
     now = legacy._now()
     prompt = now + timedelta(seconds=hold_seconds)
     expires = prompt + timedelta(seconds=grace_seconds)
-    with database.connect() as c:
-        legacy._purge_expired_holds(c)
+    with database.reservation_write_transaction(company_id) as c:
+        legacy._purge_expired_holds(c, company_id)
         conflict = execute_sql(c,
             'SELECT id FROM element_holds WHERE company_id=:q89_0 AND element_id=:q89_1\n               AND date(arrival_date)<date(:q89_2) AND date(departure_date)>date(:q89_3) AND expires_at>:q89_4 LIMIT 1',
             (company_id, element_id, departure, arrival, iso_now()),
         ).fetchone()
-        if conflict or legacy._booking_conflict(c, company_id, element_id, arrival, departure) or legacy._closure_conflict(c, company_id, element_id, arrival, departure):
+        from .webv1_reservation_core import migrated_inventory_conflict
+        from .webv1_status_availability import _enquiry_conflict
+        canonical = migrated_inventory_conflict(c, company_id, element_id, arrival, departure)
+        enquiry = _enquiry_conflict(c, company_id, element_id, arrival, departure)
+        if canonical or enquiry or conflict or legacy._booking_conflict(c, company_id, element_id, arrival, departure) or legacy._closure_conflict(c, company_id, element_id, arrival, departure):
             raise ValueError('That Element has just become unavailable. Please choose another.')
         hold_id = int(insert_sql(c,
             'INSERT INTO element_holds(company_id,element_id,session_token,holder_user_id,arrival_date,departure_date,renewal_required_at,expires_at,created_at,updated_at)\n               VALUES (:q90_0,:q90_1,:q90_2,:q90_3,:q90_4,:q90_5,:q90_6,:q90_7,:q90_8,:q90_9)',
@@ -168,7 +172,7 @@ def register_hold_settings_routes(app) -> None:
         prompt = now + timedelta(seconds=hold_seconds)
         expires = prompt + timedelta(seconds=grace_seconds)
         with database.connect() as c:
-            legacy._purge_expired_holds(c)
+            legacy._purge_expired_holds(c, cid)
             held = execute_sql(c, 'SELECT * FROM element_holds WHERE company_id=:q92_0 AND session_token=:q92_1', (cid, token)).fetchall()
             execute_sql(c,
                 'UPDATE element_holds SET renewal_required_at=:q85_0,expires_at=:q85_1,updated_at=:q85_2 WHERE company_id=:q85_3 AND session_token=:q85_4',

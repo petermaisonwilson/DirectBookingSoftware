@@ -89,7 +89,7 @@ def register_basket_routes(app) -> None:
             hold_id = int(data.get('hold_id', ''))
         except (TypeError, ValueError):
             return JSONResponse({'ok': False, 'error': 'Invalid basket item.'}, status_code=400)
-        with database.connect() as c:
+        with database.reservation_write_transaction(company_id) as c:
             _purge_expired_basket_rows(c, company_id, token)
             row = _basket_row(c, company_id, token, hold_id)
             if row is None:
@@ -146,7 +146,11 @@ def register_basket_routes(app) -> None:
             ).fetchone()
             booking_conflict = availability._booking_conflict(c, company_id, element_id, arrival, departure)
             closure_conflict = availability._closure_conflict(c, company_id, element_id, arrival, departure)
-            if competing_hold or booking_conflict or closure_conflict:
+            from .webv1_reservation_core import migrated_inventory_conflict
+            from .webv1_status_availability import _enquiry_conflict
+            canonical = migrated_inventory_conflict(c, company_id, element_id, arrival, departure)
+            enquiry = _enquiry_conflict(c, company_id, element_id, arrival, departure)
+            if canonical or enquiry or competing_hold or booking_conflict or closure_conflict:
                 return JSONResponse({'ok': False, 'error': 'That Element is already unavailable or held. Please choose another.'}, status_code=409)
 
             settings = execute_sql(c, 'SELECT hold_seconds,grace_seconds FROM company_hold_settings WHERE company_id=:q722_0', (company_id,)).fetchone()

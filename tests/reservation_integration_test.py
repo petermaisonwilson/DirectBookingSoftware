@@ -21,6 +21,7 @@ from sqlalchemy.engine import make_url
 from sqlalchemy.exc import DBAPIError
 
 from online.config import RuntimeConfig
+from online.sql import execute_sql
 from online.database import OnlineDatabase
 from online.webv1_reservation_core import ReservationError, inventory_conflict, _execute
 from online.webv1_reservation_service import (
@@ -287,9 +288,7 @@ class ReservationIntegrationTests(unittest.TestCase):
         self.assertEqual(sorted(self.summary(rid)['reservation']['state'] for rid in ids),
                          ['ENQUIRY_HELD', 'ENQUIRY_RELEASED'])
 
-    def test_legacy_sqlite_writers_recheck_canonical_inventory(self):
-        if not self.db.is_sqlite:
-            self.skipTest('Legacy operational writers are explicitly SQLite-only; no PostgreSQL claim')
+    def test_operational_writers_recheck_canonical_inventory(self):
         from online.webv1_availability import create_or_replace_hold
         from online.webv1_booking_amendments import apply_amendment
         rid = self.create()
@@ -308,8 +307,8 @@ class ReservationIntegrationTests(unittest.TestCase):
         with self.assertRaisesRegex(ValueError, 'central reservation'):
             apply_amendment(self.db, {'company_id': self.cid}, quote)
         with self.db.connect() as c:
-            self.assertEqual(c.execute('SELECT COUNT(*) FROM element_holds WHERE company_id=?', (self.cid,)).fetchone()[0], 0)
-            self.assertEqual(c.execute('SELECT arrival_date FROM booking_elements WHERE id=?', (beid,)).fetchone()[0], '2026-12-01')
+            self.assertEqual(execute_sql(c, 'SELECT COUNT(*) AS n FROM element_holds WHERE company_id=:tenant', (self.cid,)).fetchone()[0], 0)
+            self.assertEqual(execute_sql(c, 'SELECT arrival_date FROM booking_elements WHERE id=:element', (beid,)).fetchone()[0], '2026-12-01')
         self.assertEqual(len(self.summary(rid)['history']), 1)
         from online.webv1_enquiry_builder import _save
         with self.assertRaisesRegex(ValueError, 'central reservation'):
@@ -327,7 +326,7 @@ class ReservationIntegrationTests(unittest.TestCase):
             with self.assertRaisesRegex(ValueError, 'central reservation'):
                 _save_basket_enquiry(self.db, {}, self.cid, None, 'stale-basket', '')
         with self.db.connect() as c:
-            self.assertEqual(c.execute('SELECT COUNT(*) FROM enquiries WHERE company_id=?', (self.cid,)).fetchone()[0], 0)
+            self.assertEqual(execute_sql(c, 'SELECT COUNT(*) AS n FROM enquiries WHERE company_id=:tenant', (self.cid,)).fetchone()[0], 0)
 
     def test_legacy_booking_and_multi_and_single_enquiry_conflicts(self):
         for kind in ('booking', 'multi', 'single'):
