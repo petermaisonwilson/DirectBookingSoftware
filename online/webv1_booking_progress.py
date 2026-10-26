@@ -126,6 +126,11 @@ def _save_basket_enquiry(database,context,company_id,customer_id,token,notes):
             if migrated_inventory_conflict(c, company_id, int(item['element_id']),
                                            str(item['arrival_date']), str(item['departure_date'])):
                 raise ValueError('This Element is allocated to a central reservation.')
+            from .webv1_status_availability import availability_state
+            final = availability_state(database, company_id, int(item['element_id']),
+                str(item['arrival_date']), str(item['departure_date']), session_token=token)
+            if not final.get('available'):
+                raise ValueError(str(final.get('reason') or 'That Element is no longer available.'))
         enquiry_id=int(insert_sql(c, 'INSERT INTO enquiries(company_id,customer_id,status,source,arrival_date,departure_date,party_size,notes,created_at,updated_at) VALUES (:q67_0,:q67_1,:q67_2,:q67_3,:q67_4,:q67_5,:q67_6,:q67_7,:q67_8,:q67_9)',(company_id,customer_id,'new','Availability',arrival,departure,party,notes,now,now)).lastrowid)
         total=0.0
         for order,item,values,calc in prepared:
@@ -153,8 +158,8 @@ def _save_basket_enquiry(database,context,company_id,customer_id,token,notes):
         hold_ids=[int(x[1]['id']) for x in prepared]
         for hid in hold_ids:
             execute_sql(c, 'DELETE FROM hold_requirement_people WHERE hold_id=:q57_0',(hid,));execute_sql(c, 'DELETE FROM hold_requirement_addons WHERE hold_id=:q58_0',(hid,));execute_sql(c, 'DELETE FROM element_holds WHERE id=:q59_0 AND company_id=:q59_1 AND session_token=:q59_2',(hid,company_id,token))
-    audit(database,context,company_id,'ENQUIRY_CREATED','enquiry',enquiry_id,after={'customer_id':customer_id,'element_count':len(prepared),'provisional_total':total})
-    audit(database,context,company_id,'ELEMENT_HOLDS_CONVERTED_TO_ENQUIRY','enquiry',enquiry_id,after={'hold_ids':[int(x[1]['id']) for x in prepared]})
+        audit(database, context, company_id, 'ENQUIRY_CREATED', 'enquiry', enquiry_id, after={'customer_id': customer_id, 'element_count': len(prepared), 'provisional_total': total}, connection=c)
+        audit(database, context, company_id, 'ELEMENT_HOLDS_CONVERTED_TO_ENQUIRY', 'enquiry', enquiry_id, after={'hold_ids': [int(x[1]['id']) for x in prepared]}, connection=c)
     return enquiry_id
 
 

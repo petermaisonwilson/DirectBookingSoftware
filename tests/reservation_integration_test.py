@@ -303,7 +303,7 @@ class ReservationIntegrationTests(unittest.TestCase):
                         element_id=self.elements[0], arrival_date='2026-12-01', departure_date='2026-12-05',
                         pricing_method_snapshot='per_night')
         quote = dict(booking_id=bid, booking_element_id=beid, old_arrival='2026-12-01',
-                     old_departure='2026-12-05', new_arrival='2026-11-01', new_departure='2026-11-05')
+                     old_departure='2026-12-05', old_booking_total=0, new_arrival='2026-11-01', new_departure='2026-11-05')
         with self.assertRaisesRegex(ValueError, 'central reservation'):
             apply_amendment(self.db, {'company_id': self.cid}, quote)
         with self.db.connect() as c:

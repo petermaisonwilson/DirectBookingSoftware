@@ -126,7 +126,7 @@ def create_app(db_path: str | Path | RuntimeConfig | None = None, *, seed_demo: 
 
     @app.get("/health")
     def health():
-        return {"status": "ok", "build": BUILD, "version": BUILD_VERSION, "mode": "online-foundation"}
+        return {"status": "ok", "build": BUILD, "version": BUILD_VERSION, "mode": "online-foundation", "database_backend": database.dialect_name}
 
     @app.get("/", response_class=HTMLResponse)
     def home(request: Request):

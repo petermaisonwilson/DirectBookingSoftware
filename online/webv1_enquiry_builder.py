@@ -336,6 +336,13 @@ def _save(database, context, company_id:int, customer_id:int, values:dict[str,st
             from .webv1_reservation_core import migrated_inventory_conflict
             if migrated_inventory_conflict(c, company_id, element_id, values['arrival_date'], values['departure_date']):
                 raise ValueError('This Element is allocated to a central reservation.')
+            if calculation is not None:
+                token = str(context['token']) if 'token' in context.keys() else ''
+                final = availability_state(database, company_id, element_id,
+                    values['arrival_date'], values['departure_date'], session_token=token,
+                    exclude_enquiry_id=enquiry_id)
+                if not final.get('available'):
+                    raise ValueError(str(final.get('reason') or 'That Element is no longer available.'))
         if created: enquiry_id=int(insert_sql(c, 'INSERT INTO enquiries(company_id,customer_id,status,source,arrival_date,departure_date,party_size,notes,created_at,updated_at) VALUES (:q134_0,:q134_1,:q134_2,:q134_3,:q134_4,:q134_5,:q134_6,:q134_7,:q134_8,:q134_9)',(company_id,customer_id,'new',values.get('source',''),values.get('arrival_date') or None,values.get('departure_date') or None,party_size,values.get('notes',''),now,now)).lastrowid)
         else: execute_sql(c, 'UPDATE enquiries SET source=:q121_0,arrival_date=:q121_1,departure_date=:q121_2,party_size=:q121_3,notes=:q121_4,updated_at=:q121_5 WHERE id=:q121_6 AND company_id=:q121_7',(values.get('source',''),values.get('arrival_date') or None,values.get('departure_date') or None,party_size,values.get('notes',''),now,enquiry_id,company_id))
         for table in ('enquiry_people','enquiry_addons','enquiry_addon_days','enquiry_addon_people','enquiry_addon_person_days','enquiry_selected_addons'): execute_sql(c, f'DELETE FROM {table} WHERE enquiry_id=:q151_0 AND company_id=:q151_1',(enquiry_id,company_id))
@@ -388,21 +395,28 @@ def _save(database, context, company_id:int, customer_id:int, values:dict[str,st
                 for d,pp in bydate.items():
                     for pid,qty in pp.items():
                         if qty:execute_sql(c, 'INSERT INTO enquiry_element_addon_person_days(enquiry_element_id,company_id,addon_id,person_type_id,service_date,quantity) VALUES (:q148_0,:q148_1,:q148_2,:q148_3,:q148_4,:q148_5)',(eeid,company_id,aid,pid,d,qty))
-    if created:
-        audit(database,context,company_id,'ENQUIRY_CREATED','enquiry',enquiry_id,after={'customer_id':customer_id,'element_type':selected_type,'element_id':element_id,'provisional_total':provisional_total})
-    else:
-        # Record the operational change in human-meaningful terms.  The audit
-        # still stores structured before/after data, but dates, Element, people
-        # and price are explicit so History can say what actually changed.
-        # At this point the authoritative row has already been saved, so use
-        # the caller-supplied pre-save snapshot when present.
-        before_data = values.get('__audit_before') if isinstance(values.get('__audit_before'),dict) else None
-        after_data={'customer_id':customer_id,'element_type':selected_type,'element_id':element_id,'arrival_date':values.get('arrival_date') or None,'departure_date':values.get('departure_date') or None,'party_size':party_size,'people':{str(x['person_type_id']):int(x['quantity']) for x in (execute_sql(locked_connection, 'SELECT person_type_id,quantity FROM enquiry_element_people WHERE enquiry_element_id=(SELECT id FROM enquiry_elements WHERE enquiry_id=:q149_0 AND company_id=:q149_1 ORDER BY sort_order,id LIMIT 1) AND company_id=:q149_2',(enquiry_id,company_id,company_id)).fetchall() if locked_connection is not None else rows(database,'SELECT person_type_id,quantity FROM enquiry_element_people WHERE enquiry_element_id=(SELECT id FROM enquiry_elements WHERE enquiry_id=:q145_0 AND company_id=:q145_1 ORDER BY sort_order,id LIMIT 1) AND company_id=:q145_2',(enquiry_id,company_id,company_id)))},'addons':{str(x['addon_id']):int(x['quantity']) for x in (execute_sql(locked_connection, 'SELECT addon_id,quantity FROM enquiry_element_addons WHERE enquiry_element_id=(SELECT id FROM enquiry_elements WHERE enquiry_id=:q150_0 AND company_id=:q150_1 ORDER BY sort_order,id LIMIT 1) AND company_id=:q150_2',(enquiry_id,company_id,company_id)).fetchall() if locked_connection is not None else rows(database,'SELECT addon_id,quantity FROM enquiry_element_addons WHERE enquiry_element_id=(SELECT id FROM enquiry_elements WHERE enquiry_id=:q146_0 AND company_id=:q146_1 ORDER BY sort_order,id LIMIT 1) AND company_id=:q146_2',(enquiry_id,company_id,company_id)))},'provisional_total':provisional_total}
-        if locked_connection is None:
-            audit(database,context,company_id,'ENQUIRY_UPDATED','enquiry',enquiry_id,before=before_data,after=after_data)
+        if created:
+            audit(database, context, company_id, 'ENQUIRY_CREATED', 'enquiry', enquiry_id,
+                  after={'customer_id': customer_id, 'element_type': selected_type,
+                         'element_id': element_id, 'provisional_total': provisional_total}, connection=c)
         else:
-            execute_sql(locked_connection, 'INSERT INTO audit_log(company_id,actor_user_id,actor_role,acting_company_id,action,entity_type,entity_id,before_json,after_json,created_at) VALUES (:q124_0,:q124_1,:q124_2,:q124_3,:q124_4,:q124_5,:q124_6,:q124_7,:q124_8,:q124_9)',
-                (company_id,context['user_id'],context['role'],context['acting_company_id'],'ENQUIRY_UPDATED','enquiry',str(enquiry_id),json.dumps(before_data,sort_keys=True) if before_data is not None else None,json.dumps(after_data,sort_keys=True),iso_now()))
+            before_data = values.get('__audit_before') if isinstance(values.get('__audit_before'), dict) else None
+            details = {}
+            for table, field, label in (
+                ('enquiry_element_people', 'person_type_id', 'people'),
+                ('enquiry_element_addons', 'addon_id', 'addons'),
+            ):
+                result = execute_sql(c, f'SELECT {field},quantity FROM {table} '
+                    'WHERE enquiry_element_id=(SELECT id FROM enquiry_elements '
+                    'WHERE enquiry_id=:enquiry_id AND company_id=:company_id ORDER BY sort_order,id LIMIT 1) '
+                    'AND company_id=:tenant', (enquiry_id, company_id, company_id)).fetchall()
+                details[label] = {str(row[field]): int(row['quantity']) for row in result}
+            after_data = dict(details, customer_id=customer_id, element_type=selected_type,
+                element_id=element_id, arrival_date=values.get('arrival_date') or None,
+                departure_date=values.get('departure_date') or None, party_size=party_size,
+                provisional_total=provisional_total)
+            audit(database, context, company_id, 'ENQUIRY_UPDATED', 'enquiry', enquiry_id,
+                  before=before_data, after=after_data, connection=c)
     return int(enquiry_id)
 
 

@@ -193,7 +193,7 @@ def create_or_replace_hold(database, context, company_id: int, session_token: st
             hold_id = int(insert_sql(c, 'INSERT INTO element_holds(company_id,element_id,session_token,holder_user_id,arrival_date,departure_date,renewal_required_at,expires_at,created_at,updated_at)\n                                      VALUES (:q282_0,:q282_1,:q282_2,:q282_3,:q282_4,:q282_5,:q282_6,:q282_7,:q282_8,:q282_9)',
                                     (company_id, element_id, session_token, context['user_id'], arrival, departure, prompt.isoformat(timespec='seconds'), expires.isoformat(timespec='seconds'), now.isoformat(timespec='seconds'), now.isoformat(timespec='seconds'))).lastrowid)
             before = None
-    audit(database, context, company_id, 'ELEMENT_HOLD_SAVED', 'element_hold', hold_id, before, {'element_id': element_id, 'arrival_date': arrival, 'departure_date': departure, 'renewal_required_at': prompt.isoformat(timespec='seconds'), 'expires_at': expires.isoformat(timespec='seconds')})
+        audit(database, context, company_id, 'ELEMENT_HOLD_SAVED', 'element_hold', hold_id, before, {'element_id': element_id, 'arrival_date': arrival, 'departure_date': departure, 'renewal_required_at': prompt.isoformat(timespec='seconds'), 'expires_at': expires.isoformat(timespec='seconds')}, connection=c)
     return {'id': hold_id, 'renewal_required_at': prompt.isoformat(timespec='seconds'), 'expires_at': expires.isoformat(timespec='seconds')}
 
 

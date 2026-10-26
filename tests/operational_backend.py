@@ -14,7 +14,7 @@ from alembic.config import Config
 from sqlalchemy import create_engine, text
 from sqlalchemy.engine import make_url
 from online.app import create_app as application_factory
-from online.config import RuntimeConfig
+from unittest.mock import patch
 
 _schemas = {}
 _apps = []
@@ -39,7 +39,9 @@ def create_app(db_path=None, *, seed_demo=None):
         command.upgrade(config, 'head')
         _schemas[key] = (admin, schema, scoped)
     scoped = _schemas[key][2]
-    app = application_factory(RuntimeConfig('test', scoped, True, False, '127.0.0.1', 8000), seed_demo=seed_demo)
+    with patch.dict(os.environ, {'DIRECTBOOKING_DATABASE_URL': scoped, 'DIRECTBOOKING_ENV': 'test',
+                                 'DIRECTBOOKING_SEED_DEMO': '1'}):
+        app = application_factory(seed_demo=seed_demo)
     assert app.state.database.dialect_name == 'postgresql'
     _apps.append(app)
     print('Operational application backend: PostgreSQL; isolated schema:', _schemas[key][1])

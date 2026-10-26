@@ -208,7 +208,7 @@ def main() -> None:
                 with db.connect() as other:
                     acquired = execute_sql(other,
                         'SELECT pg_try_advisory_xact_lock(:namespace,:tenant) AS acquired',
-                        {'namespace': 302, 'tenant': cid}).fetchone()['acquired']
+                        {'namespace': 302, 'tenant': forest}).fetchone()['acquired']
                     lock_observed.append(not acquired)
             return result
         enquiry_builder.availability_state = checking_availability

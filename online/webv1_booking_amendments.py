@@ -123,6 +123,9 @@ def apply_amendment(database, context, quote: dict) -> int:
         current = execute_sql(c, 'SELECT arrival_date,departure_date FROM booking_elements WHERE id=:q531_0 AND company_id=:q531_1', (beid,cid)).fetchone()
         if current is None or str(current['arrival_date']) != str(quote['old_arrival']) or str(current['departure_date']) != str(quote['old_departure']):
             raise ValueError('This Booking has changed since the amendment was calculated. Recalculate before saving.')
+        current_booking = execute_sql(c, 'SELECT total_amount FROM bookings WHERE company_id=:tenant AND id=:booking', (cid, booking_id)).fetchone()
+        if round(float(current_booking['total_amount']), 2) != round(float(quote['old_booking_total']), 2):
+            raise ValueError('This Booking has changed since the amendment was calculated. Recalculate before saving.')
         from .webv1_reservation_core import migrated_inventory_conflict
         if migrated_inventory_conflict(c, cid, int(be['element_id']), quote['new_arrival'], quote['new_departure']):
             raise ValueError('The amended dates overlap a central reservation.')
@@ -144,4 +147,11 @@ def apply_amendment(database, context, quote: dict) -> int:
         execute_sql(c, 'UPDATE bookings SET arrival_date=:q527_0,departure_date=:q527_1,total_amount=:q527_2,updated_at=:q527_3 WHERE id=:q527_4 AND company_id=:q527_5',
                   (bounds['a'],bounds['d'],quote['new_booking_total'],now,booking_id,cid))
         sync_payment_status(database,cid,booking_id,connection=c,context=context)
+        from .setup015_core import audit
+        private_detail = dict(quote, amendment_id=amendment_id)
+        private_detail['manual_discount_private'] = private_detail.pop('manual_discount', 0)
+        audit(database, context, cid, 'BOOKING_AMENDED', 'booking', booking_id,
+              before={'arrival_date': quote['old_arrival'], 'departure_date': quote['old_departure'],
+                      'booking_total': quote['old_booking_total']},
+              after=private_detail, connection=c)
     return amendment_id

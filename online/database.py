@@ -144,12 +144,11 @@ class OnlineDatabase:
         return Path(value[len(prefix):])
 
     @contextmanager
-    def connect(self) -> Iterator[sqlite3.Connection]:
-        """Open the existing SQLite feature connection.
+    def connect(self) -> Iterator[sqlite3.Connection | Connection]:
+        """Open an operational transaction on the configured backend.
 
-        PostgreSQL feature modules are converted source-by-source; callers that
-        still depend on SQLite-only SQL fail clearly rather than being silently
-        translated.
+        Operational SQL uses the shared named executor. PostgreSQL never falls
+        back to a local file; its source statements are not rewritten at runtime.
         """
         if not self.is_sqlite:
             assert self.engine is not None
@@ -421,27 +420,26 @@ class OnlineDatabase:
         self, *, action: str, entity_type: str, entity_id: str | int | None,
         actor_user_id: int | None, actor_role: str | None, company_id: int | None,
         acting_company_id: int | None, before: dict[str, Any] | None = None,
-        after: dict[str, Any] | None = None,
+        after: dict[str, Any] | None = None, connection=None,
     ) -> None:
+        from .sql import execute_sql
         values = {
-            "company_id": company_id, "actor_user_id": actor_user_id, "actor_role": actor_role,
-            "acting_company_id": acting_company_id, "action": action, "entity_type": entity_type,
-            "entity_id": None if entity_id is None else str(entity_id),
-            "before_json": None if before is None else json.dumps(before, sort_keys=True),
-            "after_json": None if after is None else json.dumps(after, sort_keys=True), "created_at": iso_now(),
+            'company_id': company_id, 'actor_user_id': actor_user_id, 'actor_role': actor_role,
+            'acting_company_id': acting_company_id, 'action': action, 'entity_type': entity_type,
+            'entity_id': None if entity_id is None else str(entity_id),
+            'before_json': None if before is None else json.dumps(before, sort_keys=True),
+            'after_json': None if after is None else json.dumps(after, sort_keys=True), 'created_at': iso_now(),
         }
-        if self.is_sqlite:
-            with self.connect() as connection:
-                connection.execute("""
-                    INSERT INTO audit_log(company_id,actor_user_id,actor_role,acting_company_id,action,entity_type,entity_id,before_json,after_json,created_at)
-                    VALUES (?,?,?,?,?,?,?,?,?,?)
-                """, tuple(values[key] for key in ("company_id","actor_user_id","actor_role","acting_company_id","action","entity_type","entity_id","before_json","after_json","created_at")))
+        statement = (
+            'INSERT INTO audit_log(company_id,actor_user_id,actor_role,acting_company_id,action,'
+            'entity_type,entity_id,before_json,after_json,created_at) '
+            'VALUES (:company_id,:actor_user_id,:actor_role,:acting_company_id,:action,'
+            ':entity_type,:entity_id,:before_json,:after_json,:created_at)')
+        if connection is not None:
+            execute_sql(connection, statement, values)
         else:
-            with self.sql_connection() as connection:
-                connection.execute(text("""
-                    INSERT INTO audit_log(company_id,actor_user_id,actor_role,acting_company_id,action,entity_type,entity_id,before_json,after_json,created_at)
-                    VALUES (:company_id,:actor_user_id,:actor_role,:acting_company_id,:action,:entity_type,:entity_id,:before_json,:after_json,:created_at)
-                """), values)
+            with self.connect() as owned:
+                execute_sql(owned, statement, values)
 
     def audit_rows(self, *, company_id: int | None = None, date_from: str = "", date_to: str = ""):
         if self.is_sqlite:

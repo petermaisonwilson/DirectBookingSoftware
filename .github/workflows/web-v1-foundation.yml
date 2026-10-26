@@ -261,6 +261,11 @@ jobs:
           Copy-Item "online\*.py" "artifact\online\" -Force
           Copy-Item "run_online.py" "artifact\run_online.py" -Force
           Copy-Item "requirements-online.txt" "artifact\requirements-online.txt" -Force
+          New-Item -ItemType Directory -Force "artifact\migrations\versions" | Out-Null
+          Copy-Item "migrations\*.py" "artifact\migrations\" -Force
+          Copy-Item "migrations\versions\*.py" "artifact\migrations\versions\" -Force
+          Copy-Item "alembic.ini" "artifact\alembic.ini" -Force
+          Copy-Item "docs\build302-database-runtime.md" "artifact\DATABASE-RUNTIME.md" -Force
           Copy-Item "WEB_V1_FOUNDATION.md" "artifact\WEB_V1_FOUNDATION.md" -Force
           $launcher = @(
             'import os, subprocess, sys, webbrowser',

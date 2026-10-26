@@ -55,6 +55,7 @@ from .webv1_core import initialise_web_v1
 from .webv1_customers import register_customer_routes
 from .webv1_enquiries import register_enquiry_routes
 from .webv1_enquiry_builder import register_enquiry_builder_routes
+from .reservation_bootstrap import initialise_reservation_storage
 from .webv1_reservation_preview import register_reservation_preview_routes
 from .webv1_master_enquiry import register_master_enquiry_routes
 from .webv1_routes import register_web_v1_routes
@@ -80,6 +81,7 @@ def register_web_v1(app) -> None:
     initialise_addon_popup(app.state.database)
     initialise_booking_requirements(app.state.database)
     initialise_features_extras(app.state.database)
+    initialise_reservation_storage(app.state.database)
     install_status_aware_availability()
     install_hold_timing()
     install_pricing_calculation_transparency()

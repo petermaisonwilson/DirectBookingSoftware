@@ -309,7 +309,7 @@ def main() -> None:
             assert execute_sql(c, 'SELECT status FROM enquiries WHERE id=:q111_0',(life_id,)).fetchone()['status']=='closed'
             execute_sql(c, 'DELETE FROM booking_elements WHERE booking_id=:q61_0',(blocker,))
             execute_sql(c, 'DELETE FROM bookings WHERE id=:q62_0',(blocker,))
-            life_actions=[str(r['action']) for r in execute_sql(c, "SELECT action FROM audit_log WHERE company_id=:q112_0 AND entity_type='enquiry' AND entity_id=:q112_1 ORDER BY id",(cid,life_id)).fetchall()]
+            life_actions=[str(r['action']) for r in execute_sql(c, "SELECT action FROM audit_log WHERE company_id=:q112_0 AND entity_type='enquiry' AND entity_id=:q112_1 ORDER BY id",(cid,str(life_id))).fetchall()]
         assert 'ENQUIRY_RELEASED' in life_actions and 'ENQUIRY_REOPENED' in life_actions
         page = client.get(f'/operations/bookings/{booking_id}')
         assert 'Booking History' in page.text and 'What happened' in page.text

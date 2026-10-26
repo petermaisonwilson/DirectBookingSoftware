@@ -33,6 +33,8 @@ def configure_default_database() -> Path:
     permanent location if the permanent database does not already exist.
     """
     override = os.environ.get("DIRECTBOOKING_DB")
+    if os.environ.get("DIRECTBOOKING_DATABASE_URL", "").strip().startswith("postgresql"):
+        return Path(override) if override else permanent_database_path()
     if override:
         return Path(override)
 

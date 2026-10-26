@@ -94,11 +94,11 @@ def require_csrf(context, data: dict[str, str]) -> None:
         raise HTTPException(status_code=403, detail="Invalid form token")
 
 
-def audit(database, context, company_id: int, action: str, entity_type: str, entity_id: Any, before=None, after=None):
+def audit(database, context, company_id: int, action: str, entity_type: str, entity_id: Any, before=None, after=None, *, connection=None):
     database.write_audit(
         action=action, entity_type=entity_type, entity_id=entity_id,
         actor_user_id=context["user_id"], actor_role=context["role"], company_id=company_id,
-        acting_company_id=context["acting_company_id"], before=before, after=after,
+        acting_company_id=context["acting_company_id"], before=before, after=after, connection=connection,
     )
 
 
