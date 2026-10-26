@@ -46,8 +46,14 @@ def validate_allocations(connection, company_id, allocations, exclude_reservatio
                 raise ValueError()
         except ValueError as exc:
             raise ReservationError('Invalid arrival or departure dates.') from exc
-        element = connection.execute('SELECT id FROM setup_elements WHERE company_id=? AND id=? AND active=1',
-                                     (company_id, element_id)).fetchone()
+        element_sql = ('SELECT id FROM setup_elements WHERE company_id=:company_id '
+                       'AND id=:element_id AND active=1')
+        element_params = {'company_id': company_id, 'element_id': element_id}
+        if hasattr(connection, 'dialect'):
+            from sqlalchemy import text
+            element = connection.execute(text(element_sql), element_params).fetchone()
+        else:
+            element = connection.execute(element_sql, element_params).fetchone()
         if element is None:
             raise ReservationError('Element does not belong to this client or is inactive.')
         if any(element_id == eid and arrival < end and departure > start for eid, start, end in seen):
