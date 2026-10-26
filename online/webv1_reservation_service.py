@@ -1,20 +1,16 @@
-"""Write operations for the single-record reservation system.
-
-All mutations use the shared reservation transaction boundary. The core SQL
-and legacy availability queries still require PostgreSQL compatibility work
-before the full reservation workflow can run on PostgreSQL.
-"""
+"""Atomic reservation writes and tenant-scoped reads on SQLite and PostgreSQL."""
 import json
 
-from .webv1_reservation_core import create_reservation, replace_reservation_elements, transition
+from .webv1_reservation_core import create_reservation, replace_reservation_elements, transition, _execute, _mapping
 
 
 def _history(connection, company_id, reservation_id, event, when, actor, *, old=None, new=None, reason='', details=None):
-    connection.execute(
+    _execute(connection,
         'INSERT INTO reservation_history (company_id,reservation_id,event_type,old_state,new_state,actor,reason,details_json,created_at) '
-        'VALUES (?,?,?,?,?,?,?,?,?)',
-        (company_id, reservation_id, event, old, new, str(actor), str(reason),
-         json.dumps(details or {}, separators=(',', ':')), when))
+        'VALUES (:company_id,:reservation_id,:event,:old,:new,:actor,:reason,:details,:when)',
+        {'company_id': company_id, 'reservation_id': reservation_id, 'event': event,
+         'old': old, 'new': new, 'actor': str(actor), 'reason': str(reason),
+         'details': json.dumps(details or {}, separators=(',', ':')), 'when': when})
 
 
 def create_enquiry(database, company_id, reference, customer_id, allocations, created_at,
@@ -36,11 +32,12 @@ def amend_reservation(database, company_id, reservation_id, allocations, updated
 
 def change_reservation_state(database, company_id, reservation_id, state, updated_at, *, actor='System', reason=''):
     with database.reservation_write_transaction(company_id) as connection:
-        previous = connection.execute('SELECT state FROM reservations WHERE company_id=? AND id=?',
-                                      (company_id, reservation_id)).fetchone()
+        previous = _execute(connection,
+            'SELECT state FROM reservations WHERE company_id=:company_id AND id=:reservation_id',
+            {'company_id': company_id, 'reservation_id': reservation_id}).fetchone()
         transition(connection, company_id, reservation_id, state, updated_at)
         _history(connection, company_id, reservation_id, 'STATUS_CHANGED', updated_at, actor,
-                 old=previous['state'] if previous else None, new=state, reason=reason)
+                 old=_mapping(previous)['state'] if previous else None, new=state, reason=reason)
 
 
 def _read_rows(database, sql, parameters):

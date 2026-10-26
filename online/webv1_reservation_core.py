@@ -39,6 +39,7 @@ def validate_allocations(connection, company_id, allocations, exclude_reservatio
     from datetime import date
     seen = []
     for allocation in allocations:
+        allocation = _mapping(allocation)
         element_id = int(allocation['element_id'])
         arrival, departure = str(allocation['arrival_date']), str(allocation['departure_date'])
         try:
@@ -147,25 +148,20 @@ def create_reservation(connection, company_id, reference, customer_id, allocatio
     else:
         cursor = _execute(connection, insert_sql, insert_params)
         reservation_id = int(cursor.lastrowid)
-    for item in allocations:
-        connection.execute(
-            'INSERT INTO reservation_elements (company_id,reservation_id,element_id,arrival_date,departure_date,'
-            'total_amount,pricing_snapshot_json,lead_name) VALUES (?,?,?,?,?,?,?,?)',
-            (company_id, reservation_id, int(item['element_id']), str(item['arrival_date']),
-             str(item['departure_date']), float(item.get('total_amount') or 0),
-             str(item.get('pricing_snapshot_json') or '{}'), str(item.get('lead_name') or '')))
+    _insert_elements(connection, company_id, reservation_id, allocations)
     return reservation_id
 
 
 def replace_reservation_elements(connection, company_id, reservation_id, allocations, updated_at,
                                  *, check_legacy=True):
     """Replace all Elements of an editable master record within the caller's transaction."""
-    row = connection.execute(
-        'SELECT state FROM reservations WHERE company_id=? AND id=?',
-        (company_id, reservation_id)).fetchone()
+    params = {'company_id': company_id, 'reservation_id': reservation_id}
+    row = _execute(connection,
+        'SELECT state FROM reservations WHERE company_id=:company_id AND id=:reservation_id',
+        params).fetchone()
     if row is None:
         raise ReservationError('Reservation not found for this client.')
-    if str(row['state']) not in ('ENQUIRY_HELD', 'ENQUIRY_RELEASED', 'CONFIRMED'):
+    if str(_mapping(row)['state']) not in ('ENQUIRY_HELD', 'ENQUIRY_RELEASED', 'CONFIRMED'):
         raise ReservationError('Cancelled reservations cannot be amended.')
     if not allocations:
         raise ReservationError('A reservation must contain at least one Element.')
@@ -179,15 +175,23 @@ def replace_reservation_elements(connection, company_id, reservation_id, allocat
                 raise ReservationError('Element is already booked.')
             if _enquiry_conflict(connection, company_id, eid, start, end):
                 raise ReservationError('Element is already held by another Enquiry.')
-    connection.execute('DELETE FROM reservation_elements WHERE company_id=? AND reservation_id=?',
-                       (company_id, reservation_id))
-    for item in allocations:
-        connection.execute(
-            'INSERT INTO reservation_elements (company_id,reservation_id,element_id,arrival_date,departure_date,'
-            'total_amount,pricing_snapshot_json,lead_name) VALUES (?,?,?,?,?,?,?,?)',
-            (company_id, reservation_id, int(item['element_id']), str(item['arrival_date']),
-             str(item['departure_date']), float(item.get('total_amount') or 0),
-             str(item.get('pricing_snapshot_json') or '{}'), str(item.get('lead_name') or '')))
+    _execute(connection, 'DELETE FROM reservation_elements WHERE company_id=:company_id AND reservation_id=:reservation_id', params)
+    _insert_elements(connection, company_id, reservation_id, allocations)
     total = sum(float(item.get('total_amount') or 0) for item in allocations)
-    connection.execute('UPDATE reservations SET total_amount=?,updated_at=? WHERE company_id=? AND id=?',
-                       (total, updated_at, company_id, reservation_id))
+    _execute(connection,
+             'UPDATE reservations SET total_amount=:total,updated_at=:updated_at '
+             'WHERE company_id=:company_id AND id=:reservation_id',
+             dict(params, total=total, updated_at=updated_at))
+
+
+def _insert_elements(connection, company_id, reservation_id, allocations):
+    for item in allocations:
+        _execute(connection,
+            'INSERT INTO reservation_elements (company_id,reservation_id,element_id,arrival_date,departure_date,'
+            'total_amount,pricing_snapshot_json,lead_name) '
+            'VALUES (:company_id,:reservation_id,:element_id,:arrival,:departure,:total,:snapshot,:lead_name)',
+            {'company_id': company_id, 'reservation_id': reservation_id,
+             'element_id': int(item['element_id']), 'arrival': str(item['arrival_date']),
+             'departure': str(item['departure_date']), 'total': float(item.get('total_amount') or 0),
+             'snapshot': str(item.get('pricing_snapshot_json') or '{}'),
+             'lead_name': str(item.get('lead_name') or '')})

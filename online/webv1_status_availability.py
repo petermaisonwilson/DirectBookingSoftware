@@ -4,7 +4,7 @@ from datetime import date, timedelta
 from typing import Any
 
 from .database import iso_now
-from .webv1_reservation_core import inventory_conflict
+from .webv1_reservation_core import inventory_conflict, _execute, _mapping
 from .setup015_calculator import _addon_rule
 from .setup015_core import rows
 from .setup015_readiness import element_available_setup_ready
@@ -18,16 +18,16 @@ def _booking_conflict(connection, company_id: int, element_id: int, start: str, 
         FROM booking_elements be
         JOIN bookings b ON b.id=be.booking_id AND b.company_id=be.company_id
         LEFT JOIN booking_status_definitions s ON s.id=b.workflow_status_id AND s.company_id=b.company_id
-        WHERE be.company_id=? AND be.element_id=?
+        WHERE be.company_id=:company_id AND be.element_id=:element_id
           AND b.status<>'cancelled'
           AND COALESCE(s.blocks_availability,1)=1
-          AND date(be.arrival_date)<date(?) AND date(be.departure_date)>date(?)
+          AND date(be.arrival_date)<date(:end) AND date(be.departure_date)>date(:start)
     '''
-    params: list[Any] = [company_id, element_id, end, start]
+    params = {'company_id': company_id, 'element_id': element_id, 'end': end, 'start': start}
     if exclude_booking_id is not None:
-        sql += ' AND b.id<>?'; params.append(exclude_booking_id)
+        sql += ' AND b.id<>:exclude_id'; params['exclude_id'] = exclude_booking_id
     sql += ' ORDER BY be.arrival_date LIMIT 1'
-    return connection.execute(sql, params).fetchone()
+    return _mapping(_execute(connection, sql, params).fetchone())
 
 
 def _enquiry_conflict(connection, company_id: int, element_id: int, start: str, end: str, exclude_enquiry_id: int | None = None):
@@ -37,18 +37,18 @@ def _enquiry_conflict(connection, company_id: int, element_id: int, start: str, 
         FROM enquiries e
         JOIN enquiry_elements ee ON ee.enquiry_id=e.id AND ee.company_id=e.company_id
         LEFT JOIN booking_status_definitions s ON s.id=e.workflow_status_id AND s.company_id=e.company_id
-        WHERE e.company_id=? AND ee.element_id=?
+        WHERE e.company_id=:company_id AND ee.element_id=:element_id
           AND COALESCE(ee.recovery_state,'held')='held'
           AND e.status NOT IN ('closed','converted')
           AND NOT EXISTS (SELECT 1 FROM bookings bx WHERE bx.company_id=e.company_id AND bx.enquiry_id=e.id)
           AND COALESCE(s.blocks_availability,1)=1
-          AND date(ee.arrival_date)<date(?) AND date(ee.departure_date)>date(?)
+          AND date(ee.arrival_date)<date(:end) AND date(ee.departure_date)>date(:start)
     '''
-    params: list[Any] = [company_id, element_id, end, start]
+    params = {'company_id': company_id, 'element_id': element_id, 'end': end, 'start': start}
     if exclude_enquiry_id is not None:
-        multi += ' AND e.id<>?'; params.append(exclude_enquiry_id)
+        multi += ' AND e.id<>:exclude_id'; params['exclude_id'] = exclude_enquiry_id
     multi += ' ORDER BY ee.arrival_date LIMIT 1'
-    found=connection.execute(multi,params).fetchone()
+    found=_mapping(_execute(connection, multi, params).fetchone())
     if found is not None:
         return found
 
@@ -59,18 +59,18 @@ def _enquiry_conflict(connection, company_id: int, element_id: int, start: str, 
                s.id AS workflow_status_id,s.name AS workflow_name,s.colour,s.blocks_availability,s.internal_state
         FROM enquiries e JOIN enquiry_requests er ON er.enquiry_id=e.id AND er.company_id=e.company_id
         LEFT JOIN booking_status_definitions s ON s.id=e.workflow_status_id AND s.company_id=e.company_id
-        WHERE e.company_id=? AND er.element_id=?
+        WHERE e.company_id=:company_id AND er.element_id=:element_id
           AND NOT EXISTS (SELECT 1 FROM enquiry_elements x WHERE x.company_id=e.company_id AND x.enquiry_id=e.id)
           AND e.status NOT IN ('closed','converted')
           AND NOT EXISTS (SELECT 1 FROM bookings bx WHERE bx.company_id=e.company_id AND bx.enquiry_id=e.id)
           AND COALESCE(s.blocks_availability,1)=1
-          AND date(e.arrival_date)<date(?) AND date(e.departure_date)>date(?)
+          AND date(e.arrival_date)<date(:end) AND date(e.departure_date)>date(:start)
     '''
-    legacy_params: list[Any]=[company_id,element_id,end,start]
+    legacy_params = {'company_id': company_id, 'element_id': element_id, 'end': end, 'start': start}
     if exclude_enquiry_id is not None:
-        legacy_sql += ' AND e.id<>?'; legacy_params.append(exclude_enquiry_id)
+        legacy_sql += ' AND e.id<>:exclude_id'; legacy_params['exclude_id'] = exclude_enquiry_id
     legacy_sql += ' ORDER BY e.arrival_date LIMIT 1'
-    return connection.execute(legacy_sql,legacy_params).fetchone()
+    return _mapping(_execute(connection, legacy_sql, legacy_params).fetchone())
 
 
 def availability_state(database, company_id: int, element_id: int, arrival: str, departure: str, *, session_token: str = '', exclude_booking_id: int | None = None, exclude_enquiry_id: int | None = None, missing_items_cache: dict | None = None, operating_window_cache: dict | None = None, element_active_cache: dict | None = None) -> dict[str, Any]:
