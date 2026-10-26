@@ -138,6 +138,8 @@ def register_master_enquiry_routes(app):
                     (company_id,)).fetchall()}
         if any(eid not in elements_by_id for eid in selected_ids):
             return HTMLResponse(layout('Invalid Element', '<div class="error">Element unavailable.</div>', context), status_code=400)
+        with database.connect() as c:
+            people = c.execute('SELECT id,name FROM setup_person_types WHERE company_id=? AND active=1', (company_id,)).fetchall()
         values = dict(data)
         # A standard quantity applies to the whole stay; make the intended mode
         # explicit rather than depending on an Add-on's default selection.
