@@ -176,7 +176,7 @@ def register_master_enquiry_routes(app):
                             if valid_person is None:
                                 raise ValueError('Unknown Person Type')
                         qty = int(parts[2 if person_mode else 1])
-                        if day < arrival or day >= departure or qty < 0:
+                        if qty < 0:
                             raise ValueError('Outside stay')
                     except (ValueError, TypeError):
                         return HTMLResponse(layout('Invalid Add-on day',
