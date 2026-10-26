@@ -209,7 +209,7 @@ def register_master_enquiry_routes(app):
             element_values['arrival_date'] = element_arrival.isoformat()
             element_values['departure_date'] = element_departure.isoformat()
             for addon_id in addon_ids:
-                if data.get(f'element_selected_days_{element_id}_{addon_id}', '').strip():
+                if data.get(f'element_selected_days_{element_id}_{addon_id}', '').strip() or data.get(f'element_addon_{element_id}_{addon_id}', '').strip() == '0':
                     continue
                 if element_values.get(f'addon_when_{addon_id}') == 'selected_days':
                     for key, quantity in element_values.items():
