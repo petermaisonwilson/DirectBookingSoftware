@@ -18,8 +18,7 @@ def _history(connection, company_id, reservation_id, event, when, actor, *, old=
 
 def create_enquiry(database, company_id, reference, customer_id, allocations, created_at,
                    *, currency='EUR', notes='', actor='System'):
-    with database.connect() as connection:
-        connection.execute('BEGIN IMMEDIATE')
+    with database.reservation_write_transaction(company_id) as connection:
         rid = create_reservation(connection, company_id, reference, customer_id,
                                  allocations, created_at, currency=currency, notes=notes)
         _history(connection, company_id, rid, 'CREATED', created_at, actor,
@@ -28,16 +27,14 @@ def create_enquiry(database, company_id, reference, customer_id, allocations, cr
 
 
 def amend_reservation(database, company_id, reservation_id, allocations, updated_at, *, actor='System', reason=''):
-    with database.connect() as connection:
-        connection.execute('BEGIN IMMEDIATE')
+    with database.reservation_write_transaction(company_id) as connection:
         replace_reservation_elements(connection, company_id, reservation_id, allocations, updated_at)
         _history(connection, company_id, reservation_id, 'AMENDED', updated_at, actor,
                  reason=reason, details={'element_count': len(allocations)})
 
 
 def change_reservation_state(database, company_id, reservation_id, state, updated_at, *, actor='System', reason=''):
-    with database.connect() as connection:
-        connection.execute('BEGIN IMMEDIATE')
+    with database.reservation_write_transaction(company_id) as connection:
         previous = connection.execute('SELECT state FROM reservations WHERE company_id=? AND id=?',
                                       (company_id, reservation_id)).fetchone()
         transition(connection, company_id, reservation_id, state, updated_at)
