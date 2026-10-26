@@ -262,6 +262,10 @@ def register_master_enquiry_routes(app):
                     element_values[f'addon_{addon_id}'] = override
                     if override == '0':
                         element_values.pop(f'addon_selected_{addon_id}', None)
+                        for key in list(element_values):
+                            if key.startswith((f'addon_day_{addon_id}_', f'addon_day_person_{addon_id}_')):
+                                element_values.pop(key)
+                        element_values[f'addon_when_{addon_id}'] = 'every_day'
                     else:
                         element_values[f'addon_selected_{addon_id}'] = '1'
                 for person in people:
