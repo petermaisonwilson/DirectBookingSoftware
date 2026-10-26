@@ -287,6 +287,48 @@ class ReservationIntegrationTests(unittest.TestCase):
         self.assertEqual(sorted(self.summary(rid)['reservation']['state'] for rid in ids),
                          ['ENQUIRY_HELD', 'ENQUIRY_RELEASED'])
 
+    def test_legacy_sqlite_writers_recheck_canonical_inventory(self):
+        if not self.db.is_sqlite:
+            self.skipTest('Legacy operational writers are explicitly SQLite-only; no PostgreSQL claim')
+        from online.webv1_availability import create_or_replace_hold
+        from online.webv1_booking_amendments import apply_amendment
+        rid = self.create()
+        # Represent a competing commit after the preliminary availability read.
+        with patch('online.webv1_availability.availability_state', return_value={'available': True}):
+            with self.assertRaisesRegex(ValueError, 'unavailable'):
+                create_or_replace_hold(self.db, {'user_id': None}, self.cid, 'basket',
+                                       self.elements[0], '2026-11-01', '2026-11-05')
+        bid = self.add('bookings', company_id=self.cid, reference=uuid4().hex,
+                       arrival_date='2026-12-01', departure_date='2026-12-05', created_at=NOW, updated_at=NOW)
+        beid = self.add('booking_elements', company_id=self.cid, booking_id=bid,
+                        element_id=self.elements[0], arrival_date='2026-12-01', departure_date='2026-12-05',
+                        pricing_method_snapshot='per_night')
+        quote = dict(booking_id=bid, booking_element_id=beid, old_arrival='2026-12-01',
+                     old_departure='2026-12-05', new_arrival='2026-11-01', new_departure='2026-11-05')
+        with self.assertRaisesRegex(ValueError, 'central reservation'):
+            apply_amendment(self.db, {'company_id': self.cid}, quote)
+        with self.db.connect() as c:
+            self.assertEqual(c.execute('SELECT COUNT(*) FROM element_holds WHERE company_id=?', (self.cid,)).fetchone()[0], 0)
+            self.assertEqual(c.execute('SELECT arrival_date FROM booking_elements WHERE id=?', (beid,)).fetchone()[0], '2026-12-01')
+        self.assertEqual(len(self.summary(rid)['history']), 1)
+        from online.webv1_enquiry_builder import _save
+        with self.assertRaisesRegex(ValueError, 'central reservation'):
+            _save(self.db, {}, self.cid, None,
+                  dict(element_type='Camping', element_id=str(self.elements[0]),
+                       arrival_date='2026-11-01', departure_date='2026-11-05'), None)
+        from online.webv1_booking_progress import _save_basket_enquiry
+        hid = self.add('element_holds', company_id=self.cid, element_id=self.elements[0],
+                       session_token='stale-basket', arrival_date='2026-11-01', departure_date='2026-11-05',
+                       renewal_required_at=NOW, expires_at='2999-01-01T00:00:00+00:00', created_at=NOW, updated_at=NOW)
+        item = dict(id=hid, element_id=self.elements[0], arrival_date='2026-11-01', departure_date='2026-11-05')
+        with patch('online.webv1_booking_progress._held_items', return_value=[item]), \
+             patch('online.webv1_booking_progress._hold_enquiry_values', return_value=(item, {})), \
+             patch('online.webv1_booking_progress._calculate', return_value=({'people_total': 1, 'total': 80}, set(), '')):
+            with self.assertRaisesRegex(ValueError, 'central reservation'):
+                _save_basket_enquiry(self.db, {}, self.cid, None, 'stale-basket', '')
+        with self.db.connect() as c:
+            self.assertEqual(c.execute('SELECT COUNT(*) FROM enquiries WHERE company_id=?', (self.cid,)).fetchone()[0], 0)
+
     def test_legacy_booking_and_multi_and_single_enquiry_conflicts(self):
         for kind in ('booking', 'multi', 'single'):
             with self.subTest(kind=kind):

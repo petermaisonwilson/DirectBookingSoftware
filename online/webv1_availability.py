@@ -188,7 +188,9 @@ def create_or_replace_hold(database, context, company_id: int, session_token: st
         conflict = c.execute('''SELECT id FROM element_holds WHERE company_id=? AND element_id=? AND session_token<>?
                                 AND date(arrival_date)<date(?) AND date(departure_date)>date(?) AND expires_at>? LIMIT 1''',
                              (company_id, element_id, session_token, departure, arrival, iso_now())).fetchone()
-        if conflict or _booking_conflict(c, company_id, element_id, arrival, departure) or _enquiry_conflict(c, company_id, element_id, arrival, departure) or _closure_conflict(c, company_id, element_id, arrival, departure):
+        from .webv1_reservation_core import migrated_inventory_conflict
+        canonical = migrated_inventory_conflict(c, company_id, element_id, arrival, departure)
+        if canonical or conflict or _booking_conflict(c, company_id, element_id, arrival, departure) or _enquiry_conflict(c, company_id, element_id, arrival, departure) or _closure_conflict(c, company_id, element_id, arrival, departure):
             raise ValueError('That Element has just become unavailable. Please choose another.')
         existing = c.execute('SELECT * FROM element_holds WHERE company_id=? AND element_id=? AND session_token=?', (company_id, element_id, session_token)).fetchone()
         if existing:

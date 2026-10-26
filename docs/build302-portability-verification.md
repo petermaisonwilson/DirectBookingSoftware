@@ -70,7 +70,13 @@ persistent data, launcher behaviour, imports and server health.
 
 The report commit reruns these automated checks, including the final malformed-date
 cases. A follow-up isolation regression brings the integration suite to fourteen
-tests per engine and verifies the READ COMMITTED override described below. Its workflow result must be green before treating that commit as accepted.
+portable tests per engine and verifies the READ COMMITTED override described below.
+An additional SQLite-only coexistence test verifies that legacy amendments,
+basket holds, direct enquiry saves and basket conversion recheck canonical allocations inside their locked final check; it is
+explicitly skipped on PostgreSQL because those legacy writers are not ported.
+Legacy reopening and replacement also recheck canonical inventory under the same
+SQLite write lock. Basket conversion verifies that its prepared holds still exist,
+are unexpired and retain the same element/dates before writing the enquiry. Its workflow result must be green before treating that commit as accepted.
 
 ## Concurrency mechanism and its boundary
 

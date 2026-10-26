@@ -113,7 +113,19 @@ def _save_basket_enquiry(database,context,company_id,customer_id,token,notes):
     now=iso_now()
     arrival=min(str(x[1]['arrival_date']) for x in prepared); departure=max(str(x[1]['departure_date']) for x in prepared)
     party=sum(int(x[3]['people_total']) for x in prepared)
-    with database.connect() as c:
+    with database.reservation_write_transaction(company_id) as c:
+        from .webv1_reservation_core import migrated_inventory_conflict
+        for _, item, _, _ in prepared:
+            live = c.execute('SELECT element_id,arrival_date,departure_date FROM element_holds '
+                             'WHERE id=? AND company_id=? AND session_token=? AND expires_at>?',
+                             (int(item['id']), company_id, token, iso_now())).fetchone()
+            if (live is None or int(live['element_id']) != int(item['element_id'])
+                    or str(live['arrival_date']) != str(item['arrival_date'])
+                    or str(live['departure_date']) != str(item['departure_date'])):
+                raise ValueError('The basket changed or expired. Refresh it before saving.')
+            if migrated_inventory_conflict(c, company_id, int(item['element_id']),
+                                           str(item['arrival_date']), str(item['departure_date'])):
+                raise ValueError('This Element is allocated to a central reservation.')
         enquiry_id=int(c.execute('''INSERT INTO enquiries(company_id,customer_id,status,source,arrival_date,departure_date,party_size,notes,created_at,updated_at) VALUES (?,?,?,?,?,?,?,?,?,?)''',(company_id,customer_id,'new','Availability',arrival,departure,party,notes,now,now)).lastrowid)
         total=0.0
         for order,item,values,calc in prepared:

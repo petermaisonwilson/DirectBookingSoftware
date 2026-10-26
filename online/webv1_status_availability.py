@@ -4,7 +4,7 @@ from datetime import date, timedelta
 from typing import Any
 
 from .database import iso_now
-from .webv1_reservation_core import inventory_conflict, _execute, _mapping
+from .webv1_reservation_core import migrated_inventory_conflict, _execute, _mapping
 from .setup015_calculator import _addon_rule
 from .setup015_core import rows
 from .setup015_readiness import element_available_setup_ready
@@ -122,8 +122,7 @@ def availability_state(database, company_id: int, element_id: int, arrival: str,
             return {'available': False, 'state': 'CLOSED', 'reason': str(closed['reason'] or 'Closed'), 'closure_id': int(closed['id'])}
         # Legacy test databases may predate the canonical reservation migration.
         # Check the new inventory only where the canonical tables exist.
-        canonical_tables = {row['name'] for row in c.execute("SELECT name FROM sqlite_master WHERE type='table' AND name IN ('reservations','reservation_elements')").fetchall()}
-        canonical = inventory_conflict(c, company_id, element_id, arrival, departure) if len(canonical_tables) == 2 else None
+        canonical = migrated_inventory_conflict(c, company_id, element_id, arrival, departure)
         if canonical:
             return {'available': False, 'state': 'RESERVED', 'reason': 'Allocated to an existing reservation.', 'reservation_id': int(canonical['id'])}
         booked = _booking_conflict(c, company_id, element_id, arrival, departure, exclude_booking_id)

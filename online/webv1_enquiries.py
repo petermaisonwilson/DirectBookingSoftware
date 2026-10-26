@@ -278,7 +278,10 @@ def register_enquiry_routes(app) -> None:
             state=availability_state(database,company_id,int(legacy['element_id']),str(enquiry['arrival_date']),str(enquiry['departure_date']),exclude_enquiry_id=enquiry_id)
             if not state.get('available'):
                 return RedirectResponse(f'/operations/enquiries/{enquiry_id}?convert_error=Cannot+reopen:+the+original+Element+is+no+longer+available',303)
-            with database.connect() as c:
+            with database.reservation_write_transaction(company_id) as c:
+                from .webv1_reservation_core import migrated_inventory_conflict
+                if migrated_inventory_conflict(c, company_id, int(legacy['element_id']), str(enquiry['arrival_date']), str(enquiry['departure_date'])):
+                    return RedirectResponse(f'/operations/enquiries/{enquiry_id}?convert_error=Cannot+reopen:+the+original+Element+is+no+longer+available',303)
                 c.execute("UPDATE enquiries SET status='new',updated_at=? WHERE id=? AND company_id=?",(iso_now(),enquiry_id,company_id))
             audit(database,context,company_id,'ENQUIRY_REOPENED','enquiry',enquiry_id,before={'status':'closed'},after={'status':'new','availability_rechecked':True,'legacy_single_element':True})
             return RedirectResponse(f'/operations/enquiries/{enquiry_id}?saved=1',303)
@@ -287,7 +290,13 @@ def register_enquiry_routes(app) -> None:
             state=availability_state(database,company_id,int(element['element_id']),str(element['arrival_date']),str(element['departure_date']),exclude_enquiry_id=enquiry_id)
             (available_ids if state.get('available') else missing_ids).append(int(element['id']))
         now=iso_now()
-        with database.connect() as c:
+        with database.reservation_write_transaction(company_id) as c:
+            from .webv1_reservation_core import migrated_inventory_conflict
+            for element in elements:
+                eeid = int(element['id'])
+                if eeid in available_ids and migrated_inventory_conflict(c, company_id, int(element['element_id']), str(element['arrival_date']), str(element['departure_date'])):
+                    available_ids.remove(eeid)
+                    missing_ids.append(eeid)
             c.execute("UPDATE enquiries SET status='new',updated_at=? WHERE id=? AND company_id=?",(now,enquiry_id,company_id))
             for eeid in available_ids:
                 c.execute("UPDATE enquiry_elements SET recovery_state='held',updated_at=? WHERE id=? AND company_id=?",(now,eeid,company_id))
@@ -326,7 +335,10 @@ def register_enquiry_routes(app) -> None:
             return JSONResponse({'ok':False,'error':error or 'Unable to price that replacement.'},status_code=409)
         snap=json.dumps({'element_type':calculation['element_type'],'element_id':calculation['element_id'],'element_name':calculation['element_name'],'year':calculation['year'],'nights':calculation['nights'],'people_total':calculation['people_total'],'addon_when':calculation['addon_when'],'addon_days':calculation['addon_days'],'addon_people':calculation['addon_people'],'addon_person_days':calculation['addon_person_days'],'selected_addons':calculation['selected_addons'],'lines':calculation['lines'],'total':calculation['total']},separators=(',',':'))
         now=iso_now()
-        with database.connect() as c:
+        with database.reservation_write_transaction(company_id) as c:
+            from .webv1_reservation_core import migrated_inventory_conflict
+            if migrated_inventory_conflict(c, company_id, element_id, arrival, departure):
+                return JSONResponse({'ok':False,'error':'That Element is allocated to a central reservation.'},status_code=409)
             c.execute("UPDATE enquiry_elements SET element_id=?,arrival_date=?,departure_date=?,provisional_total=?,pricing_snapshot_json=?,recovery_state='held',updated_at=? WHERE id=? AND enquiry_id=? AND company_id=?",(element_id,arrival,departure,float(calculation['total']),snap,now,enquiry_element_id,enquiry_id,company_id))
             bounds=c.execute("SELECT MIN(arrival_date) a,MAX(departure_date) d,SUM(COALESCE(party_size,0)) p FROM enquiry_elements WHERE enquiry_id=? AND company_id=?",(enquiry_id,company_id)).fetchone()
             c.execute("UPDATE enquiries SET arrival_date=?,departure_date=?,party_size=?,updated_at=? WHERE id=? AND company_id=?",(bounds['a'],bounds['d'],int(bounds['p'] or 0),now,enquiry_id,company_id))

@@ -329,6 +329,12 @@ def _save(database, context, company_id:int, customer_id:int, values:dict[str,st
     else: party_size=_int_or_zero(values.get('party_size')) or None; provisional_total=None; snapshot_json='{}'
     created=enquiry_id is None
     with (nullcontext(locked_connection) if locked_connection is not None else database.connect()) as c:
+        if locked_connection is None:
+            c.execute('BEGIN IMMEDIATE')
+        if element_id and values.get('arrival_date') and values.get('departure_date'):
+            from .webv1_reservation_core import migrated_inventory_conflict
+            if migrated_inventory_conflict(c, company_id, element_id, values['arrival_date'], values['departure_date']):
+                raise ValueError('This Element is allocated to a central reservation.')
         if created: enquiry_id=int(c.execute('''INSERT INTO enquiries(company_id,customer_id,status,source,arrival_date,departure_date,party_size,notes,created_at,updated_at) VALUES (?,?,?,?,?,?,?,?,?,?)''',(company_id,customer_id,'new',values.get('source',''),values.get('arrival_date') or None,values.get('departure_date') or None,party_size,values.get('notes',''),now,now)).lastrowid)
         else: c.execute('UPDATE enquiries SET source=?,arrival_date=?,departure_date=?,party_size=?,notes=?,updated_at=? WHERE id=? AND company_id=?',(values.get('source',''),values.get('arrival_date') or None,values.get('departure_date') or None,party_size,values.get('notes',''),now,enquiry_id,company_id))
         for table in ('enquiry_people','enquiry_addons','enquiry_addon_days','enquiry_addon_people','enquiry_addon_person_days','enquiry_selected_addons'): c.execute(f'DELETE FROM {table} WHERE enquiry_id=? AND company_id=?',(enquiry_id,company_id))
@@ -422,7 +428,11 @@ def register_enquiry_builder_routes(app)->None:
             calculation,calc_errors,calc_message=_calculate(database,cid,values)
             if calc_message:return HTMLResponse(_form_page(database,context,customer,values,errors=calc_errors,message=calc_message),400 if action=='save' or _int_or_zero(basic['element_id']) else 200)
         if action=='calculate':return HTMLResponse(_form_page(database,context,customer,values,result=calculation),200)
-        eid=_save(database,context,cid,customer_id,basic|values,calculation); return RedirectResponse(f'/operations/enquiries/{eid}?saved=1',303)
+        try:
+            eid=_save(database,context,cid,customer_id,basic|values,calculation)
+        except ValueError as exc:
+            return HTMLResponse(_form_page(database,context,customer,values,message=str(exc)),409)
+        return RedirectResponse(f'/operations/enquiries/{eid}?saved=1',303)
     @app.get('/operations/enquiries/{enquiry_id}/edit',response_class=HTMLResponse)
     def edit(enquiry_id:int,request:Request):
         context=context_for(database,request); cid=working_company(context); enquiry=_enquiry(database,cid,enquiry_id)

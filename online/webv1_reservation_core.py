@@ -35,6 +35,20 @@ def inventory_conflict(connection, company_id, element_id, arrival, departure, e
         return connection.execute(text(sql + " LIMIT 1"), params).fetchone()
     return connection.execute(sql + " LIMIT 1", params).fetchone()
 
+def migrated_inventory_conflict(connection, company_id, element_id, arrival, departure):
+    """Canonical inventory check for legacy workflows that can predate migration 0008."""
+    if hasattr(connection, 'dialect'):
+        from sqlalchemy import inspect
+        inspector = inspect(connection)
+        ready = all(inspector.has_table(table) for table in ('reservations', 'reservation_elements'))
+    else:
+        tables = connection.execute(
+            "SELECT name FROM sqlite_master WHERE type='table' "
+            "AND name IN ('reservations','reservation_elements')").fetchall()
+        ready = len(tables) == 2
+    return inventory_conflict(connection, company_id, element_id, arrival, departure) if ready else None
+
+
 def validate_allocations(connection, company_id, allocations, exclude_reservation_id=None):
     from datetime import date
     seen = []

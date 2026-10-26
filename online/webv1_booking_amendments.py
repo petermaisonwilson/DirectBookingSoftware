@@ -127,6 +127,9 @@ def apply_amendment(database, context, quote: dict) -> int:
         current = c.execute('SELECT arrival_date,departure_date FROM booking_elements WHERE id=? AND company_id=?', (beid,cid)).fetchone()
         if current is None or str(current['arrival_date']) != str(quote['old_arrival']) or str(current['departure_date']) != str(quote['old_departure']):
             raise ValueError('This Booking has changed since the amendment was calculated. Recalculate before saving.')
+        from .webv1_reservation_core import migrated_inventory_conflict
+        if migrated_inventory_conflict(c, cid, int(be['element_id']), quote['new_arrival'], quote['new_departure']):
+            raise ValueError('The amended dates overlap a central reservation.')
         if _booking_conflict(c,cid,int(be['element_id']),quote['new_arrival'],quote['new_departure'],exclude_booking_id=booking_id):
             raise ValueError('The amended dates overlap another Booking.')
         if _enquiry_conflict(c,cid,int(be['element_id']),quote['new_arrival'],quote['new_departure']):
