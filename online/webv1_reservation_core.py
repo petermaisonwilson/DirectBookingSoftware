@@ -63,31 +63,50 @@ def validate_allocations(connection, company_id, allocations, exclude_reservatio
             raise ReservationError('Element is already allocated to another reservation.')
 
 
+def _execute(connection, sql, params):
+    """Execute a named-parameter statement on sqlite3 or SQLAlchemy."""
+    if hasattr(connection, 'dialect'):
+        from sqlalchemy import text
+        return connection.execute(text(sql), params)
+    return connection.execute(sql, params)
+
+
+def _mapping(row):
+    """Read rows by column name on both supported connection types."""
+    return row._mapping if hasattr(row, '_mapping') else row
+
+
 def transition(connection, company_id, reservation_id, target, updated_at, *, check_legacy=True):
     """Caller must hold the write transaction before checking and updating."""
-    reservation = connection.execute('SELECT state FROM reservations WHERE company_id=? AND id=?',
-                                     (company_id, reservation_id)).fetchone()
+    reservation = _execute(connection,
+                           'SELECT state FROM reservations WHERE company_id=:company_id AND id=:reservation_id',
+                           {'company_id': company_id, 'reservation_id': reservation_id}).fetchone()
     if reservation is None:
         raise ReservationError('Reservation not found for this client.')
-    if not allowed_transition(str(reservation['state']), target):
+    if not allowed_transition(str(_mapping(reservation)['state']), target):
         raise ReservationError('Reservation lifecycle transition is not permitted.')
     if target in ('ENQUIRY_HELD', 'CONFIRMED'):
-        allocations = connection.execute('SELECT element_id,arrival_date,departure_date FROM reservation_elements '
-                                         'WHERE company_id=? AND reservation_id=?', (company_id, reservation_id)).fetchall()
+        allocations = _execute(connection,
+                               'SELECT element_id,arrival_date,departure_date FROM reservation_elements '
+                               'WHERE company_id=:company_id AND reservation_id=:reservation_id',
+                               {'company_id': company_id, 'reservation_id': reservation_id}).fetchall()
         if not allocations:
             raise ReservationError('A held or confirmed reservation must contain an Element.')
         validate_allocations(connection, company_id, allocations, reservation_id)
         if check_legacy:
             from .webv1_status_availability import _booking_conflict, _enquiry_conflict
             for item in allocations:
-                eid = int(item['element_id'])
-                arrival, departure = str(item['arrival_date']), str(item['departure_date'])
+                eid = int(_mapping(item)['element_id'])
+                arrival, departure = str(_mapping(item)['arrival_date']), str(_mapping(item)['departure_date'])
                 if _booking_conflict(connection, company_id, eid, arrival, departure):
                     raise ReservationError('Element is already booked.')
                 if _enquiry_conflict(connection, company_id, eid, arrival, departure):
                     raise ReservationError('Element is already held by another Enquiry.')
-    connection.execute('UPDATE reservations SET state=?,updated_at=? WHERE company_id=? AND id=?',
-                       (target, updated_at, company_id, reservation_id))
+    _execute(connection,
+             'UPDATE reservations SET state=:state,updated_at=:updated_at '
+             'WHERE company_id=:company_id AND id=:reservation_id',
+             {'state': target, 'updated_at': updated_at,
+              'company_id': company_id, 'reservation_id': reservation_id})
 
 
 def create_reservation(connection, company_id, reference, customer_id, allocations, created_at,
