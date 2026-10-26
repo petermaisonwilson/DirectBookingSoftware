@@ -110,6 +110,12 @@ jobs:
           python tests/web_v1_launcher_identity_test.py
           if ($LASTEXITCODE -ne 0) { throw "Launcher identity / occupied-port protection failed" }
 
+      - name: Unified reservation lifecycle and inventory regression
+        shell: pwsh
+        run: |
+          python tests/webv1_reservation_core_test.py
+          if ($LASTEXITCODE -ne 0) { throw "Reservation lifecycle regression failed" }
+
       - name: Verify Web V1 imports
         shell: pwsh
         run: |
