@@ -278,6 +278,13 @@ def register_master_enquiry_routes(app):
                         element_values[f'addon_person_{addon_id}_{pid}'] = person_override
                         if person_override != '0':
                             element_values[f'addon_selected_{addon_id}'] = '1'
+            for addon_id in addon_ids:
+                if element_values.get(f'addon_when_{addon_id}') == 'selected_days':
+                    for key, quantity in element_values.items():
+                        if key.startswith((f'addon_day_{addon_id}_', f'addon_day_person_{addon_id}_')) and quantity not in ('', '0'):
+                            day = key[-10:]
+                            if not element_arrival.isoformat() <= day < element_departure.isoformat():
+                                return HTMLResponse(layout('Invalid Add-on dates', f'<div class="error">Add-on date outside Element {element_id} stay.</div>', context), status_code=400)
             element_values['element_id'] = str(element_id)
             element_values['element_type'] = str(elements_by_id[element_id]['element_type'])
             calculation, errors, message = _calculate(database, company_id, element_values)
