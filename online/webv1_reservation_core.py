@@ -18,18 +18,22 @@ class ReservationError(ValueError):
 
 
 def inventory_conflict(connection, company_id, element_id, arrival, departure, exclude_reservation_id=None):
-    """Check one company's canonical reservation allocations."""
+    """Check canonical allocations using explicit engine-compatible parameters."""
     sql = ("SELECT r.id FROM reservation_elements e "
            "JOIN reservations r ON r.id=e.reservation_id AND r.company_id=e.company_id "
-           "WHERE e.company_id=? AND e.element_id=? "
+           "WHERE e.company_id=:company_id AND e.element_id=:element_id "
            "AND r.state IN ('ENQUIRY_HELD','CONFIRMED') "
-           "AND e.arrival_date<? AND e.departure_date>?")
-    params = [company_id, element_id, departure, arrival]
+           "AND e.arrival_date<:departure AND e.departure_date>:arrival")
+    params = {'company_id': company_id, 'element_id': element_id,
+              'departure': departure, 'arrival': arrival}
     if exclude_reservation_id is not None:
-        sql += " AND r.id<>?"
-        params.append(exclude_reservation_id)
+        sql += " AND r.id<>:exclude_id"
+        params['exclude_id'] = exclude_reservation_id
+    # sqlite3 accepts named placeholders directly; SQLAlchemy requires text().
+    if hasattr(connection, 'dialect'):
+        from sqlalchemy import text
+        return connection.execute(text(sql + " LIMIT 1"), params).fetchone()
     return connection.execute(sql + " LIMIT 1", params).fetchone()
-
 
 def validate_allocations(connection, company_id, allocations, exclude_reservation_id=None):
     from datetime import date
