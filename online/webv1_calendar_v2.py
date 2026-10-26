@@ -1,5 +1,5 @@
 from __future__ import annotations
-from .sql import execute_sql
+from .sql import table_exists, execute_sql
 
 from datetime import date, timedelta
 from urllib.parse import quote_plus
@@ -64,15 +64,15 @@ def _session_context(database, request: Request):
 
 
 def _records(database, cid: int, element_id: int, start: date, end: date):
-    with database.connect() as c:
-        bookings = execute_sql(c, '\n          SELECT be.arrival_date,be.departure_date,b.id AS booking_id,b.reference,b.status,b.workflow_status_id,\n                 cr.first_name,cr.last_name,\n                 s.name AS workflow_name,s.short_name,s.colour,s.blocks_availability,s.internal_state\n          FROM booking_elements be\n          JOIN bookings b ON b.id=be.booking_id AND b.company_id=be.company_id\n          LEFT JOIN customer_records cr ON cr.id=b.customer_id AND cr.company_id=b.company_id\n          LEFT JOIN booking_status_definitions s ON s.id=b.workflow_status_id AND s.company_id=b.company_id\n          WHERE be.company_id=:q351_0 AND be.element_id=:q351_1\n            AND date(be.arrival_date)<date(:q351_2) AND date(be.departure_date)>date(:q351_3)\n          ORDER BY be.arrival_date\n        ', (cid, element_id, end.isoformat(), start.isoformat())).fetchall()
-        enquiries = execute_sql(c, "\n          SELECT e.id AS enquiry_id,ee.arrival_date,ee.departure_date,e.availability_expires_at,\n                 cr.first_name,cr.last_name,s.name AS workflow_name,s.short_name,s.colour,s.blocks_availability,s.internal_state\n          FROM enquiries e\n          JOIN enquiry_elements ee ON ee.enquiry_id=e.id AND ee.company_id=e.company_id\n          LEFT JOIN customer_records cr ON cr.id=e.customer_id AND cr.company_id=e.company_id\n          JOIN booking_status_definitions s ON s.id=e.workflow_status_id AND s.company_id=e.company_id\n          WHERE e.company_id=:q352_0 AND ee.element_id=:q352_1 AND COALESCE(ee.recovery_state,'held')='held'\n            AND e.status NOT IN ('closed','converted') AND s.blocks_availability=1\n            AND NOT EXISTS (SELECT 1 FROM bookings bx WHERE bx.company_id=e.company_id AND bx.enquiry_id=e.id)\n            AND date(ee.arrival_date)<date(:q352_2) AND date(ee.departure_date)>date(:q352_3)\n          UNION ALL\n          SELECT e.id,e.arrival_date,e.departure_date,e.availability_expires_at,\n                 cr.first_name,cr.last_name,s.name,s.short_name,s.colour,s.blocks_availability,s.internal_state\n          FROM enquiries e\n          JOIN enquiry_requests er ON er.enquiry_id=e.id AND er.company_id=e.company_id\n          LEFT JOIN customer_records cr ON cr.id=e.customer_id AND cr.company_id=e.company_id\n          JOIN booking_status_definitions s ON s.id=e.workflow_status_id AND s.company_id=e.company_id\n          WHERE e.company_id=:q352_4 AND er.element_id=:q352_5\n            AND NOT EXISTS (SELECT 1 FROM enquiry_elements x WHERE x.company_id=e.company_id AND x.enquiry_id=e.id)\n            AND e.status NOT IN ('closed','converted') AND s.blocks_availability=1\n            AND NOT EXISTS (SELECT 1 FROM bookings bx WHERE bx.company_id=e.company_id AND bx.enquiry_id=e.id)\n            AND date(e.arrival_date)<date(:q352_6) AND date(e.departure_date)>date(:q352_7)\n          ORDER BY 2\n        ", (cid, element_id, end.isoformat(), start.isoformat(), cid, element_id, end.isoformat(), start.isoformat())).fetchall()
-        closures = execute_sql(c, 'SELECT * FROM element_closures WHERE company_id=:q353_0 AND element_id=:q353_1\n                                AND date(start_date)<date(:q353_2) AND date(end_date)>date(:q353_3) ORDER BY start_date',
-                             (cid, element_id, end.isoformat(), start.isoformat())).fetchall()
-        holds = execute_sql(c, 'SELECT * FROM element_holds WHERE company_id=:q354_0 AND element_id=:q354_1 AND expires_at>:q354_2\n                             AND date(arrival_date)<date(:q354_3) AND date(departure_date)>date(:q354_4) ORDER BY arrival_date',
-                          (cid, element_id, iso_now(), end.isoformat(), start.isoformat())).fetchall()
-    return bookings, enquiries, closures, holds
+    return _records_bulk(database, cid, [element_id], start, end)[element_id]
 
+
+def _record_href(record, kind):
+    if 'reservation_id' in record.keys():
+        return f"/operations/master-reservations/{int(record['reservation_id'])}"
+    field = 'booking_id' if kind == 'booking' else 'enquiry_id'
+    segment = 'bookings' if kind == 'booking' else 'enquiries'
+    return f'/operations/{segment}/{int(record[field])}'
 
 
 def _records_bulk(database, cid: int, element_ids: list[int], start: date, end: date):
@@ -85,11 +85,31 @@ def _records_bulk(database, cid: int, element_ids: list[int], start: date, end: 
     result = {eid: [[], [], [], []] for eid in element_ids}
     with database.connect() as c:
         bookings = execute_sql(c, f'\n          SELECT be.element_id,be.arrival_date,be.departure_date,b.id AS booking_id,b.reference,b.status,b.workflow_status_id,\n                 cr.first_name,cr.last_name,\n                 s.name AS workflow_name,s.short_name,s.colour,s.blocks_availability,s.internal_state\n          FROM booking_elements be\n          JOIN bookings b ON b.id=be.booking_id AND b.company_id=be.company_id\n          LEFT JOIN customer_records cr ON cr.id=b.customer_id AND cr.company_id=b.company_id\n          LEFT JOIN booking_status_definitions s ON s.id=b.workflow_status_id AND s.company_id=b.company_id\n          WHERE be.company_id=:q359_0 AND be.element_id IN ({marks})\n            AND date(be.arrival_date)<date(:q359_1) AND date(be.departure_date)>date(:q359_2)\n          ORDER BY be.arrival_date\n        ', (cid, *ids, *bounds)).fetchall()
-        enquiries = execute_sql(c, f"\n          SELECT ee.element_id,e.id AS enquiry_id,ee.arrival_date,ee.departure_date,e.availability_expires_at,\n                 cr.first_name,cr.last_name,s.name AS workflow_name,s.short_name,s.colour,s.blocks_availability,s.internal_state\n          FROM enquiries e\n          JOIN enquiry_elements ee ON ee.enquiry_id=e.id AND ee.company_id=e.company_id\n          LEFT JOIN customer_records cr ON cr.id=e.customer_id AND cr.company_id=e.company_id\n          JOIN booking_status_definitions s ON s.id=e.workflow_status_id AND s.company_id=e.company_id\n          WHERE e.company_id=:q360_0 AND ee.element_id IN ({marks}) AND COALESCE(ee.recovery_state,'held')='held'\n            AND e.status NOT IN ('closed','converted') AND s.blocks_availability=1\n            AND NOT EXISTS (SELECT 1 FROM bookings bx WHERE bx.company_id=e.company_id AND bx.enquiry_id=e.id)\n            AND date(ee.arrival_date)<date(:q360_1) AND date(ee.departure_date)>date(:q360_2)\n          UNION ALL\n          SELECT er.element_id,e.id,e.arrival_date,e.departure_date,e.availability_expires_at,\n                 cr.first_name,cr.last_name,s.name,s.short_name,s.colour,s.blocks_availability,s.internal_state\n          FROM enquiries e\n          JOIN enquiry_requests er ON er.enquiry_id=e.id AND er.company_id=e.company_id\n          LEFT JOIN customer_records cr ON cr.id=e.customer_id AND cr.company_id=e.company_id\n          JOIN booking_status_definitions s ON s.id=e.workflow_status_id AND s.company_id=e.company_id\n          WHERE e.company_id=:q360_3 AND er.element_id IN ({marks})\n            AND NOT EXISTS (SELECT 1 FROM enquiry_elements x WHERE x.company_id=e.company_id AND x.enquiry_id=e.id)\n            AND e.status NOT IN ('closed','converted') AND s.blocks_availability=1\n            AND NOT EXISTS (SELECT 1 FROM bookings bx WHERE bx.company_id=e.company_id AND bx.enquiry_id=e.id)\n            AND date(e.arrival_date)<date(:q360_4) AND date(e.departure_date)>date(:q360_5)\n          ORDER BY 3\n        ", (cid, *ids, *bounds, cid, *ids, *bounds)).fetchall()
+        enquiries = execute_sql(c, f"\n          SELECT ee.element_id,e.id AS enquiry_id,ee.arrival_date,ee.departure_date,e.availability_expires_at,\n                 cr.first_name,cr.last_name,s.name AS workflow_name,s.short_name,s.colour,s.blocks_availability,s.internal_state\n          FROM enquiries e\n          JOIN enquiry_elements ee ON ee.enquiry_id=e.id AND ee.company_id=e.company_id\n          LEFT JOIN customer_records cr ON cr.id=e.customer_id AND cr.company_id=e.company_id\n          LEFT JOIN booking_status_definitions s ON s.id=e.workflow_status_id AND s.company_id=e.company_id\n          WHERE e.company_id=:q360_0 AND ee.element_id IN ({marks}) AND COALESCE(ee.recovery_state,'held')='held'\n            AND e.status NOT IN ('closed','converted') AND COALESCE(s.blocks_availability,1)=1\n            AND NOT EXISTS (SELECT 1 FROM bookings bx WHERE bx.company_id=e.company_id AND bx.enquiry_id=e.id)\n            AND date(ee.arrival_date)<date(:q360_1) AND date(ee.departure_date)>date(:q360_2)\n          UNION ALL\n          SELECT er.element_id,e.id,e.arrival_date,e.departure_date,e.availability_expires_at,\n                 cr.first_name,cr.last_name,s.name,s.short_name,s.colour,s.blocks_availability,s.internal_state\n          FROM enquiries e\n          JOIN enquiry_requests er ON er.enquiry_id=e.id AND er.company_id=e.company_id\n          LEFT JOIN customer_records cr ON cr.id=e.customer_id AND cr.company_id=e.company_id\n          LEFT JOIN booking_status_definitions s ON s.id=e.workflow_status_id AND s.company_id=e.company_id\n          WHERE e.company_id=:q360_3 AND er.element_id IN ({marks})\n            AND NOT EXISTS (SELECT 1 FROM enquiry_elements x WHERE x.company_id=e.company_id AND x.enquiry_id=e.id)\n            AND e.status NOT IN ('closed','converted') AND COALESCE(s.blocks_availability,1)=1\n            AND NOT EXISTS (SELECT 1 FROM bookings bx WHERE bx.company_id=e.company_id AND bx.enquiry_id=e.id)\n            AND date(e.arrival_date)<date(:q360_4) AND date(e.departure_date)>date(:q360_5)\n          ORDER BY 3\n        ", (cid, *ids, *bounds, cid, *ids, *bounds)).fetchall()
         closures = execute_sql(c, f'SELECT * FROM element_closures WHERE company_id=:q361_0 AND element_id IN ({marks})\n                                AND date(start_date)<date(:q361_1) AND date(end_date)>date(:q361_2) ORDER BY start_date',
                              (cid, *ids, *bounds)).fetchall()
         holds = execute_sql(c, f'SELECT * FROM element_holds WHERE company_id=:q362_0 AND element_id IN ({marks}) AND expires_at>:q362_1\n                             AND date(arrival_date)<date(:q362_2) AND date(departure_date)>date(:q362_3) ORDER BY arrival_date',
                           (cid, *ids, iso_now(), *bounds)).fetchall()
+        if table_exists(c, 'reservations') and table_exists(c, 'reservation_elements'):
+            canonical = execute_sql(c,
+                'SELECT re.element_id,re.arrival_date,re.departure_date,r.id AS reservation_id,'
+                'r.id AS booking_id,r.id AS enquiry_id,r.reference,r.state AS canonical_state,'
+                "CASE WHEN r.state='CONFIRMED' THEN 'confirmed' ELSE 'new' END AS status,"
+                'NULL AS workflow_status_id,cr.first_name,cr.last_name,'
+                "CASE WHEN r.state='CONFIRMED' THEN 'Confirmed' ELSE 'Holding Space' END AS workflow_name,"
+                "CASE WHEN r.state='CONFIRMED' THEN 'Confirmed' ELSE 'Held' END AS short_name,"
+                "CASE WHEN r.state='CONFIRMED' THEN '#F3C5C9' ELSE '#FFE39A' END AS colour,"
+                "CASE WHEN r.state='CONFIRMED' THEN 'CONFIRMED' ELSE 'HELD' END AS internal_state,"
+                '1 AS blocks_availability,NULL AS availability_expires_at '
+                'FROM reservation_elements re JOIN reservations r '
+                'ON r.company_id=re.company_id AND r.id=re.reservation_id '
+                'LEFT JOIN customer_records cr ON cr.company_id=r.company_id AND cr.id=r.customer_id '
+                f'WHERE re.company_id=:tenant AND re.element_id IN ({marks}) '
+                "AND r.state IN ('ENQUIRY_HELD','CONFIRMED') "
+                'AND re.arrival_date<:departure AND re.departure_date>:arrival '
+                'ORDER BY re.arrival_date,r.id', (cid, *ids, *bounds)).fetchall()
+            for record in canonical:
+                (bookings if record['canonical_state'] == 'CONFIRMED' else enquiries).append(record)
     for index, collection in enumerate((bookings, enquiries, closures, holds)):
         for record in collection:
             result[int(record['element_id'])][index].append(record)
@@ -237,7 +257,7 @@ def register_calendar_v2_routes(app) -> None:
                     customer = (f"{b['first_name']} {b['last_name']}").strip() or 'Customer'
                     status_name = str(b['workflow_name'] or 'Booked')
                     colour = str(b['colour'] or '#F3C5C9')
-                    bars += _bar(f'{customer} · {b["reference"]} · {status_name}', colour, cols, href=f'/operations/bookings/{int(b["booking_id"])}', title=f'{status_name}: {_fmt(b["arrival_date"])} to {_fmt(b["departure_date"])}')
+                    bars += _bar(f'{customer} · {b["reference"]} · {status_name}', colour, cols, href=_record_href(b, 'booking'), title=f'{status_name}: {_fmt(b["arrival_date"])} to {_fmt(b["departure_date"])}')
                 else:
                     bars += _bar('Booked', '#F3C5C9', cols, title='Unavailable')
             for e in enquiries:
@@ -246,7 +266,7 @@ def register_calendar_v2_routes(app) -> None:
                     customer = (f"{e['first_name']} {e['last_name']}").strip() or 'Customer'
                     colour = str(e['colour'] or held_colour)
                     label = f'{customer} · Enquiry #{int(e["enquiry_id"])} · {e["workflow_name"] or held_name}'
-                    bars += _bar(label, colour, cols, href=f'/operations/enquiries/{int(e["enquiry_id"])}', title='Held until explicitly released')
+                    bars += _bar(label, colour, cols, href=_record_href(e, 'enquiry'), title='Held until explicitly released')
                 else:
                     bars += _bar('Held', held_colour, cols, title='Temporarily unavailable')
             for c in closures:

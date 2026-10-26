@@ -2,6 +2,8 @@ name: Direct Booking Web V1
 
 on:
   push:
+    paths-ignore:
+      - 'docs/**'
     branches:
       - web-v1-foundation
       - web-v1-client-register-enquiry

@@ -121,7 +121,6 @@ def _append_duration_to_result(database, company_id: int, result: dict | None) -
 def install_pricing_calculation_transparency() -> None:
     from . import webv1_enquiry_builder as builder
     from . import setup015_calculator as calculator
-    from . import webv1_bookings as bookings
 
     if not getattr(builder, '_duration_wrapper_installed', False):
         original_calculate = builder._calculate
@@ -148,21 +147,6 @@ def install_pricing_calculation_transparency() -> None:
         calculator._page = page_with_duration
         calculator._duration_wrapper_installed = True
 
-    if not getattr(bookings, '_base_currency_wrapper_installed', False):
-        original_convert = bookings.convert_enquiry
-
-        def convert_with_currency(database, context, cid: int, enquiry_id: int, workflow_status_id: int):
-            booking_id = original_convert(database, context, cid, enquiry_id, workflow_status_id)
-            code = company_currency(database, cid)
-            with database.connect() as c:
-                execute_sql(c,
-                    'UPDATE bookings SET currency=:q4_0 WHERE id=:q4_1 AND company_id=:q4_2',
-                    (code, booking_id, cid),
-                )
-            return booking_id
-
-        bookings.convert_enquiry = convert_with_currency
-        bookings._base_currency_wrapper_installed = True
 
 
 def _currency_card(database, context, company_id: int) -> str:

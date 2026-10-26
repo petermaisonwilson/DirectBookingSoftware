@@ -98,7 +98,7 @@ def register_basket_routes(app) -> None:
             execute_sql(c, 'DELETE FROM hold_requirement_people WHERE hold_id=:q714_0', (hold_id,))
             execute_sql(c, 'DELETE FROM hold_requirement_addons WHERE hold_id=:q715_0', (hold_id,))
             execute_sql(c, 'DELETE FROM element_holds WHERE id=:q716_0 AND company_id=:q716_1 AND session_token=:q716_2', (hold_id, company_id, token))
-        audit(database, context, company_id, 'ELEMENT_HOLD_REMOVED', 'element_hold', hold_id, before, {'removed': True})
+            audit(database, context, company_id, 'ELEMENT_HOLD_REMOVED', 'element_hold', hold_id, before, {'removed': True}, connection=c)
         return JSONResponse({'ok': True, 'removed': 1, 'hold_id': hold_id})
 
     @app.post('/availability/basket/update')
@@ -124,7 +124,7 @@ def register_basket_routes(app) -> None:
 
         people, requirements, ready, _, _ = _saved_requirements(database, company_id, token)
 
-        with database.connect() as c:
+        with database.reservation_write_transaction(company_id) as c:
             _purge_expired_basket_rows(c, company_id, token)
             current = _basket_row(c, company_id, token, hold_id)
             if current is None:
@@ -167,14 +167,14 @@ def register_basket_routes(app) -> None:
             )
             _snapshot_current_requirements(c, company_id, token, hold_id)
 
-        after = {
-            'element_id': element_id,
-            'element_name': str(element['name']),
-            'element_type': str(element['element_type']),
-            'lead_name': lead_name,
-            'arrival_date': arrival,
-            'departure_date': departure,
-            'expires_at': expires.isoformat(timespec='seconds'),
-        }
-        audit(database, context, company_id, 'ELEMENT_HOLD_UPDATED', 'element_hold', hold_id, before, after)
+            after = {
+                'element_id': element_id,
+                'element_name': str(element['name']),
+                'element_type': str(element['element_type']),
+                'lead_name': lead_name,
+                'arrival_date': arrival,
+                'departure_date': departure,
+                'expires_at': expires.isoformat(timespec='seconds'),
+            }
+            audit(database, context, company_id, 'ELEMENT_HOLD_UPDATED', 'element_hold', hold_id, before, after, connection=c)
         return JSONResponse({'ok': True, 'hold_id': hold_id, 'item': after})

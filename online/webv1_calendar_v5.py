@@ -1,4 +1,5 @@
 from __future__ import annotations
+from .webv1_calendar_v2 import _record_href
 
 import json
 import logging
@@ -18,7 +19,7 @@ from .webv1_booking_requirements_core import element_reasons
 from .webv1_booking_status import default_status
 from .webv1_calendar_v2 import _bar, _cols, _records, _records_bulk, _session_context
 from .webv1_calendar_v4 import _basket_rows, _header, _parse, _window
-from .webv1_status_availability import availability_state
+from .webv1_status_availability import availability_state, availability_setup_state
 from .webv1_ordering import setup_rows
 
 
@@ -214,9 +215,9 @@ def register_calendar_v5_routes(app) -> None:
             blocking = []
             for booking in bookings:
                 if str(booking['status']) != 'cancelled' and (booking['blocks_availability'] is None or int(booking['blocks_availability'])):
-                    blocking.append((_parse(str(booking['arrival_date'])), _parse(str(booking['departure_date'])), f"Booking {booking['reference']} — {(str(booking['first_name'] or '') + ' ' + str(booking['last_name'] or '')).strip() or 'Customer'} ({booking['arrival_date']} to {booking['departure_date']})", f"/operations/bookings/{int(booking['booking_id'])}"))
+                    blocking.append((_parse(str(booking['arrival_date'])), _parse(str(booking['departure_date'])), f"Booking {booking['reference']} — {(str(booking['first_name'] or '') + ' ' + str(booking['last_name'] or '')).strip() or 'Customer'} ({booking['arrival_date']} to {booking['departure_date']})", _record_href(booking, 'booking')))
             for enquiry in enquiries:
-                blocking.append((_parse(str(enquiry['arrival_date'])), _parse(str(enquiry['departure_date'])), f"Enquiry #{int(enquiry['enquiry_id'])} — {(str(enquiry['first_name'] or '') + ' ' + str(enquiry['last_name'] or '')).strip() or 'Customer'} ({enquiry['arrival_date']} to {enquiry['departure_date']})", f"/operations/enquiries/{int(enquiry['enquiry_id'])}"))
+                blocking.append((_parse(str(enquiry['arrival_date'])), _parse(str(enquiry['departure_date'])), f"Enquiry #{int(enquiry['enquiry_id'])} — {(str(enquiry['first_name'] or '') + ' ' + str(enquiry['last_name'] or '')).strip() or 'Customer'} ({enquiry['arrival_date']} to {enquiry['departure_date']})", _record_href(enquiry, 'enquiry')))
             conflict_pairs = []
             for i, first in enumerate(blocking):
                 for second in blocking[i + 1:]:
@@ -261,7 +262,7 @@ def register_calendar_v5_routes(app) -> None:
                             if kind == 'HELD' and str(record['session_token']) == token:
                                 occupied_days.setdefault(day_cursor, {'state': 'HELD_BY_YOU'})
                             else:
-                                occupied_days.setdefault(day_cursor, {'state': kind, 'colour': str(record['colour'] or '') if kind in ('BOOKED', 'ENQUIRY') else '', 'workflow_name': str(record['workflow_name'] or '') if kind in ('BOOKED', 'ENQUIRY') else ''})
+                                occupied_days.setdefault(day_cursor, {'state': kind, 'colour': str(record['colour'] or ('#FFE39A' if kind == 'ENQUIRY' else '#F3C5C9')) if kind in ('BOOKED', 'ENQUIRY') else '', 'workflow_name': str(record['workflow_name'] or ('Enquiry / Held' if kind == 'ENQUIRY' else 'Booked')) if kind in ('BOOKED', 'ENQUIRY') else ''})
                             day_cursor += timedelta(days=1)
 
             for i, day in enumerate(dates):
@@ -269,7 +270,17 @@ def register_calendar_v5_routes(app) -> None:
                 state = occupied_days.get(day) if fast_staff_view else None
                 if state is None:
                     availability_started = perf_counter()
-                    state = availability_state(database, cid, eid, day.isoformat(), next_day.isoformat(), session_token=token, missing_items_cache=setup_missing_cache, operating_window_cache=operating_window_cache, element_active_cache=element_active_cache)
+                    if fast_staff_view:
+                        # All blocking inventory, including canonical reservations,
+                        # is already in this request's grouped read snapshot.
+                        # Selection and every write retain the full validator.
+                        state = availability_setup_state(database, cid, eid, day.isoformat(), next_day.isoformat(),
+                            missing_items_cache=setup_missing_cache, operating_window_cache=operating_window_cache,
+                            element_active_cache=element_active_cache)
+                        if state is None:
+                            state = {'available': True, 'state': 'AVAILABLE', 'reason': ''}
+                    else:
+                        state = availability_state(database, cid, eid, day.isoformat(), next_day.isoformat(), session_token=token, missing_items_cache=setup_missing_cache, operating_window_cache=operating_window_cache, element_active_cache=element_active_cache)
                     availability_seconds += perf_counter() - availability_started
                     availability_calls += 1
                 code = str(state['state'])
@@ -296,7 +307,7 @@ def register_calendar_v5_routes(app) -> None:
                         tag = 'button type="button"' if own_editing_day else 'span'
                         endtag = 'button' if own_editing_day else 'span'
                         cells += f'<{tag} class="cal-cell own-held{cls}{selected}" style="grid-column:{col};grid-row:1" data-date="{day.isoformat()}" data-element="{eid}" data-name="{esc(element["name"])}"></{endtag}>'
-                elif code in {'BOOKED', 'ENQUIRY'}:
+                elif code in {'BOOKED', 'ENQUIRY', 'RESERVED'}:
                     status_style = f'background:{esc(state.get("colour") or "#F3C5C9")};' if staff else ''
                     status_title = esc(state.get("workflow_name") or state.get("reason") or "Unavailable") if staff else 'Unavailable'
                     cells += f'<span class="cal-cell unavailable{selected}" style="grid-column:{col};grid-row:1;{status_style}" data-date="{day.isoformat()}" title="{status_title}"></span>'
@@ -327,14 +338,14 @@ def register_calendar_v5_routes(app) -> None:
                 if staff:
                     customer = (f"{booking['first_name']} {booking['last_name']}").strip() or 'Customer'
                     status_name = str(booking['workflow_name'] or 'Booked')
-                    add_calendar_bar(f'{customer} · {booking["reference"]} · {status_name}', str(booking['colour'] or '#F3C5C9'), cols, href=f'/operations/bookings/{int(booking["booking_id"])}')
+                    add_calendar_bar(f'{customer} · {booking["reference"]} · {status_name}', str(booking['colour'] or '#F3C5C9'), cols, href=_record_href(booking, 'booking'))
                 else:
                     add_calendar_bar('Unavailable', '#F3C5C9', cols)
             for enquiry in enquiries:
                 cols = _cols(enquiry['arrival_date'], enquiry['departure_date'], visible_start, visible_end)
                 if staff:
                     customer = (f"{enquiry['first_name']} {enquiry['last_name']}").strip() or 'Customer'
-                    add_calendar_bar(f'{customer} · Enquiry #{int(enquiry["enquiry_id"])} · {enquiry["workflow_name"] or held_name}', str(enquiry['colour'] or held_colour), cols, href=f'/operations/enquiries/{int(enquiry["enquiry_id"])}')
+                    add_calendar_bar(f'{customer} · Enquiry #{int(enquiry["enquiry_id"])} · {enquiry["workflow_name"] or held_name}', str(enquiry['colour'] or held_colour), cols, href=_record_href(enquiry, 'enquiry'))
                 else:
                     add_calendar_bar('Unavailable', '#FFE39A', cols)
             for closure in closures:
@@ -434,7 +445,7 @@ def register_calendar_v5_routes(app) -> None:
           handle.addEventListener('pointerup',()=>{{drag=null;}});
           handle.addEventListener('pointercancel',()=>{{drag=null;}});
         }}
-        document.querySelectorAll('.cal-bar a[href^="/operations/bookings/"],.cal-bar a[href^="/operations/enquiries/"],.inventory-conflict a.conflict-record-link').forEach(link=>link.addEventListener('click',event=>{{event.preventDefault();openBookingWindow(link.href,link.textContent.trim());}}));
+        document.querySelectorAll('.cal-bar a[href^="/operations/bookings/"],.cal-bar a[href^="/operations/enquiries/"],.cal-bar a[href^="/operations/master-reservations/"],.inventory-conflict a.conflict-record-link').forEach(link=>link.addEventListener('click',event=>{{event.preventDefault();openBookingWindow(link.href,link.textContent.trim());}}));
         const csrf={json.dumps(str(context['csrf_token']))}; const editingHold={int(edit_hold or 0)}; const recoveryEnquiry={int(recovery_enquiry or 0)},recoveryElement={int(recovery_element or 0)}; const anchorArr={json.dumps(anchor_arrival)},anchorDep={json.dumps(anchor_departure)};
         const elementType=document.getElementById('element-type'),arrivalInput=document.getElementById('arrival-date'),departureInput=document.getElementById('departure-date'),scrollBox=document.getElementById('calendar-scroll');
         let selectedElement=0,firstPick='';

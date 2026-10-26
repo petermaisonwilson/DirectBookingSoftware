@@ -7,6 +7,7 @@ from .sql import execute_sql
 import json
 from datetime import date
 from uuid import uuid4
+from urllib.parse import parse_qs
 
 
 from fastapi import Request
@@ -20,6 +21,7 @@ from .webv1_enquiry_builder import _calculate
 from .webv1_addon_person import addon_person_mode
 from .webv1_addon_when import when_options
 from .webv1_reservation_service import create_enquiry
+from .webv1_pricing_usability import company_currency
 
 
 def register_master_enquiry_routes(app):
@@ -116,7 +118,7 @@ def register_master_enquiry_routes(app):
         require_csrf(context, data)
         try:
             customer_id = int(data.get('customer_id', ''))
-            selected_ids = [int(item) for item in (await request.form()).getlist('element_ids')]
+            selected_ids = [int(item) for item in parse_qs((await request.body()).decode('utf-8'), keep_blank_values=True).get('element_ids', [])]
             if not selected_ids or len(selected_ids) != len(set(selected_ids)):
                 raise ValueError('Choose distinct Elements.')
             arrival = date.fromisoformat(data.get('arrival_date', ''))
@@ -303,7 +305,8 @@ def register_master_enquiry_routes(app):
                                 'pricing_snapshot_json': json.dumps(snapshot, separators=(',', ':'))})
         try:
             rid = create_enquiry(database, company_id, reference, customer_id, allocations,
-                                 iso_now(), notes=data.get('notes', '')[:1000])
+                                 iso_now(), notes=data.get('notes', '')[:1000], currency=company_currency(database, company_id),
+                                 actor=f"{context['first_name']} {context['last_name']}".strip())
         except ReservationError as exc:
             return HTMLResponse(layout('Enquiry unavailable',
                                         f'<div class="error">{esc(str(exc))}</div>', context),

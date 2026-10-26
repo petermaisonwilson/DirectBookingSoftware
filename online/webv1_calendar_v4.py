@@ -1,4 +1,6 @@
 from __future__ import annotations
+from .webv1_calendar_v2 import _record_href
+from .database import iso_now
 from .sql import execute_sql
 
 import json
@@ -46,12 +48,10 @@ def _window(start: str, arrival: str, departure: str) -> tuple[date, int]:
 def _basket_rows(database, company_id: int, token: str):
     # Use the same ISO/tz-aware expiry path as the basket API. SQLite
     # datetime('now') is not safe against offset-aware ISO timestamps.
-    from .webv1_basket import _purge_expired_basket_rows
     with database.connect() as c:
-        _purge_expired_basket_rows(c, company_id, token)
         return execute_sql(c,
-            'SELECT h.*,e.name AS element_name,e.element_type\n               FROM element_holds h\n               JOIN setup_elements e ON e.id=h.element_id AND e.company_id=h.company_id\n               WHERE h.company_id=:q80_0 AND h.session_token=:q80_1\n               ORDER BY h.created_at,h.id',
-            (company_id, token),
+            'SELECT h.*,e.name AS element_name,e.element_type\n               FROM element_holds h\n               JOIN setup_elements e ON e.id=h.element_id AND e.company_id=h.company_id\n               WHERE h.company_id=:q80_0 AND h.session_token=:q80_1 AND h.expires_at>:utc_now\n               ORDER BY h.created_at,h.id',
+            (company_id, token, iso_now()),
         ).fetchall()
 
 
@@ -185,14 +185,14 @@ def register_calendar_v4_routes(app) -> None:
                     customer = (f"{booking['first_name']} {booking['last_name']}").strip() or 'Customer'
                     status_name = str(booking['workflow_name'] or 'Booked')
                     colour = str(booking['colour'] or '#F3C5C9')
-                    bars += _bar(f'{customer} · {booking["reference"]} · {status_name}', colour, cols, href=f'/operations/bookings/{int(booking["booking_id"])}')
+                    bars += _bar(f'{customer} · {booking["reference"]} · {status_name}', colour, cols, href=_record_href(booking, 'booking'))
                 else:
                     bars += _bar('Unavailable', '#F3C5C9', cols)
             for enquiry in enquiries:
                 cols = _cols(enquiry['arrival_date'], enquiry['departure_date'], visible_start, visible_end)
                 if staff:
                     customer = (f"{enquiry['first_name']} {enquiry['last_name']}").strip() or 'Customer'
-                    bars += _bar(f'{customer} · Enquiry #{int(enquiry["enquiry_id"])} · {enquiry["workflow_name"] or held_name}', str(enquiry['colour'] or held_colour), cols, href=f'/operations/enquiries/{int(enquiry["enquiry_id"])}')
+                    bars += _bar(f'{customer} · Enquiry #{int(enquiry["enquiry_id"])} · {enquiry["workflow_name"] or held_name}', str(enquiry['colour'] or held_colour), cols, href=_record_href(enquiry, 'enquiry'))
                 else:
                     bars += _bar('Unavailable', '#F3C5C9', cols)
             for closure in closures:

@@ -49,7 +49,7 @@ def register_reservation_preview_routes(app):
         body += '</table><p><a href="/operations/master-reservations/new">Create development Enquiry</a></p>'
         return HTMLResponse(layout('Single-record reservations', body, context))
 
-    @app.get('/operations/master-reservations/{reservation_id}', response_class=HTMLResponse)
+    @app.get('/operations/master-reservations/{reservation_id:int}', response_class=HTMLResponse)
     def detail(reservation_id: int, request: Request):
         context = context_for(database, request)
         company_id = working_company(context)

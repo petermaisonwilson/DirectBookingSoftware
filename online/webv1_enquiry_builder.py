@@ -495,6 +495,9 @@ def register_enquiry_builder_routes(app)->None:
         # SQLite writer cannot allocate the same Element between these operations.
         with database.connect() as locked:
             lock_inventory(locked, cid)
+            current = execute_sql(locked, 'SELECT status FROM enquiries WHERE company_id=:tenant AND id=:enquiry', (cid, enquiry_id)).fetchone()
+            if current is None or str(current['status']) == 'converted':
+                return RedirectResponse(f'/operations/enquiries/{enquiry_id}', 303)
             if calculation and _int_or_zero(basic['element_id']):
                 final_state=availability_state(database,cid,_int_or_zero(basic['element_id']),basic['arrival_date'],basic['departure_date'],exclude_enquiry_id=enquiry_id)
                 if not final_state.get('available'):

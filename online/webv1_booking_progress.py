@@ -224,13 +224,28 @@ def register_booking_progress_routes(app):
         return RedirectResponse(f'/availability/start?edit_hold={int(hold_id)}',303)
 
     @app.post('/availability/basket/remove-view')
-    async def remove_from_progress(request:Request):
-        context,company_id=_session_company(database,request);data=await form_data(request);require_csrf(context,data);token=request.cookies.get(COOKIE_NAME,'')
-        try:hold_id=int(data.get('hold_id',''))
-        except (TypeError,ValueError):return RedirectResponse('/availability/basket/review',303)
-        with database.connect() as c:
-            execute_sql(c, 'DELETE FROM hold_requirement_people WHERE hold_id=:q63_0',(hold_id,));execute_sql(c, 'DELETE FROM hold_requirement_addons WHERE hold_id=:q64_0',(hold_id,));execute_sql(c, 'DELETE FROM element_holds WHERE id=:q65_0 AND company_id=:q65_1 AND session_token=:q65_2',(hold_id,company_id,token))
-        return_to=str(data.get('return_to','') or '');return RedirectResponse(return_to if return_to.startswith('/') else '/availability/basket/review',303)
+    async def remove_from_progress(request: Request):
+        context, company_id = _session_company(database, request)
+        data = await form_data(request)
+        require_csrf(context, data)
+        token = request.cookies.get(COOKIE_NAME, '')
+        try:
+            hold_id = int(data.get('hold_id', ''))
+        except (TypeError, ValueError):
+            return RedirectResponse('/availability/basket/review', 303)
+        with database.reservation_write_transaction(company_id) as c:
+            owned = execute_sql(c, 'SELECT * FROM element_holds WHERE company_id=:tenant '
+                'AND session_token=:session AND id=:hold', (company_id, token, hold_id)).fetchone()
+            if owned is not None:
+                for table in ('hold_requirement_people', 'hold_requirement_addons'):
+                    execute_sql(c, f'DELETE FROM {table} WHERE company_id=:tenant AND hold_id=:hold',
+                                (company_id, hold_id))
+                execute_sql(c, 'DELETE FROM element_holds WHERE company_id=:tenant '
+                    'AND session_token=:session AND id=:hold', (company_id, token, hold_id))
+                audit(database, context, company_id, 'ELEMENT_HOLD_REMOVED', 'element_hold', hold_id,
+                      before=dict(owned), after={'removed': True}, connection=c)
+        return_to = str(data.get('return_to', '') or '')
+        return RedirectResponse(return_to if return_to.startswith('/') and not return_to.startswith('//') else '/availability/basket/review', 303)
 
     @app.get('/availability/basket/customer',response_class=HTMLResponse)
     def basket_customer(request:Request,hold_id:int):

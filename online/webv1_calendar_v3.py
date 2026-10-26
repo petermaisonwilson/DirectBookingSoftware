@@ -1,4 +1,5 @@
 from __future__ import annotations
+from .webv1_calendar_v2 import _record_href
 
 import json
 from datetime import date, timedelta
@@ -135,7 +136,7 @@ def register_calendar_v3_routes(app) -> None:
                     customer = (f"{booking['first_name']} {booking['last_name']}").strip() or 'Customer'
                     status_name = str(booking['workflow_name'] or 'Booked')
                     colour = str(booking['colour'] or '#F3C5C9')
-                    bars += _bar(f'{customer} · {booking["reference"]} · {status_name}', colour, cols, href=f'/operations/bookings/{int(booking["booking_id"])}', title=f'{status_name}: {_fmt(booking["arrival_date"])} to {_fmt(booking["departure_date"])}')
+                    bars += _bar(f'{customer} · {booking["reference"]} · {status_name}', colour, cols, href=_record_href(booking, 'booking'), title=f'{status_name}: {_fmt(booking["arrival_date"])} to {_fmt(booking["departure_date"])}')
                 else:
                     bars += _bar('Unavailable', '#F3C5C9', cols, title='Unavailable')
             for enquiry in enquiries:
@@ -144,7 +145,7 @@ def register_calendar_v3_routes(app) -> None:
                     customer = (f"{enquiry['first_name']} {enquiry['last_name']}").strip() or 'Customer'
                     colour = str(enquiry['colour'] or held_colour)
                     label = f'{customer} · Enquiry #{int(enquiry["enquiry_id"])} · {enquiry["workflow_name"] or held_name}'
-                    bars += _bar(label, colour, cols, href=f'/operations/enquiries/{int(enquiry["enquiry_id"])}', title=f'Expires {enquiry["availability_expires_at"] or "when released"}')
+                    bars += _bar(label, colour, cols, href=_record_href(enquiry, 'enquiry'), title=f'Expires {enquiry["availability_expires_at"] or "when released"}')
                 else:
                     bars += _bar('Unavailable', '#F3C5C9', cols, title='Unavailable')
             for closure in closures:

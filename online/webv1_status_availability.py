@@ -74,7 +74,9 @@ def _enquiry_conflict(connection, company_id: int, element_id: int, start: str, 
     return _mapping(_execute(connection, legacy_sql, legacy_params).fetchone())
 
 
-def availability_state(database, company_id: int, element_id: int, arrival: str, departure: str, *, session_token: str = '', exclude_booking_id: int | None = None, exclude_enquiry_id: int | None = None, missing_items_cache: dict | None = None, operating_window_cache: dict | None = None, element_active_cache: dict | None = None) -> dict[str, Any]:
+def availability_setup_state(database, company_id: int, element_id: int, arrival: str, departure: str,
+                             *, missing_items_cache=None, operating_window_cache=None, element_active_cache=None):
+    """The unchanged Setup/season gate, shared by validation and calendar reads."""
     try:
         start, end = date.fromisoformat(arrival), date.fromisoformat(departure)
     except ValueError:
@@ -117,6 +119,15 @@ def availability_state(database, company_id: int, element_id: int, arrival: str,
     if not setup_ready:
         return {'available': False, 'state': 'SETUP_INCOMPLETE', 'reason': setup_reason}
 
+    return None
+
+
+def availability_state(database, company_id: int, element_id: int, arrival: str, departure: str, *, session_token: str = '', exclude_booking_id: int | None = None, exclude_enquiry_id: int | None = None, missing_items_cache: dict | None = None, operating_window_cache: dict | None = None, element_active_cache: dict | None = None) -> dict[str, Any]:
+    setup = availability_setup_state(database, company_id, element_id, arrival, departure,
+        missing_items_cache=missing_items_cache, operating_window_cache=operating_window_cache,
+        element_active_cache=element_active_cache)
+    if setup is not None:
+        return setup
     with database.connect() as c:
         closed = legacy._closure_conflict(c, company_id, element_id, arrival, departure)
         if closed:

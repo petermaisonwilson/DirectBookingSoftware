@@ -186,8 +186,10 @@ def _enquiry_elements(database,cid,enquiry_id):
 
 def _write_booking(c,database,context,cid,enquiry,elements,workflow_status_id):
     now=iso_now();total=sum(float(e['provisional_total'] or 0) for e in elements);reference=_next_reference(c,cid)
+    company = execute_sql(c, 'SELECT currency FROM companies WHERE id=:tenant', (cid,)).fetchone()
+    currency = str(company['currency'] or 'EUR').upper() if company else 'EUR'
     arrival=min(str(e['arrival_date']) for e in elements);departure=max(str(e['departure_date']) for e in elements)
-    booking_id=int(insert_sql(c, 'INSERT INTO bookings (company_id,reference,customer_id,enquiry_id,status,arrival_date,departure_date,currency,total_amount,pricing_snapshot_json,notes,created_at,updated_at,workflow_status_id) VALUES (:q210_0,:q210_1,:q210_2,:q210_3,:q210_4,:q210_5,:q210_6,:q210_7,:q210_8,:q210_9,:q210_10,:q210_11,:q210_12,:q210_13)',(cid,reference,enquiry['customer_id'],enquiry['id'],'confirmed',arrival,departure,'EUR',total,json.dumps({'multi_element':len(elements)>1,'element_count':len(elements),'total':total},separators=(',',':')),enquiry['notes'] or '',now,now,workflow_status_id)).lastrowid)
+    booking_id=int(insert_sql(c, 'INSERT INTO bookings (company_id,reference,customer_id,enquiry_id,status,arrival_date,departure_date,currency,total_amount,pricing_snapshot_json,notes,created_at,updated_at,workflow_status_id) VALUES (:q210_0,:q210_1,:q210_2,:q210_3,:q210_4,:q210_5,:q210_6,:q210_7,:q210_8,:q210_9,:q210_10,:q210_11,:q210_12,:q210_13)',(cid,reference,enquiry['customer_id'],enquiry['id'],'confirmed',arrival,departure,currency,total,json.dumps({'multi_element':len(elements)>1,'element_count':len(elements),'total':total},separators=(',',':')),enquiry['notes'] or '',now,now,workflow_status_id)).lastrowid)
     for ee in elements:
         try:snapshot=json.loads(ee['pricing_snapshot_json'] or '{}')
         except (TypeError,json.JSONDecodeError):snapshot={}
@@ -273,13 +275,16 @@ def _lock_and_verify_conversion(c, cid, enquiry_id, elements, *, lock_held=False
             raise ValueError('This Element is held by another Enquiry. Refresh the Enquiry.')
 
 
-def convert_enquiry(database,context,cid,enquiry_id,workflow_status_id):
+def convert_enquiry(database,context,cid,enquiry_id,workflow_status_id,*,authorisation_reason=None):
     with database.reservation_write_transaction(cid) as c:
         enquiry,elements=_conversion_enquiry(database,context,cid,enquiry_id,workflow_status_id)
         _lock_and_verify_conversion(c,cid,enquiry_id,elements,lock_held=True)
         booking_id,reference,total=_write_booking(c,database,context,cid,enquiry,elements,workflow_status_id)
         audit(database, context, cid, 'ENQUIRY_CONVERTED_TO_BOOKING', 'enquiry', enquiry_id, after={'booking_id': booking_id, 'reference': reference, 'element_count': len(elements)}, connection=c)
         audit(database, context, cid, 'BOOKING_CREATED', 'booking', booking_id, after={'reference': reference, 'enquiry_id': enquiry_id, 'workflow_status_id': workflow_status_id, 'total_amount': total}, connection=c)
+        if authorisation_reason is not None:
+            audit(database, context, cid, 'BOOKING_CONFIRMED_WITHOUT_PAYMENT', 'booking', booking_id,
+                  after={'reason': authorisation_reason, 'enquiry_id': enquiry_id}, connection=c)
     return booking_id
 
 def convert_enquiry_with_payment(database,context,cid,enquiry_id,workflow_status_id,*,amount,payment_date,method,reference='',notes=''):
@@ -372,9 +377,8 @@ def register_booking_routes(app) -> None:
         context=context_for(database,request); cid=int(working_company(context)); data=await form_data(request); require_csrf(context,data); reason=str(data.get('reason','')).strip()
         if not reason: return RedirectResponse(f'/operations/enquiries/{enquiry_id}?convert_error=A+reason+is+required+to+confirm+without+payment',303)
         pending=status_by_system_code(database,cid,'PAYMENT_PENDING') or default_status(database,cid,'RESERVED')
-        try: booking_id=convert_enquiry(database,context,cid,enquiry_id,int(pending['id']))
+        try: booking_id=convert_enquiry(database,context,cid,enquiry_id,int(pending['id']),authorisation_reason=reason)
         except (TypeError,ValueError) as exc: return RedirectResponse(f'/operations/enquiries/{enquiry_id}?convert_error={esc(str(exc))}',303)
-        audit(database,context,cid,'BOOKING_CONFIRMED_WITHOUT_PAYMENT','booking',booking_id,after={'reason':reason,'enquiry_id':enquiry_id})
         return RedirectResponse(f'/operations/bookings/{booking_id}?created=1&message=Confirmed+without+payment',303)
 
 
