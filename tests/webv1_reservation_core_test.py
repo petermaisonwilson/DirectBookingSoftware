@@ -8,11 +8,11 @@ class ReservationLifecycleTests(unittest.TestCase):
     def test_master_reservation_read_paths_are_tenant_scoped(self):
         from pathlib import Path
         from tempfile import TemporaryDirectory
-        from online.database import Database
+        from online.database import OnlineDatabase
         from online.webv1_reservation_service import reservation_summary, list_reservations
 
         with TemporaryDirectory() as directory:
-            database = Database(Path(directory) / 'reservation-read.sqlite')
+            database = OnlineDatabase(Path(directory) / 'reservation-read.sqlite')
             with database.connect() as connection:
                 connection.executescript("""
                     CREATE TABLE reservations (
