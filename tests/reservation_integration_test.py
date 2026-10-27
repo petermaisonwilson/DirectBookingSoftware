@@ -305,7 +305,7 @@ class ReservationIntegrationTests(unittest.TestCase):
         quote = dict(booking_id=bid, booking_element_id=beid, old_arrival='2026-12-01',
                      old_departure='2026-12-05', old_booking_total=0, new_arrival='2026-11-01', new_departure='2026-11-05')
         with self.assertRaisesRegex(ValueError, 'central reservation'):
-            apply_amendment(self.db, {'company_id': self.cid}, quote)
+            apply_amendment(self.db, {'company_id': self.cid, 'role': 'operator', 'acting_company_id': None}, quote)
         with self.db.connect() as c:
             self.assertEqual(execute_sql(c, 'SELECT COUNT(*) AS n FROM element_holds WHERE company_id=:tenant', (self.cid,)).fetchone()[0], 0)
             self.assertEqual(execute_sql(c, 'SELECT arrival_date FROM booking_elements WHERE id=:element', (beid,)).fetchone()[0], '2026-12-01')

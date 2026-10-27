@@ -133,6 +133,24 @@ def transition(connection, company_id, reservation_id, target, updated_at, *, ch
               'company_id': company_id, 'reservation_id': reservation_id})
 
 
+def _insert_header(connection, company_id, reference, customer_id, *, state, currency,
+                   total_amount, notes, created_at, updated_at, enquiry_id=None, booking_id=None):
+    """One master-record insert for both canonical and operational callers."""
+    from .sql import insert_sql
+    from .reservation_money import finite_amount
+    total_amount = finite_amount(total_amount)
+    values = {'company_id': company_id, 'reference': reference, 'customer_id': customer_id,
+              'state': state, 'currency': currency, 'total_amount': total_amount,
+              'notes': notes, 'created_at': created_at, 'updated_at': updated_at}
+    if enquiry_id is not None:
+        values['enquiry_id'] = enquiry_id
+    if booking_id is not None:
+        values['booking_id'] = booking_id
+    statement = ('INSERT INTO reservations (' + ','.join(values) + ') VALUES (' +
+                 ','.join(':' + name for name in values) + ')')
+    return int(insert_sql(connection, statement, values).lastrowid)
+
+
 def create_reservation(connection, company_id, reference, customer_id, allocations, created_at,
                        *, state='ENQUIRY_HELD', currency='EUR', notes=''):
     """Create one canonical reservation and its allocations in the caller's write transaction.
@@ -165,18 +183,9 @@ def create_reservation(connection, company_id, reference, customer_id, allocatio
         if _enquiry_conflict(connection, company_id, element_id, arrival, departure):
             raise ReservationError('Element is already held by another Enquiry.')
     total = sum(float(item.get('total_amount') or 0) for item in allocations)
-    insert_sql = (
-        'INSERT INTO reservations (company_id,reference,customer_id,state,currency,total_amount,notes,created_at,updated_at) '
-        'VALUES (:company_id,:reference,:customer_id,:state,:currency,:total_amount,:notes,:created_at,:updated_at)')
-    insert_params = {'company_id': company_id, 'reference': reference, 'customer_id': customer_id,
-                     'state': state, 'currency': currency, 'total_amount': total,
-                     'notes': notes, 'created_at': created_at, 'updated_at': created_at}
-    if hasattr(connection, 'dialect') and connection.dialect.name == 'postgresql':
-        cursor = _execute(connection, insert_sql + ' RETURNING id', insert_params)
-        reservation_id = int(cursor.scalar_one())
-    else:
-        cursor = _execute(connection, insert_sql, insert_params)
-        reservation_id = int(cursor.lastrowid)
+    reservation_id = _insert_header(connection, company_id, reference, customer_id,
+        state=state, currency=currency, total_amount=total, notes=notes,
+        created_at=created_at, updated_at=created_at)
     _insert_elements(connection, company_id, reservation_id, allocations)
     return reservation_id
 
@@ -213,14 +222,26 @@ def replace_reservation_elements(connection, company_id, reservation_id, allocat
              dict(params, total=total, updated_at=updated_at))
 
 
+def _insert_allocation(connection, company_id, reservation_id, element_id, arrival, departure, *,
+                       total_amount=0, pricing_snapshot_json='{}', lead_name='', recovery_state='held',
+                       enquiry_element_id=None, booking_element_id=None):
+    from .sql import insert_sql
+    from .reservation_money import finite_amount
+    total_amount = finite_amount(total_amount or 0)
+    values = {'company_id': company_id, 'reservation_id': reservation_id, 'element_id': int(element_id),
+              'arrival_date': str(arrival), 'departure_date': str(departure), 'total_amount': float(total_amount or 0),
+              'pricing_snapshot_json': str(pricing_snapshot_json or '{}'), 'lead_name': str(lead_name or ''),
+              'recovery_state': recovery_state}
+    if enquiry_element_id is not None:
+        values['enquiry_element_id'] = enquiry_element_id
+    if booking_element_id is not None:
+        values['booking_element_id'] = booking_element_id
+    statement = ('INSERT INTO reservation_elements (' + ','.join(values) + ') VALUES (' +
+                 ','.join(':' + name for name in values) + ')')
+    return int(insert_sql(connection, statement, values).lastrowid)
+
+
 def _insert_elements(connection, company_id, reservation_id, allocations):
     for item in allocations:
-        _execute(connection,
-            'INSERT INTO reservation_elements (company_id,reservation_id,element_id,arrival_date,departure_date,'
-            'total_amount,pricing_snapshot_json,lead_name) '
-            'VALUES (:company_id,:reservation_id,:element_id,:arrival,:departure,:total,:snapshot,:lead_name)',
-            {'company_id': company_id, 'reservation_id': reservation_id,
-             'element_id': int(item['element_id']), 'arrival': str(item['arrival_date']),
-             'departure': str(item['departure_date']), 'total': float(item.get('total_amount') or 0),
-             'snapshot': str(item.get('pricing_snapshot_json') or '{}'),
-             'lead_name': str(item.get('lead_name') or '')})
+        _insert_allocation(connection, company_id, reservation_id, item['element_id'], item['arrival_date'], item['departure_date'],
+            total_amount=item.get('total_amount'), pricing_snapshot_json=item.get('pricing_snapshot_json'), lead_name=item.get('lead_name'))

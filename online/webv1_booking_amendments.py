@@ -6,7 +6,8 @@ import json
 from datetime import date, timedelta
 
 from .setup015_calculator import _element_rate_for_date, _price_element
-from .setup015_core import one, rows
+from .setup015_core import one, rows, working_company
+from .reservation_money import finite_amount
 from .webv1_duration_discounts import duration_discount
 from .webv1_status_availability import availability_state
 from .webv1_booking_finance import sync_payment_status
@@ -84,7 +85,7 @@ def amendment_quote(database, company_id: int, booking_id: int, booking_element_
     discount=duration_discount(database,company_id,int(be['element_id']),new_nights,mixed_base)
     prior=one(database,'SELECT calculation_json,manual_discount FROM booking_amendments WHERE company_id=:q524_0 AND booking_id=:q524_1 AND booking_element_id=:q524_2 ORDER BY id DESC LIMIT 1',(company_id,booking_id,booking_element_id))
     prior_manual=float(prior['manual_discount'] or 0) if prior is not None else 0.0
-    requested_manual=prior_manual if manual_discount is None else float(manual_discount or 0)
+    requested_manual=prior_manual if manual_discount is None else finite_amount(manual_discount or 0, 'staff discount')
     manual=max(0.0,min(requested_manual,float(discount['final_amount'])))
     element_old_final=float(snap.get('total') or (old_package-old_discount))
     if prior is not None:
@@ -108,7 +109,7 @@ def amendment_quote(database, company_id: int, booking_id: int, booking_element_
 
 def apply_amendment(database, context, quote: dict) -> int:
     """Persist one already-validated amendment as a single database transaction."""
-    cid=int(context['company_id']); booking_id=int(quote['booking_id']); beid=int(quote['booking_element_id'])
+    cid=int(working_company(context)); booking_id=int(quote['booking_id']); beid=int(quote['booking_element_id'])
     now=__import__('online.database',fromlist=['iso_now']).iso_now()
     calculation=json.dumps(quote,separators=(',',':'),sort_keys=True)
     with database.connect() as c:

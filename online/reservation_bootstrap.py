@@ -19,6 +19,8 @@ def initialise_reservation_storage(database):
             raise RuntimeError('Run the DBS Alembic migrations before starting PostgreSQL: ' + ', '.join(sorted(missing)))
         if not {'enquiry_id', 'booking_id'} <= {col['name'] for col in inspect(database.engine).get_columns('reservations')}:
             raise RuntimeError('Run the DBS Alembic migrations before starting PostgreSQL: operational reservation identities are missing')
+        if 'ck_booking_payments_amount_finite' not in {check['name'] for check in inspect(database.engine).get_check_constraints('booking_payments')}:
+            raise RuntimeError('Run the DBS Alembic migrations before starting PostgreSQL: monetary integrity migration is missing')
         _adopt_operational_identities(database)
         return
     engine = create_engine(database.config.database_url)
@@ -48,6 +50,8 @@ def initialise_reservation_storage(database):
                     import_module('migrations.versions.0011_reservation_tenant_refs').upgrade()
                 if 'enquiry_id' not in {col['name'] for col in inspect(connection).get_columns('reservations')}:
                     import_module('migrations.versions.0013_operational_identity').upgrade()
+                if 'ck_booking_payments_amount_finite' not in {check['name'] for check in inspect(connection).get_check_constraints('booking_payments')}:
+                    import_module('migrations.versions.0014_finite_reservation_money').upgrade()
     finally:
         engine.dispose()
     _adopt_operational_identities(database)

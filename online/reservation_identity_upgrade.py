@@ -10,6 +10,12 @@ from .webv1_operational_reservations import (
 
 
 def adopt_company(connection, company_id):
+    for table in ('booking_payments', 'booking_refunds', 'booking_cancellations', 'booking_amendments'):
+        orphan = execute_sql(connection,
+            f'SELECT f.id FROM {table} f LEFT JOIN bookings b ON b.company_id=f.company_id AND b.id=f.booking_id '
+            'WHERE f.company_id=:tenant AND b.id IS NULL LIMIT 1', (company_id,)).fetchone()
+        if orphan is not None:
+            raise ValueError(f'{table} record {orphan["id"]}: missing or cross-tenant booking owner; source records were preserved')
     imported = {'enquiries': 0, 'bookings': 0, 'history': 0}
     adopted = set()
     enquiries = execute_sql(connection, 'SELECT * FROM enquiries WHERE company_id=:tenant ORDER BY id', (company_id,)).fetchall()

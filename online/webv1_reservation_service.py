@@ -54,8 +54,20 @@ def create_enquiry(database, company_id, reference, customer_id, allocations, cr
         return rid
 
 
+def _require_standalone_command(connection, company_id, reservation_id):
+    """A raw allocation/state edit cannot bypass operational finance or pricing."""
+    owner = _execute(connection,
+        'SELECT enquiry_id,booking_id FROM reservations WHERE company_id=:tenant AND id=:reservation',
+        {'tenant': company_id, 'reservation': reservation_id}).fetchone()
+    if owner is not None:
+        owner = _mapping(owner)
+        if owner['enquiry_id'] is not None or owner['booking_id'] is not None:
+            raise ReservationError('Use the operational reservation command so pricing, finance and history are validated together.')
+
+
 def amend_reservation(database, company_id, reservation_id, allocations, updated_at, *, actor='System', reason=''):
     with database.reservation_write_transaction(company_id) as connection:
+        _require_standalone_command(connection, company_id, reservation_id)
         _check_closures_and_holds(connection, company_id, allocations)
         replace_reservation_elements(connection, company_id, reservation_id, allocations, updated_at)
         _history(connection, company_id, reservation_id, 'AMENDED', updated_at, actor,
@@ -64,6 +76,7 @@ def amend_reservation(database, company_id, reservation_id, allocations, updated
 
 def change_reservation_state(database, company_id, reservation_id, state, updated_at, *, actor='System', reason=''):
     with database.reservation_write_transaction(company_id) as connection:
+        _require_standalone_command(connection, company_id, reservation_id)
         previous = _execute(connection,
             'SELECT state FROM reservations WHERE company_id=:company_id AND id=:reservation_id',
             {'company_id': company_id, 'reservation_id': reservation_id}).fetchone()

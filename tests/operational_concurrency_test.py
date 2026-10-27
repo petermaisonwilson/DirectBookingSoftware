@@ -240,15 +240,51 @@ class OperationalJourneyTests(unittest.TestCase):
             self.assertEqual(reservation_financials(c, self.cid, rid), {'total': 200, 'paid': 75, 'outstanding': 125})
         self.assertEqual(self.scalar('SELECT id FROM reservation_elements WHERE company_id=:tenant AND reservation_id=:reservation', (self.cid, rid)), allocation)
         from online.sql import INTEGRITY_ERRORS
-        for table in ('booking_payments', 'booking_refunds'):
+        other = int(self.scalar('SELECT id FROM companies WHERE id<>:tenant ORDER BY id LIMIT 1', (self.cid,)))
+        with self.assertRaises(INTEGRITY_ERRORS):
+            with self.db.connect() as c:
+                execute_sql(c, "INSERT INTO booking_payments(company_id,booking_id,reservation_id,amount,payment_date,method,created_at) VALUES (:tenant,:booking,:reservation,1,'2038-05-01','Cash',:created)",
+                            (other, booking, rid, now))
+        for table, bad_amount in ((table, amount) for table in ('booking_payments', 'booking_refunds') for amount in (-1, float('nan'), float('inf'))):
             with self.assertRaises(INTEGRITY_ERRORS):
                 with self.db.connect() as c:
                     if table == 'booking_payments':
-                        execute_sql(c, "INSERT INTO booking_payments(company_id,booking_id,reservation_id,amount,payment_date,method,created_at) VALUES (:tenant,:booking,:reservation,-1,'2038-05-01','Cash',:created)",
-                                    (self.cid, booking, rid, now))
+                        execute_sql(c, "INSERT INTO booking_payments(company_id,booking_id,reservation_id,amount,payment_date,method,created_at) VALUES (:tenant,:booking,:reservation,:amount,'2038-05-01','Cash',:created)",
+                                    (self.cid, booking, rid, bad_amount, now))
                     else:
-                        execute_sql(c, "INSERT INTO booking_refunds(company_id,booking_id,reservation_id,amount,refund_date,method,created_at) VALUES (:tenant,:booking,:reservation,-1,'2038-05-01','Cash',:created)",
-                                    (self.cid, booking, rid, now))
+                        execute_sql(c, "INSERT INTO booking_refunds(company_id,booking_id,reservation_id,amount,refund_date,method,created_at) VALUES (:tenant,:booking,:reservation,:amount,'2038-05-01','Cash',:created)",
+                                    (self.cid, booking, rid, bad_amount, now))
+
+    def test_identity_adoption_refuses_cross_tenant_money_and_ambiguous_sources(self):
+        from online.reservation_identity_upgrade import adopt_company
+        now = iso_now()
+        with self.db.connect() as c:
+            other = int(execute_sql(c, 'SELECT id FROM companies WHERE id<>:tenant ORDER BY id LIMIT 1', (self.cid,)).fetchone()[0])
+            foreign_booking = int(insert_sql(c, "INSERT INTO bookings(company_id,reference,status,arrival_date,departure_date,total_amount,created_at,updated_at) "
+                "VALUES (:tenant,'FOREIGN-LEGACY','confirmed','2038-09-01','2038-09-03',100,:created,:updated)",
+                (other, now, now)).lastrowid)
+            payment = int(insert_sql(c, "INSERT INTO booking_payments(company_id,booking_id,amount,payment_date,method,created_at) "
+                "VALUES (:tenant,:booking,25,'2038-05-01','Cash',:created)", (self.cid, foreign_booking, now)).lastrowid)
+        with self.assertRaisesRegex(ValueError, 'cross-tenant booking owner'):
+            with self.db.reservation_write_transaction(self.cid) as c:
+                adopt_company(c, self.cid)
+        self.assertEqual(self.scalar('SELECT COUNT(*) FROM reservations WHERE company_id=:tenant', (self.cid,)), 0)
+        self.assertEqual(self.scalar('SELECT amount FROM booking_payments WHERE company_id=:tenant AND id=:payment', (self.cid, payment)), 25)
+        self.assertIsNone(self.scalar('SELECT reservation_id FROM booking_payments WHERE company_id=:tenant AND id=:payment', (self.cid, payment)))
+        # A second, independent malformed legacy relationship must not choose
+        # one booking arbitrarily or leave the first identity partially imported.
+        with self.db.connect() as c:
+            enquiry = int(insert_sql(c, "INSERT INTO enquiries(company_id,status,created_at,updated_at) VALUES (:tenant,'converted',:created,:updated)",
+                                     (other, now, now)).lastrowid)
+            for reference in ('AMBIGUOUS-A', 'AMBIGUOUS-B'):
+                insert_sql(c, "INSERT INTO bookings(company_id,enquiry_id,reference,status,arrival_date,departure_date,total_amount,created_at,updated_at) "
+                    "VALUES (:tenant,:enquiry,:reference,'confirmed','2038-09-01','2038-09-03',100,:created,:updated)",
+                    (other, enquiry, reference, now, now))
+        with self.assertRaisesRegex(ValueError, 'ambiguous enquiry relationship'):
+            with self.db.reservation_write_transaction(other) as c:
+                adopt_company(c, other)
+        self.assertEqual(self.scalar('SELECT COUNT(*) FROM reservations WHERE company_id=:tenant', (other,)), 0)
+        self.assertEqual(self.scalar('SELECT COUNT(*) FROM bookings WHERE company_id=:tenant', (other,)), 3)
 
     def test_canonical_url_forms_and_lifecycle_keep_the_same_identity(self):
         # Make canonical and compatibility IDs differ so the URL tests cannot
@@ -282,6 +318,13 @@ class OperationalJourneyTests(unittest.TestCase):
         self.assertEqual(converted.status_code, 303)
         self.assertEqual(converted.headers['location'].split('?', 1)[0], url)
         self.assertIn('created=1', converted.headers['location'])
+        from online.webv1_reservation_core import ReservationError
+        from online.webv1_reservation_service import amend_reservation, change_reservation_state
+        with self.assertRaisesRegex(ReservationError, 'operational reservation command'):
+            change_reservation_state(self.db, self.cid, rid, 'CANCELLED', iso_now())
+        with self.assertRaisesRegex(ReservationError, 'operational reservation command'):
+            amend_reservation(self.db, self.cid, rid, [], iso_now())
+        self.assertEqual(self.scalar('SELECT state FROM reservations WHERE company_id=:tenant AND id=:reservation', (self.cid, rid)), 'CONFIRMED')
         booking_page = self.clients[0].get(url)
         self.assertEqual(booking_page.status_code, 200)
         self.assertIn(f'action="{url}/payments"', booking_page.text)
@@ -290,6 +333,46 @@ class OperationalJourneyTests(unittest.TestCase):
         rejected = self.clients[0].post(url + '/payments', data=dict(self.payment_payload(), csrf='wrong'), follow_redirects=False)
         self.assertEqual(rejected.status_code, 403)
         self.assertEqual(self.scalar('SELECT COUNT(*) FROM booking_payments WHERE company_id=:tenant', (self.cid,)), 0)
+
+    def test_support_mode_amendment_uses_the_selected_tenant(self):
+        bid = self.book(self.enquiry())
+        rid = int(self.scalar('SELECT id FROM reservations WHERE company_id=:tenant AND booking_id=:booking', (self.cid, bid)))
+        be = int(self.scalar('SELECT id FROM booking_elements WHERE company_id=:tenant AND booking_id=:booking', (self.cid, bid)))
+        quote = amendment_quote(self.db, self.cid, bid, be, '2038-06-01', '2038-06-04')
+        with TestClient(self.app) as supervisor:
+            self.assertEqual(supervisor.post('/login', data={'email': 'supervisor@directbooking.test', 'password': 'Supervisor013!'}, follow_redirects=False).status_code, 303)
+            context = self.db.session_context(supervisor.cookies.get(COOKIE_NAME))
+            self.assertEqual(supervisor.post(f'/support/start/{self.cid}', data={'csrf': context['csrf_token']}, follow_redirects=False).status_code, 303)
+            result = supervisor.post(f'/operations/reservations/{rid}/amend-apply',
+                data={'csrf': context['csrf_token'], 'quote': json.dumps(quote)}, follow_redirects=False)
+            self.assertEqual(result.status_code, 303, result.text)
+            self.assertIn('Booking+amended', result.headers['location'])
+            self.assertEqual(self.scalar('SELECT total_amount FROM reservations WHERE company_id=:tenant AND id=:reservation', (self.cid, rid)), 300)
+            self.assertEqual(self.scalar("SELECT actor_user_id FROM audit_log WHERE company_id=:tenant AND action='BOOKING_AMENDED'", (self.cid,)), context['user_id'])
+            other = int(self.scalar('SELECT id FROM companies WHERE id<>:tenant ORDER BY id LIMIT 1', (self.cid,)))
+            self.assertEqual(supervisor.post(f'/support/start/{other}', data={'csrf': context['csrf_token']}, follow_redirects=False).status_code, 303)
+            self.assertEqual(supervisor.get(f'/operations/reservations/{rid}').status_code, 404)
+            self.assertEqual(supervisor.post(f'/operations/reservations/{rid}/amend-apply', data={'csrf': context['csrf_token'], 'quote': json.dumps(quote)}, follow_redirects=False).status_code, 404)
+        self.assertEqual(self.scalar('SELECT total_amount FROM reservations WHERE company_id=:tenant AND id=:reservation', (self.cid, rid)), 300)
+
+    def test_nonfinite_payments_never_confirm_or_change_the_ledger(self):
+        enquiry = self.enquiry()
+        rid = int(self.scalar('SELECT id FROM reservations WHERE company_id=:tenant AND enquiry_id=:enquiry', (self.cid, enquiry)))
+        for amount in ('NaN', 'Infinity', '-Infinity'):
+            response = self.clients[0].post(f'/operations/reservations/{rid}/confirm-payment',
+                data=dict(self.payment_payload(), amount=amount), follow_redirects=False)
+            self.assertEqual(response.status_code, 303)
+            self.assertIn('convert_error=', response.headers['location'])
+        self.assertEqual(self.scalar('SELECT COUNT(*) FROM bookings WHERE company_id=:tenant', (self.cid,)), 0)
+        self.assertEqual(self.scalar('SELECT state FROM reservations WHERE company_id=:tenant AND id=:reservation', (self.cid, rid)), 'ENQUIRY_HELD')
+        self.book(enquiry)
+        for amount in ('NaN', 'Infinity', '-Infinity'):
+            response = self.clients[0].post(f'/operations/reservations/{rid}/payments',
+                data=dict(self.payment_payload(), amount=amount), follow_redirects=False)
+            self.assertEqual(response.status_code, 303)
+            self.assertIn('message=', response.headers['location'])
+        self.assertEqual(self.scalar('SELECT COUNT(*) FROM booking_payments WHERE company_id=:tenant AND reservation_id=:reservation', (self.cid, rid)), 1)
+        self.assertEqual(self.scalar('SELECT SUM(amount) FROM booking_payments WHERE company_id=:tenant AND reservation_id=:reservation', (self.cid, rid)), 200)
 
     def test_actual_launcher_uses_the_configured_database(self):
         with socket.socket() as sock:
@@ -372,6 +455,10 @@ class OperationalJourneyTests(unittest.TestCase):
             if kwargs['action'] == 'BOOKING_CONFIRMED_WITHOUT_PAYMENT':
                 raise RuntimeError('Injected authorisation history failure')
             return original(**kwargs)
+        from online.webv1_bookings import convert_enquiry
+        pending = int(self.scalar("SELECT id FROM booking_status_definitions WHERE company_id=:tenant AND system_code='PAYMENT_PENDING'", (self.cid,)))
+        with self.assertRaisesRegex(ValueError, 'authorisation reason'):
+            convert_enquiry(self.db, self.contexts[0], self.cid, enquiry_id, pending)
         route = f'/operations/enquiries/{enquiry_id}/confirm-without-payment'
         with patch.object(self.db, 'write_audit', side_effect=fail_authorisation):
             response = self.clients[0].post(route, data={'csrf': self.csrf(), 'reason': 'Approved account'}, follow_redirects=False)
@@ -681,9 +768,25 @@ class OperationalJourneyTests(unittest.TestCase):
                 data=self.payment_payload(), follow_redirects=False)
             self.assertEqual(response.status_code, 500, response.headers.get('location', response.text))
         self.assertEqual(self.scalar('SELECT COUNT(*) FROM bookings WHERE company_id=:tenant', (self.cid,)), 0)
+        self.assertEqual(self.scalar('SELECT state FROM reservations WHERE company_id=:tenant AND enquiry_id=:enquiry', (self.cid, enquiry_id)), 'ENQUIRY_HELD')
+        self.assertIsNone(self.scalar('SELECT booking_id FROM reservations WHERE company_id=:tenant AND enquiry_id=:enquiry', (self.cid, enquiry_id)))
         self.assertEqual(self.scalar('SELECT COUNT(*) FROM booking_payments WHERE company_id=:tenant', (self.cid,)), 0)
         self.assertEqual(self.scalar('SELECT status FROM enquiries WHERE company_id=:tenant AND id=:enquiry',
                                      (self.cid, enquiry_id)), 'new')
+        from online.webv1_operational_reservations import append_operational_history
+        def fail_canonical_history(connection, event):
+            if event['action'] == 'BOOKING_PAYMENT_RECORDED':
+                raise RuntimeError('Injected canonical history failure after audit insert')
+            return append_operational_history(connection, event)
+        with patch('online.webv1_operational_reservations.append_operational_history', side_effect=fail_canonical_history):
+            response = self.clients[0].post(f'/operations/enquiries/{enquiry_id}/confirm-payment',
+                data=self.payment_payload(), follow_redirects=False)
+            self.assertEqual(response.status_code, 500)
+        self.assertEqual(self.scalar('SELECT COUNT(*) FROM bookings WHERE company_id=:tenant', (self.cid,)), 0)
+        self.assertEqual(self.scalar('SELECT COUNT(*) FROM audit_log WHERE company_id=:tenant AND action=:action',
+                                     (self.cid, 'BOOKING_PAYMENT_RECORDED')), 0)
+        self.assertEqual(self.scalar('SELECT state FROM reservations WHERE company_id=:tenant AND enquiry_id=:enquiry',
+                                     (self.cid, enquiry_id)), 'ENQUIRY_HELD')
         booking_id = self.book(enquiry_id)
         with fail_action('BOOKING_PAYMENT_RECORDED'):
             response = self.clients[0].post(f'/operations/bookings/{booking_id}/payments',

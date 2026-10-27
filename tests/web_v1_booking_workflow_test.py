@@ -150,11 +150,11 @@ def main() -> None:
             assert execute_sql(c, 'SELECT id FROM bookings WHERE company_id=:q98_0 AND enquiry_id=:q98_1',(cid,enquiry_id)).fetchone() is None
             assert execute_sql(c, 'SELECT id FROM booking_payments WHERE company_id=:q99_0',(cid,)).fetchone() is None
             cash_row=execute_sql(c, 'SELECT * FROM payment_method_definitions WHERE id=:q79_0',(cash_id,)).fetchone()
-        original_write=booking_module._write_booking
+        original_write=booking_module.write_confirmation_details
         def fail_after_write(*args,**kwargs):
             original_write(*args,**kwargs)
             raise RuntimeError('Atomicity test failure')
-        booking_module._write_booking=fail_after_write
+        booking_module.write_confirmation_details=fail_after_write
         try:
             try:
                 convert_enquiry_with_payment(db,ctx,cid,enquiry_id,confirmed_id,amount=100.0,payment_date='2035-05-01',method=cash_row)
@@ -162,7 +162,7 @@ def main() -> None:
             except RuntimeError:
                 pass
         finally:
-            booking_module._write_booking=original_write
+            booking_module.write_confirmation_details=original_write
         with db.connect() as c:
             assert execute_sql(c, 'SELECT id FROM bookings WHERE company_id=:q100_0 AND enquiry_id=:q100_1',(cid,enquiry_id)).fetchone() is None
             assert execute_sql(c, 'SELECT id FROM booking_payments WHERE company_id=:q101_0',(cid,)).fetchone() is None
