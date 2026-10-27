@@ -374,6 +374,66 @@ class OperationalJourneyTests(unittest.TestCase):
         self.assertEqual(self.scalar('SELECT COUNT(*) FROM booking_payments WHERE company_id=:tenant AND reservation_id=:reservation', (self.cid, rid)), 1)
         self.assertEqual(self.scalar('SELECT SUM(amount) FROM booking_payments WHERE company_id=:tenant AND reservation_id=:reservation', (self.cid, rid)), 200)
 
+    def test_monetary_migration_failure_preserves_schema_data_and_can_retry(self):
+        from alembic import command
+        from alembic.config import Config
+        from sqlalchemy import create_engine, inspect, text
+        from sqlalchemy.engine import make_url
+        from sqlalchemy.exc import DBAPIError
+        from uuid import uuid4
+        import math
+        admin = None
+        schema = None
+        if self.db.dialect_name == 'postgresql':
+            original = os.environ['DBS_TEST_POSTGRES_URL']
+            parsed = make_url(original)
+            self.assertTrue((parsed.database or '').endswith('_test'))
+            admin = create_engine(original)
+            schema = 'dbs_money_upgrade_' + uuid4().hex
+            with admin.begin() as c:
+                c.execute(text('CREATE SCHEMA ' + schema))
+            url = parsed.update_query_dict({'options': '-csearch_path=' + schema}).render_as_string(hide_password=False)
+        else:
+            url = 'sqlite:///' + str(Path(self.temp.name) / 'money-upgrade.sqlite')
+        engine = create_engine(url)
+        config = Config('alembic.ini')
+        config.set_main_option('sqlalchemy.url', url.replace('%', '%%'))
+        try:
+            command.upgrade(config, '0013_operational_identity')
+            now = iso_now()
+            with engine.begin() as c:
+                cid = int(insert_sql(c, 'INSERT INTO companies(name,created_at) VALUES (:name,:created)', ('Migration rollback fixture', now)).lastrowid)
+                rid = int(insert_sql(c, "INSERT INTO reservations(company_id,reference,state,created_at,updated_at) VALUES (:tenant,'ROLLBACK-CONTROL','ENQUIRY_RELEASED',:created,:updated)", (cid, now, now)).lastrowid)
+                execute_sql(c, "INSERT INTO reservation_history(company_id,reservation_id,event_type,actor,created_at) VALUES (:tenant,:reservation,'CREATED','Before upgrade',:created)", (cid, rid, now))
+                bid = int(insert_sql(c, "INSERT INTO bookings(company_id,reference,status,arrival_date,departure_date,created_at,updated_at) VALUES (:tenant,'ROLLBACK-BOOKING','confirmed','2038-06-01','2038-06-03',:created,:updated)", (cid, now, now)).lastrowid)
+                payment = int(insert_sql(c, "INSERT INTO booking_payments(company_id,booking_id,amount,payment_date,method,created_at) VALUES (:tenant,:booking,:amount,'2038-05-01','Cash',:created)", (cid, bid, float('inf'), now)).lastrowid)
+            with self.assertRaises(DBAPIError):
+                command.upgrade(config, 'head')
+            with engine.connect() as c:
+                self.assertEqual(c.execute(text('SELECT version_num FROM alembic_version')).scalar_one(), '0013_operational_identity')
+                self.assertTrue(math.isinf(c.execute(text('SELECT amount FROM booking_payments WHERE id=:payment'), {'payment': payment}).scalar_one()))
+                self.assertEqual(c.execute(text('SELECT actor FROM reservation_history WHERE reservation_id=:reservation'), {'reservation': rid}).scalar_one(), 'Before upgrade')
+                self.assertFalse(any(name.startswith('_alembic_tmp_') for name in inspect(c).get_table_names()))
+                for table in ('reservations', 'reservation_elements', 'booking_payments', 'booking_refunds'):
+                    self.assertFalse(any(check['name'].endswith('_finite') for check in inspect(c).get_check_constraints(table)))
+            with self.assertRaises(DBAPIError):
+                with engine.begin() as c:
+                    c.execute(text("UPDATE reservation_history SET actor='Changed' WHERE reservation_id=:reservation"), {'reservation': rid})
+            # Explicit correction of this disposable invalid fixture is separate
+            # from migration; production migrations never overwrite an amount.
+            with engine.begin() as c:
+                c.execute(text('UPDATE booking_payments SET amount=75 WHERE id=:payment'), {'payment': payment})
+            command.upgrade(config, 'head')
+            with engine.connect() as c:
+                self.assertEqual(c.execute(text('SELECT amount FROM booking_payments WHERE id=:payment'), {'payment': payment}).scalar_one(), 75)
+                self.assertEqual(c.execute(text('SELECT actor FROM reservation_history WHERE reservation_id=:reservation'), {'reservation': rid}).scalar_one(), 'Before upgrade')
+        finally:
+            engine.dispose()
+            if admin is not None:
+                with admin.begin() as c:
+                    c.execute(text('DROP SCHEMA ' + schema + ' CASCADE'))
+                admin.dispose()
+
     def test_actual_launcher_uses_the_configured_database(self):
         with socket.socket() as sock:
             sock.bind(('127.0.0.1', 0))
