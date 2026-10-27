@@ -1,177 +1,204 @@
-# Build 302 v3 operational database verification
+# Build 302 v3 — operational reservation transition verification
 
-26 October 2026. Repository: `petermaisonwilson/DirectBookingSoftware`.
+27 October 2026. Repository: `petermaisonwilson/DirectBookingSoftware`.
 Branch: `build-302-payment-rules-fix`. Build/version remain **302 v3**.
-No Build 303 was created; PR #21 was not merged.
+No Build 303 was created. PR #21 remains open and unmerged.
 
-## Scope and conclusion
+## Result
 
-This report supersedes the earlier central-service-only report. The existing
-operational application now uses source-owned portable SQL for Setup, customers,
-enquiries, basket holds, booking conversion, amendments, calendar/availability,
-payments, cancellation/refunds and audit history. Both the original operational
-acceptance assertions and additional HTTP race/failure assertions execute against
-SQLite and a genuine PostgreSQL server.
+Verified executable source: `aa8899d95fec4708585455899164c72547f0e4f3`.
+Final workflow: [Build #696](https://github.com/petermaisonwilson/DirectBookingSoftware/actions/runs/40486194351).
+Both final workflow jobs concluded **success**.
+The report-only commit following it changes documentation, not executable source.
 
-Verified source commit: `445cfe0d9e21444341ff2c0c9252e85b62205a65`.
-Final source verification: [Build #690](https://github.com/petermaisonwilson/DirectBookingSoftware/actions/runs/40351867281).
-The report-only commit following it does not change executable source.
+The operational workflow now carries **one canonical reservation ID** from the
+initial enquiry through confirmation, amendment, cancellation and financial
+settlement. A booking confirmation attaches its retained detail record to that
+same master; it does not create another canonical reservation. Element allocation
+IDs also survive confirmation and date amendments. Operational forms and calendar
+links use `/operations/reservations/{id}` throughout those phases.
 
-Database-engine portability does **not** mean that the architecture contract's
-single-reservation-identity cutover has been completed. Existing enquiry and booking
-records and their finance links remain in use; the canonical creation/detail UI is
-still labelled development/preview. Legacy-to-canonical data conversion, routing all
-finance to canonical IDs, and retirement of duplicate conversion paths remain
-outstanding. No destructive schema retirement or live-data cutover was attempted.
-The agreed architecture contract remains unchanged.
+Payment, refund, cancellation and amendment records carry `reservation_id`, with
+tenant foreign keys. Financial summaries read the canonical master and its linked
+ledger. The readable booking history includes events from the enquiry phase,
+through the shared append-only reservation history and its unique source-audit link.
+Business changes, compatibility/detail writes, ledger and history commit together.
 
-Feature development remains paused under the original central-architecture acceptance
-gate. Passing operational PostgreSQL tests alone cannot close the remaining canonical
-identity and finance integration items. This is a verified portability milestone,
-not a claim that the entire agreed architecture assignment is complete.
+The separate development-only creation form is retired. Its entry forwards to the
+existing Booking Requirements workflow, so new UI records cannot bypass the
+complete requirements/confirmation/finance path. Stale form submissions create
+nothing; retained standalone summaries remain readable.
 
-## Implementation commits
+**Physical storage boundary:** existing enquiry/booking detail tables, their
+internal IDs and compatibility URLs are retained. Operational writes update those
+details and the canonical aggregate in the same transaction. Party requirements,
+original frozen prices and historical links are preserved there. This is an
+operational identity/finance integration, not a claim that every legacy table or
+column has been removed. No destructive schema retirement, tenant reset, live
+customer conversion or production deployment was performed.
 
-| Commit | Change |
+**Feature development can resume on this verified operational baseline**, using
+the canonical reservation commands and retaining the SQLite/PostgreSQL CI gate.
+The identity/finance/history integration previously outstanding at Build #690 is
+now implemented and exercised end-to-end. This is not approval for a production
+data cutover or removal of compatibility storage. Site-specific invalid or
+incomplete historic records still require review rather than inferred corrections.
+
+## Where the interruption stopped, and commits
+
+GitHub inspection established `9cb44e7` / green Build #692 as the latest verified
+commit. The workspace still held the uncommitted final consistency and monetary
+work. That work was recovered, reviewed and tested; the earlier completed
+portability implementation was not repeated.
+
+| Commit | Result |
 | --- | --- |
-| `b25cd6554fb38d66e3fa5a9a3c27e86081f0a498` | Port operational SQL at source; fix configured PostgreSQL app startup; add operational schema migration 0012, isolated real-backend fixtures and both-engine acceptance runner. |
-| `a2ed975c8ded9f352baea34c9cc2b7b8dcadf0bd` | Correct UTC expiry queries, tenant-scoped hold cleanup and locked legacy/canonical inventory rechecks; enable the legacy coexistence integration test on PostgreSQL. |
-| `f7f11008a51caba436935e40fed7b6824f814256` | Commit business changes and audit history together; lock conversion before its snapshot; reject stale amendments; add HTTP races/fault injection and genuine launcher-backend checks; package migrations/runtime instructions. |
-| `9cac1888cc2525a7c6e4977d675cad23988575d5` | Integrate canonical calendar inventory, remove redundant per-cell inventory reads, verify twelve HTTP scenarios, fix hold-removal ownership, stale lifecycle reads, atomic staff reasons and configured booking currency. |
-| `bb43b038ec0cb8bdf444933d7555e6ee8c6e8196` | Correct the canonical inventory result boundary exposed by PostgreSQL calendar tests: return a named mapping rather than a raw SQLAlchemy tuple row. |
-| `445cfe0d9e21444341ff2c0c9252e85b62205a65` | Serialize closure creation/edit/delete with booking writers, validate tenant element ownership, protect canonical confirmed inventory and commit closure history atomically; add a thirteenth HTTP race/rollback test. |
+| `b8f0c1be411f669713ed6253917b135fc0ed70df` | Add operational identity links and tenant constraints; retain master/allocation IDs through confirmation; link finance and history; provide additive, idempotent adoption of existing records. Verified by Build #691. |
+| `9cb44e7cd832478d2f86f440ec45f32669a886a9` | Use stable reservation URLs in forms, calendar, reports and customer links; preserve existing controller validation, currency and duration presentation; show shared history; use canonical element IDs for replacement. Verified by Build #692. |
+| `81ae097bc39ce800073901920f81fdf0cf85ff0d` | Share canonical header/allocation insertion and operational confirmation; require staff reason in the no-payment domain command; prevent raw lifecycle/price edits bypassing operational finance; fix support-mode amendment tenant selection; enforce finite monetary values in services and migration 0014. Verified by Build #693. |
+| `99cda7126f73a4fd93a6f364789856e2bd5ea24b` | Make SQLite Alembic DDL and versioning transactional; prove failed monetary migration preserves schema/data/history and can be retried. Verified by Build #694. |
+| `33be6279ea85393e033b95cceb04e085b0fc3e1d` | Preserve configured non-blocking status behaviour in canonical inventory and closure checks; keep lifecycle separate from availability configuration; reconcile the earlier incorrect status mapping idempotently; reject converted enquiries with missing booking owners. Verified by Build #695. |
+| `aa8899d95fec4708585455899164c72547f0e4f3` | Retire the incomplete standalone development creation form; forward its GET entry to the existing complete booking flow, reject stale submissions without creating partial records, retain standalone summaries and canonical compatibility redirects. Verified by Build #696. |
 
-The earlier central-service commits and their integrity migrations remain included.
-The shared SQL executor binds named parameters and normalises rows/generated IDs;
-it does not translate or rewrite SQL. SQLite-only schema operations are restricted
-to explicit local-file initialisation branches. PostgreSQL uses Alembic migrations.
+These commits build on the already verified operational SQL port in `b25cd65`,
+UTC expiry/tenant locking correction `a2ed97`, atomic history/launcher work
+`f7f1100`, calendar/currency/ownership work `9cac188`, row-mapping fix `bb43b03`
+and closure concurrency fix `445cfe0` (Build #690).
 
-## Tests and failure investigation
+No runtime SQL rewriting or SQLite emulation is used. SQL is owned by its source
+module, with named binds and normalised result/generated-ID handling. Engine
+specific migration code implements equivalent database constraints.
 
-On the final source commit, the SQLite/PostgreSQL job passed:
+## Final demonstrated tests
 
 | Suite | SQLite | Genuine PostgreSQL 16.15 |
 | --- | --- | --- |
-| Migrated-schema central reservation integration | 15 passed, no skips | 15 passed, no skips |
-| Operational acceptance scripts | All 20 passed | All 20 passed |
-| HTTP/concurrency/fault tests within the operational suite | 13 passed | 13 passed |
+| Migrated-schema central integration | 15 passed, no skips | 15 passed, no skips |
+| Complete operational acceptance scripts | All 20 passed | All 20 passed |
+| HTTP/concurrency/migration/fault tests within the operational runner | 20 passed | 20 passed |
 
-The final logs identify PostgreSQL **16.15**, not an emulation. The operational app
-uses its configured psycopg/SQLAlchemy PostgreSQL engine and isolated migrated
-schemas. PostgreSQL and SQLite exercise the same assertions and production routes.
+The final service log explicitly identifies PostgreSQL **16.15**. Migrations and
+application statements execute through psycopg against that server. These are
+actual database results, not an inference from a green SQLite job.
 
-The final Windows regression job also passed, including reservation unit tests,
-existing operational regressions, persistent data/launcher checks, server health,
-package construction and the Build 302 v3 Test #690 pre-release. Package creation
-and automated health are demonstrated; a live production deployment is not.
-Both final workflow jobs concluded **success**. The preceding #689 workflow also
-completed successfully. No test was disabled to obtain these results.
+The final Windows job also passed its existing regressions, 15 reservation unit
+tests, persistent-data and launcher/occupied-port checks, local server health,
+package construction and Build 302 v3 Test #696 pre-release publication.
+The database acceptance job runs SQLite and PostgreSQL on Linux CI; the Windows
+job exercises local SQLite and packaging. Windows-to-remote-PostgreSQL networking
+has not been separately rehearsed.
 
-Local checks additionally passed the 15 reservation unit tests, 13 HTTP tests,
-closure/availability foundation regression and `git diff --check`.
+[Build #696 test package](https://github.com/petermaisonwilson/DirectBookingSoftware/releases/tag/dbs-build-302-test-696).
+Both final jobs passed. No test was disabled to obtain the result.
 
-The **20 operational acceptance scripts** include existing business-rule assertions
-for Setup, customers, enquiry/search/editing, prices, add-ons and person pricing,
-hold timing, availability/calendar, the enquiry bridge and complete booking workflow.
-The twentieth script contains **13 explicit HTTP/concurrency/failure tests**:
+The operational runner executes **20 scripts per engine**. One script contains
+**20 explicit HTTP, concurrency, migration and fault-injection tests**; those tests
+are included within the 20-script result, not an additional independent suite.
+The other scripts retain the existing assertions for Setup, customer matching,
+pricing, person/selected-day add-ons, occupancy, enquiries, basket holds, calendar
+and booking behaviour. Navigation assertions were updated for canonical URLs;
+business-rule assertions and rollback fault injection were retained.
 
-- Closure creation races booking confirmation and other closures safely; foreign-tenant elements are rejected; injected history failures roll back creation, edits and deletion.
-- Actual `run_online.py` process honours the configured database; `/health` reports
-  the expected backend. PostgreSQL errors do not silently fall back to SQLite.
-- Canonical multi-element creation, tenant-scoped detail/history and calendar links.
-- Concurrent amendments reject superseded previews rather than overwriting them.
-- Concurrent reopening allows only one conflicting enquiry to regain inventory.
-- Confirmation without payment rejects an empty reason and saves authorised staff
-  reason/history atomically.
-- Expired hold cleanup affects only the current tenant.
-- Competing HTTP hold, conversion and refund writers preserve occupancy and finance
-  limits throughout an enquiry-to-booking-to-amendment-to-cancellation/refund journey.
-- Injected history failures roll back booking, payment, amendment, cancellation and
-  refund changes, leaving no partially committed financial or inventory updates.
-- Hold/enquiry audit failures leave no partial allocation; competing basket saves
-  cannot convert the same temporary inventory twice.
-- Hold-removal cannot delete another session's or another tenant's party details.
-- Multi-element bookings retain separate guest surnames, one payment/balance,
-  configured GBP currency and unaffected elements during an amendment.
-- Staff calendar inventory agrees with authoritative availability for canonical
-  allocations, legacy enquiries with missing workflow definitions, bookings, holds,
-  closures and unpriced Setup dates.
+The PostgreSQL fixtures assert the genuine backend and migrate isolated schemas
+in a dedicated database ending `_test`. The launcher test starts an actual
+`run_online.py` process and checks its reported backend, Build 302 and v3. A
+PostgreSQL failure cannot silently select SQLite.
 
-The **15 migrated-schema central integration tests per engine** additionally cover
-creation, amendment, lifecycle transitions, rollback, tenant foreign keys, immutable
-history, populated additive upgrades, adjacency boundaries, legacy coexistence,
-closures/holds and independent-connection races. The former SQLite-only coexistence
-test now runs on PostgreSQL rather than being skipped. The isolation regression
-also verifies the explicit READ COMMITTED override when an engine is configured
-with REPEATABLE READ.
+## What the end-to-end evidence establishes
 
-Intermediate failures were investigated rather than retried unchanged:
+- Requirements, independently named guests, temporary holds and customer matching
+  lead to a multi-element enquiry. Confirmation retains the reservation identity
+  and creates one account balance, with configured currency and frozen pricing.
+- Both payment confirmation and authorised confirmation without payment work.
+  Blank authorisation reasons are rejected at HTTP and domain boundaries. The
+  staff record and reason commit with confirmation; payment labels remain distinct
+  from lifecycle state. Existing deposit/threshold/balance-due rules are retained.
+- A test deliberately makes canonical IDs differ from enquiry/booking IDs, then
+  exercises the same URL through edit, release, reopen and confirmation. This
+  prevents coincidentally equal IDs from hiding a resolver error. Form actions,
+  HTML responses, CSRF and cross-tenant rejection are checked.
+- Release/reopen recheck inventory, including partial conflict and replacement.
+  Canonical element IDs resolve only within their own tenant and reservation.
+  Calendar links and inventory agree with operational availability for canonical
+  and retained detail records, closures, timed holds and incomplete Setup.
+- Configured non-blocking enquiry and booking statuses retain their original
+  effect, including closure checks and central creation. Changing a status label
+  or availability configuration does not fabricate a release lifecycle. Repeated
+  correction of the earlier mapping produces no duplicate reconciliation history.
+- Amendments retain allocation identity, other elements and payment records;
+  recalculate through the existing pricing rules; update the master balance; and
+  reject a stale preview. Supervisor amendments use the selected support tenant,
+  record that staff identity and reject access after switching tenants.
+- Cancellation remains terminal for accommodation changes. Approved refunds and
+  other financial settlement remain accessible through the same reservation URL.
+  Refund races cannot exceed the approved amount.
+- Independent writers race for holds, basket conversion, confirmation, reopening,
+  amendments, refunds and closure/booking combinations. Central integration also
+  races creation, amendment, reinstatement and mixed operations. Conflicting
+  writers recheck after locking; successful writes do not double-allocate inventory
+  in those tested paths.
+- Injected failures in both the original audit write and the canonical history
+  append roll back source details, canonical state/allocations, payments and
+  other finance together. Database triggers preserve append-only history.
+- Existing records are adopted without changing stored prices, receipts, guest
+  names or source IDs. Repeated startup/import retains the same identities and
+  does not duplicate history. Ambiguous source relationships, missing booking
+  owners and cross-tenant financial ownership are rejected without reassignment
+  or partial import.
+- Negative amounts and non-finite values (`NaN`, positive/negative infinity) are
+  rejected before operational writes; direct database checks also reject invalid
+  ledger values on both engines. An invalid historical amount causes migration
+  failure without overwriting it. The regression checks unchanged schema version,
+  original records, immutable history, absence of leftover rebuild tables and a
+  successful retry after explicit correction of a disposable fixture.
 
-- #685: two remaining production `datetime('now')` predicates and SQLite-specific
-  fixture/schema assumptions were exposed by real PostgreSQL.
-- #686: two fixture errors (wrong tenant variable and integer comparison against
-  the audit text identity) were corrected; 17/19 operational scripts already passed.
-- [#687](https://github.com/petermaisonwilson/DirectBookingSoftware/actions/runs/40345370377):
-  the expanded 20-script suite and existing Windows checks passed on that commit.
-- [#688](https://github.com/petermaisonwilson/DirectBookingSoftware/actions/runs/40350451701):
-  the newly added canonical calendar assertions caught a genuine raw SQLAlchemy-row
-  mapping defect on PostgreSQL. Corrected at the shared inventory boundary in
-  `bb43b03`; the tests and production checks were retained.
-- [#689](https://github.com/petermaisonwilson/DirectBookingSoftware/actions/runs/40351257998):
-  both database suites and Windows regressions/package checks passed after that fix.
-- #690 additionally verifies the final closure concurrency/ownership/history fix;
-  all 20 operational scripts and the 13 HTTP cases pass on each database.
+## Failures investigated
 
-## Concurrency and audit guarantees
+The recovered SQLite regression initially targeted `_write_booking`, which had
+moved into the shared confirmation service. Its fault-injection target was updated;
+the forced rollback assertion remains in place.
 
-The existing shared transaction boundary is preserved: SQLite `BEGIN IMMEDIATE`;
-PostgreSQL transaction-scoped tenant advisory lock in namespace 302 and READ
-COMMITTED isolation. Inventory is rechecked after acquiring the lock. Business
-writes, related finance records and their audit events commit or roll back together.
-Stale enquiry/amendment state is re-read under that lock. Tenant/session ownership
-is checked before child records are deleted.
+The new migration-failure test exposed an actual SQLite driver/Alembic issue:
+without an explicit transaction before DDL, an empty rebuild table survived a
+failed migration. The migration environment now begins an immediate SQLite
+transaction before schema work and treats DDL transactionally. PostgreSQL retains
+its transactional DDL path. Build #694 verifies the correction on both engines.
 
-These are cooperative application-writer guarantees. Arbitrary privileged SQL
-that bypasses the boundary is not protected by the advisory lock. No occupancy
-exclusion constraint or protection against external writers is claimed.
+The final source audit found that the canonical check ignored existing configured
+non-blocking statuses, and that the first identity mapper misclassified those
+enquiries as released. The common availability predicate now honours the retained
+configuration, while lifecycle follows the operational record. No new status or
+pricing policy was introduced.
 
-## Calendar performance evidence
+## Limits and remaining deployment work
 
-A disposable SQLite benchmark compared the previous baseline `5f3cb82` with
-`9cac188`, using the same 30 elements, 60 days and three HTTP calendar renders.
-Every render retained 10 booking bars and 1,700 available cells.
-
-| Measurement | Baseline | Updated |
-| --- | ---: | ---: |
-| Median render seconds | 3.798 | 1.771 |
-| SELECT statements per render | 13,904 | 3,706 |
-
-The grouped calendar snapshot now covers canonical and legacy inventory, and
-empty cells run the unchanged Setup gates without repeating all inventory queries.
-Write/selection paths retain the complete locked availability validator. This is
-synthetic local SQLite evidence, not a production or PostgreSQL load-test claim.
-The reproducible harness is `tests/calendar_portability_benchmark.py`.
-
-## Remaining limitations
-
-- Canonical identity/finance/UI consolidation described above is unfinished. Both
-  schemas coexist; this report does not claim completion of steps 3–5 of the
-  unified-reservation implementation contract.
-- Tests use disposable databases and synthetic tenants. No live tenant records
-  were reset, migrated or deleted, and no production backup/restore or existing
-  customer conversion rehearsal has been completed.
-- Manual payment/refund recording is tested. Actual external card processing,
-  settlement and outgoing message delivery are not established by these tests;
-  unconfigured card processing retains its existing rejection behaviour.
-- HTTP tests exercise the actual ASGI application and database. Launcher startup
-  also uses a real server process. They are not a manual browser usability review,
-  exhaustive configuration matrix, production soak test or deployment sign-off.
-- PostgreSQL 16 is demonstrated; all PostgreSQL releases, extensions, infrastructure
-  configurations and arbitrary external integrations are not claimed compatible.
+- Earlier standalone prototype records without operational requirements/finance
+  links remain read-only. No missing business facts are invented. Converting or
+  clearing such site-specific records requires reviewed data and the agreed
+  tenant/backup scope; the normal creation UI no longer produces them.
+- Existing detail storage and old URL compatibility remain as described above.
+  A canonical-only physical schema and destructive removal of historical tables
+  have not been performed or claimed. Removing compatibility storage requires a
+  separate reviewed migration and verified customer backup/rollback point.
+- Evidence uses disposable databases and synthetic tenants, including populated
+  upgrades and injected failures. It is not a production backup/restore rehearsal,
+  exhaustive client-data conversion or deployment sign-off. Invalid/ambiguous
+  historic data requires review; migration never guesses an owner or repairs a
+  monetary value silently.
+- Inventory locks are cooperative application transactions: SQLite
+  `BEGIN IMMEDIATE`, PostgreSQL tenant advisory locks in namespace 302 with
+  READ COMMITTED isolation. Arbitrary privileged SQL or writers bypassing that
+  boundary are outside the tested guarantee; no exclusion constraint is claimed.
+- Manual payment/refund recording is verified. Actual external card settlement,
+  automatic messages and external provider integration are not established by
+  these tests. Unconfigured card processing retains its existing rejection.
+- PostgreSQL 16 is demonstrated. All PostgreSQL releases, deployment topologies,
+  production load and a manual browser usability review are not claimed tested.
+  No pending calendar or other product feature was added as part of this work.
 
 ## Reproduction
 
-Install `requirements-online.txt` from the repository root, then run:
+From the repository root, install `requirements-online.txt`, then run:
 
 ```sh
 python -m unittest discover -s tests -p webv1_reservation_core_test.py
@@ -179,10 +206,8 @@ python -m unittest discover -s tests -p reservation_integration_test.py -v
 python tests/run_operational_acceptance.py
 ```
 
-For genuine PostgreSQL, set `DBS_TEST_POSTGRES_URL` to a **dedicated disposable**
-PostgreSQL database ending in `_test`, then run the integration and operational
-commands again. The runner migrates isolated schemas and asserts the backend;
-cleanup removes only those test schemas. Never target a customer database.
-
-See `docs/build302-database-runtime.md` for explicit PostgreSQL migration/startup
-instructions and the existing unversioned local SQLite-file upgrade boundary.
+Set `DBS_TEST_POSTGRES_URL` to a dedicated disposable PostgreSQL database whose
+name ends in `_test`, and repeat the integration and operational commands. The
+fixtures create and remove only their controlled test schemas; never target a
+customer database. See `docs/build302-database-runtime.md` for startup, explicit
+PostgreSQL migrations and the unversioned local SQLite boundary.

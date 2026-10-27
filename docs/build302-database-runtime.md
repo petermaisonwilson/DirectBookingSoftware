@@ -37,6 +37,32 @@ advisory locks with READ COMMITTED isolation. Inventory writers must retain that
 shared boundary; separate preliminary availability reads are not authorisation
 to write later without a locked recheck.
 
+## Identity adoption and monetary integrity
+
+On startup, the operational identity importer associates existing enquiries,
+bookings, element details, finance and history with the permanent reservation ID.
+It is additive and idempotent: source prices, financial amounts, source IDs and
+party details are preserved. Missing/ambiguous relationships and cross-tenant
+financial owners stop adoption rather than being guessed or reassigned.
+
+Migration `0014_finite_reservation_money` rejects non-finite monetary values on
+both engines. It never replaces an invalid amount. SQLite versioned migrations
+and native canonical-storage upgrades begin an immediate transaction before DDL;
+PostgreSQL retains transactional DDL. A failed upgrade must leave its prior schema,
+version and records available for review and retry. If an older interrupted build
+has already left migration debris, inspect the database and backup before repair;
+do not stamp a revision or delete rebuild tables blindly.
+
+The former standalone development creation entry forwards to the complete
+Booking Requirements flow. Existing standalone summaries are retained read-only;
+missing operational/financial details are never fabricated.
+
+Operational forms use `/operations/reservations/{id}`. Old enquiry/booking URLs
+remain compatible; detail storage remains present for original requirements,
+pricing and historical links. New features must use the operational reservation
+commands and shared write transaction, rather than raw state/allocation updates
+that bypass pricing, confirmation authorisation or finance checks.
+
 ## Verification
 
 `python tests/run_operational_acceptance.py` runs the operational acceptance
