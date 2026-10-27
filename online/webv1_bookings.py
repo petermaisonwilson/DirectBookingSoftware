@@ -380,10 +380,10 @@ def register_booking_routes(app) -> None:
                     calc = json.loads(latest['calculation_json'] or '{}')
                 except (TypeError, json.JSONDecodeError):
                     calc = {}
-                current_total = float(calc.get('new_element_total') or frozen_total)
+                current_total = float(calc['new_element_total']) if 'new_element_total' in calc else frozen_total
                 manual = float(latest['manual_discount'] or 0)
                 if manual > 0:
-                    staff_adjustment = f'<br><strong>Staff discount:</strong> −{_money(manual)}'
+                    staff_adjustment = f'<br><strong>Manual discount:</strong> −{_money(manual)}' + (f' — {esc(str(calc.get("manual_discount_reason") or ""))}' if calc.get('manual_discount_reason') else '')
                 staff_adjustment += f'<br><strong>Current element total:</strong> {_money(current_total)}'
             element_cards.append(
                 f'<div class="frozen-element"><h3>{esc(element["element_name"])}</h3>'
