@@ -276,6 +276,11 @@ class OperationalJourneyTests(unittest.TestCase):
         with self.db.connect() as c:
             enquiry = int(insert_sql(c, "INSERT INTO enquiries(company_id,status,created_at,updated_at) VALUES (:tenant,'converted',:created,:updated)",
                                      (other, now, now)).lastrowid)
+        with self.assertRaisesRegex(ValueError, 'missing booking owner'):
+            with self.db.reservation_write_transaction(other) as c:
+                adopt_company(c, other)
+        self.assertEqual(self.scalar('SELECT COUNT(*) FROM reservations WHERE company_id=:tenant', (other,)), 0)
+        with self.db.connect() as c:
             for reference in ('AMBIGUOUS-A', 'AMBIGUOUS-B'):
                 insert_sql(c, "INSERT INTO bookings(company_id,enquiry_id,reference,status,arrival_date,departure_date,total_amount,created_at,updated_at) "
                     "VALUES (:tenant,:enquiry,:reference,'confirmed','2038-09-01','2038-09-03',100,:created,:updated)",
@@ -433,6 +438,54 @@ class OperationalJourneyTests(unittest.TestCase):
                 with admin.begin() as c:
                     c.execute(text('DROP SCHEMA ' + schema + ' CASCADE'))
                 admin.dispose()
+
+    def test_configured_nonblocking_statuses_keep_operational_and_canonical_availability_equal(self):
+        enquiry = self.enquiry()
+        rid = int(self.scalar('SELECT id FROM reservations WHERE company_id=:tenant AND enquiry_id=:enquiry', (self.cid, enquiry)))
+        held_status = int(self.scalar('SELECT workflow_status_id FROM enquiries WHERE company_id=:tenant AND id=:enquiry', (self.cid, enquiry)))
+        def set_blocks(status_id, blocks):
+            with self.db.connect() as c:
+                row = dict(execute_sql(c, 'SELECT * FROM booking_status_definitions WHERE company_id=:tenant AND id=:status', (self.cid, status_id)).fetchone())
+            payload = {'csrf': self.csrf(), 'id': status_id, 'name': row['name'], 'short_name': row['short_name'],
+                       'colour': row['colour'], 'display_order': row['display_order'], 'internal_state': row['internal_state'],
+                       'expiry_minutes': row['expiry_minutes'] if row['expiry_minutes'] is not None else ''}
+            if blocks:
+                payload['blocks_availability'] = '1'
+            response = self.clients[0].post('/setup/booking-statuses/save', data=payload, follow_redirects=False)
+            self.assertEqual(response.status_code, 303, response.text)
+        from online.webv1_reservation_service import create_enquiry, change_reservation_state
+        set_blocks(held_status, False)
+        # Reproduce the older mapping that mistook a non-blocking status for a
+        # released lifecycle, then verify idempotent correction without repricing.
+        with self.db.connect() as c:
+            execute_sql(c, "UPDATE reservations SET state='ENQUIRY_RELEASED' WHERE company_id=:tenant AND id=:reservation", (self.cid, rid))
+        from online.reservation_identity_upgrade import adopt_company
+        with self.db.reservation_write_transaction(self.cid) as c:
+            adopt_company(c, self.cid)
+            adopt_company(c, self.cid)
+        self.assertEqual(self.scalar('SELECT state FROM reservations WHERE company_id=:tenant AND id=:reservation', (self.cid, rid)), 'ENQUIRY_HELD')
+        self.assertEqual(self.scalar("SELECT COUNT(*) FROM reservation_history WHERE company_id=:tenant AND reservation_id=:reservation AND event_type='IDENTITY_STATE_RECONCILED'", (self.cid, rid)), 1)
+        for index, booking in enumerate((False, True)):
+            status = held_status if not booking else int(self.scalar('SELECT workflow_status_id FROM bookings WHERE company_id=:tenant AND id=:booking', (self.cid, bid)))
+            set_blocks(status, False)
+            self.assertTrue(availability_state(self.db, self.cid, self.element, '2038-06-01', '2038-06-03')['available'])
+            if booking:
+                closed = self.clients[0].post('/setup/elements/availability/save', data={
+                    'csrf': self.csrf(), 'element_id': self.element, 'start_date': '2038-06-01',
+                    'end_date': '2038-06-03', 'reason': 'Nonblocking status parity'}, follow_redirects=False)
+                self.assertEqual(closed.status_code, 303)
+                closure = int(self.scalar('SELECT id FROM element_closures WHERE company_id=:tenant AND element_id=:element', (self.cid, self.element)))
+                self.assertEqual(self.clients[0].post('/setup/elements/availability/delete', data={
+                    'csrf': self.csrf(), 'id': closure, 'element_id': self.element}, follow_redirects=False).status_code, 303)
+            probe = create_enquiry(self.db, self.cid, f'NONBLOCKING-PROBE-{index}', self.customer,
+                [{'element_id': self.element, 'arrival_date': '2038-06-01', 'departure_date': '2038-06-03', 'total_amount': 200}], iso_now())
+            change_reservation_state(self.db, self.cid, probe, 'ENQUIRY_RELEASED', iso_now())
+            set_blocks(status, True)
+            self.assertFalse(availability_state(self.db, self.cid, self.element, '2038-06-01', '2038-06-03')['available'])
+            if not booking:
+                bid = self.book(enquiry)
+        self.assertEqual(self.scalar('SELECT state FROM reservations WHERE company_id=:tenant AND id=:reservation', (self.cid, rid)), 'CONFIRMED')
+        self.assertEqual(self.scalar('SELECT total_amount FROM reservations WHERE company_id=:tenant AND id=:reservation', (self.cid, rid)), 200)
 
     def test_actual_launcher_uses_the_configured_database(self):
         with socket.socket() as sock:

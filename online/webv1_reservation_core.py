@@ -17,13 +17,24 @@ class ReservationError(ValueError):
     """Reservation action violates the lifecycle or inventory rules."""
 
 
-def inventory_conflict(connection, company_id, element_id, arrival, departure, exclude_reservation_id=None, *, exclude_enquiry_id=None, exclude_booking_id=None):
+# Shared, source-owned predicate for linked operational status configuration.
+OPERATIONAL_BLOCKING_SQL = ("COALESCE((SELECT s.blocks_availability FROM bookings b "
+                "JOIN booking_status_definitions s ON s.company_id=b.company_id AND s.id=b.workflow_status_id "
+                "WHERE r.booking_id IS NOT NULL AND b.company_id=r.company_id AND b.id=r.booking_id),"
+                "(SELECT s.blocks_availability FROM enquiries q "
+                "JOIN booking_status_definitions s ON s.company_id=q.company_id AND s.id=q.workflow_status_id "
+                "WHERE r.booking_id IS NULL AND q.company_id=r.company_id AND q.id=r.enquiry_id),1)=1")
+
+
+def inventory_conflict(connection, company_id, element_id, arrival, departure, exclude_reservation_id=None, *, exclude_enquiry_id=None, exclude_booking_id=None, respect_workflow_status=False):
     """Check canonical allocations using explicit engine-compatible parameters."""
     sql = ("SELECT r.id FROM reservation_elements e "
            "JOIN reservations r ON r.id=e.reservation_id AND r.company_id=e.company_id "
            "WHERE e.company_id=:company_id AND e.element_id=:element_id "
            "AND r.state IN ('ENQUIRY_HELD','CONFIRMED') AND e.recovery_state='held' "
            "AND e.arrival_date<:departure AND e.departure_date>:arrival")
+    if respect_workflow_status:
+        sql += ' AND ' + OPERATIONAL_BLOCKING_SQL
     params = {'company_id': company_id, 'element_id': element_id,
               'departure': departure, 'arrival': arrival}
     if exclude_reservation_id is not None:
@@ -53,10 +64,10 @@ def migrated_inventory_conflict(connection, company_id, element_id, arrival, dep
             "SELECT name FROM sqlite_master WHERE type='table' "
             "AND name IN ('reservations','reservation_elements')").fetchall()
         ready = len(tables) == 2
-    return inventory_conflict(connection, company_id, element_id, arrival, departure, **exclusions) if ready else None
+    return inventory_conflict(connection, company_id, element_id, arrival, departure, respect_workflow_status=True, **exclusions) if ready else None
 
 
-def validate_allocations(connection, company_id, allocations, exclude_reservation_id=None):
+def validate_allocations(connection, company_id, allocations, exclude_reservation_id=None, *, respect_workflow_status=False):
     from datetime import date
     seen = []
     for allocation in allocations:
@@ -83,7 +94,7 @@ def validate_allocations(connection, company_id, allocations, exclude_reservatio
         if any(element_id == eid and arrival < end and departure > start for eid, start, end in seen):
             raise ReservationError('Overlapping allocation of the same Element within this reservation.')
         seen.append((element_id, arrival, departure))
-        if inventory_conflict(connection, company_id, element_id, arrival, departure, exclude_reservation_id):
+        if inventory_conflict(connection, company_id, element_id, arrival, departure, exclude_reservation_id, respect_workflow_status=respect_workflow_status):
             raise ReservationError('Element is already allocated to another reservation.')
 
 
@@ -100,7 +111,7 @@ def _mapping(row):
     return row._mapping if hasattr(row, '_mapping') else row
 
 
-def transition(connection, company_id, reservation_id, target, updated_at, *, check_legacy=True):
+def transition(connection, company_id, reservation_id, target, updated_at, *, check_legacy=True, respect_workflow_status=False):
     """Caller must hold the write transaction before checking and updating."""
     reservation = _execute(connection,
                            'SELECT state FROM reservations WHERE company_id=:company_id AND id=:reservation_id',
@@ -116,7 +127,7 @@ def transition(connection, company_id, reservation_id, target, updated_at, *, ch
                                {'company_id': company_id, 'reservation_id': reservation_id}).fetchall()
         if not allocations:
             raise ReservationError('A held or confirmed reservation must contain an Element.')
-        validate_allocations(connection, company_id, allocations, reservation_id)
+        validate_allocations(connection, company_id, allocations, reservation_id, respect_workflow_status=respect_workflow_status)
         if check_legacy:
             from .webv1_status_availability import _booking_conflict, _enquiry_conflict
             for item in allocations:
@@ -152,7 +163,7 @@ def _insert_header(connection, company_id, reference, customer_id, *, state, cur
 
 
 def create_reservation(connection, company_id, reference, customer_id, allocations, created_at,
-                       *, state='ENQUIRY_HELD', currency='EUR', notes=''):
+                       *, state='ENQUIRY_HELD', currency='EUR', notes='', respect_workflow_status=False):
     """Create one canonical reservation and its allocations in the caller's write transaction.
 
     Caller must begin a serialised write transaction and check any remaining
@@ -172,7 +183,7 @@ def create_reservation(connection, company_id, reference, customer_id, allocatio
             {'company_id': company_id, 'customer_id': customer_id}).fetchone()
         if customer is None:
             raise ReservationError('Customer does not belong to this client.')
-    validate_allocations(connection, company_id, allocations)
+    validate_allocations(connection, company_id, allocations, respect_workflow_status=respect_workflow_status)
     from .webv1_status_availability import _booking_conflict, _enquiry_conflict
     for item in allocations:
         element_id = int(item['element_id'])
@@ -191,7 +202,7 @@ def create_reservation(connection, company_id, reference, customer_id, allocatio
 
 
 def replace_reservation_elements(connection, company_id, reservation_id, allocations, updated_at,
-                                 *, check_legacy=True):
+                                 *, check_legacy=True, respect_workflow_status=False):
     """Replace all Elements of an editable master record within the caller's transaction."""
     params = {'company_id': company_id, 'reservation_id': reservation_id}
     row = _execute(connection,
@@ -203,7 +214,7 @@ def replace_reservation_elements(connection, company_id, reservation_id, allocat
         raise ReservationError('Cancelled reservations cannot be amended.')
     if not allocations:
         raise ReservationError('A reservation must contain at least one Element.')
-    validate_allocations(connection, company_id, allocations, reservation_id)
+    validate_allocations(connection, company_id, allocations, reservation_id, respect_workflow_status=respect_workflow_status)
     if check_legacy:
         from .webv1_status_availability import _booking_conflict, _enquiry_conflict
         for item in allocations:

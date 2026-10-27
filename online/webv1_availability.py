@@ -288,12 +288,12 @@ def register_availability_routes(app) -> None:
                                   (cid, element_id)).fetchone()
             if element is None:
                 raise HTTPException(status_code=404, detail='Element not found')
-            from .webv1_reservation_core import _execute
+            from .webv1_reservation_core import _execute, OPERATIONAL_BLOCKING_SQL
             canonical = _execute(c,
                 "SELECT r.id FROM reservations r JOIN reservation_elements e "
                 "ON e.company_id=r.company_id AND e.reservation_id=r.id "
                 "WHERE r.company_id=:tenant AND r.state='CONFIRMED' AND e.element_id=:element "
-                "AND e.arrival_date<:departure AND e.departure_date>:arrival LIMIT 1",
+                "AND e.arrival_date<:departure AND e.departure_date>:arrival AND " + OPERATIONAL_BLOCKING_SQL + " LIMIT 1",
                 {'tenant': cid, 'element': element_id, 'arrival': start.isoformat(), 'departure': end.isoformat()}).fetchone()
             if canonical:
                 return RedirectResponse(f'/setup/elements/availability?element_id={element_id}&message=Cannot+close+dates+used+by+a+confirmed+reservation', 303)

@@ -16,6 +16,12 @@ def adopt_company(connection, company_id):
             'WHERE f.company_id=:tenant AND b.id IS NULL LIMIT 1', (company_id,)).fetchone()
         if orphan is not None:
             raise ValueError(f'{table} record {orphan["id"]}: missing or cross-tenant booking owner; source records were preserved')
+    orphan = execute_sql(connection,
+        "SELECT e.id FROM enquiries e WHERE e.company_id=:tenant AND e.status='converted' "
+        'AND NOT EXISTS (SELECT 1 FROM bookings b WHERE b.company_id=e.company_id AND b.enquiry_id=e.id) LIMIT 1',
+        (company_id,)).fetchone()
+    if orphan is not None:
+        raise ValueError(f'Converted enquiry {orphan["id"]}: missing booking owner; source records were preserved')
     imported = {'enquiries': 0, 'bookings': 0, 'history': 0}
     adopted = set()
     enquiries = execute_sql(connection, 'SELECT * FROM enquiries WHERE company_id=:tenant ORDER BY id', (company_id,)).fetchall()
@@ -24,6 +30,15 @@ def adopt_company(connection, company_id):
         if master is None:
             adopted.add(save_enquiry(connection, company_id, enquiry['id']))
             imported['enquiries'] += 1
+        elif master['booking_id'] is None and str(enquiry['status']) != 'converted':
+            expected = 'ENQUIRY_RELEASED' if str(enquiry['status']) == 'closed' else 'ENQUIRY_HELD'
+            if master['state'] != expected:
+                save_enquiry(connection, company_id, enquiry['id'])
+                from .webv1_reservation_service import _history
+                from .database import iso_now
+                _history(connection, company_id, master['id'], 'IDENTITY_STATE_RECONCILED', iso_now(), 'System',
+                         old=master['state'], new=expected,
+                         reason='Lifecycle follows the operational record; configured availability remains separate.')
     bookings = execute_sql(connection, 'SELECT * FROM bookings WHERE company_id=:tenant ORDER BY id', (company_id,)).fetchall()
     for source in bookings:
         source = dict(source)

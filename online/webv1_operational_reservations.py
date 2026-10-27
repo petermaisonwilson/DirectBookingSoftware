@@ -105,7 +105,7 @@ def save_enquiry(connection, company_id, enquiry_id):
             elements = [dict(legacy, arrival_date=source['arrival_date'], departure_date=source['departure_date'])]
     for row in elements:
         _allocation(connection, company_id, rid, row, enquiry_element_id=row.get('id'))
-    state = 'ENQUIRY_RELEASED' if source['status'] == 'closed' or source['blocks_availability'] == 0 else 'ENQUIRY_HELD'
+    state = 'ENQUIRY_RELEASED' if source['status'] == 'closed' else 'ENQUIRY_HELD'
     execute_sql(connection,
         'UPDATE reservations SET state=:state,customer_id=:customer,notes=:notes,total_amount=:total,updated_at=:updated '
         'WHERE company_id=:tenant AND id=:reservation',

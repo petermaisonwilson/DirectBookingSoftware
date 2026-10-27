@@ -48,7 +48,7 @@ def create_enquiry(database, company_id, reference, customer_id, allocations, cr
     with database.reservation_write_transaction(company_id) as connection:
         _check_closures_and_holds(connection, company_id, allocations)
         rid = create_reservation(connection, company_id, reference, customer_id,
-                                 allocations, created_at, currency=currency, notes=notes)
+                                 allocations, created_at, currency=currency, notes=notes, respect_workflow_status=True)
         _history(connection, company_id, rid, 'CREATED', created_at, actor,
                  new='ENQUIRY_HELD', details={'element_count': len(allocations)})
         return rid
@@ -69,7 +69,7 @@ def amend_reservation(database, company_id, reservation_id, allocations, updated
     with database.reservation_write_transaction(company_id) as connection:
         _require_standalone_command(connection, company_id, reservation_id)
         _check_closures_and_holds(connection, company_id, allocations)
-        replace_reservation_elements(connection, company_id, reservation_id, allocations, updated_at)
+        replace_reservation_elements(connection, company_id, reservation_id, allocations, updated_at, respect_workflow_status=True)
         _history(connection, company_id, reservation_id, 'AMENDED', updated_at, actor,
                  reason=reason, details={'element_count': len(allocations)})
 
@@ -86,7 +86,7 @@ def change_reservation_state(database, company_id, reservation_id, state, update
                 'WHERE company_id=:company_id AND reservation_id=:reservation_id',
                 {'company_id': company_id, 'reservation_id': reservation_id}).fetchall()
             _check_closures_and_holds(connection, company_id, allocations)
-        transition(connection, company_id, reservation_id, state, updated_at)
+        transition(connection, company_id, reservation_id, state, updated_at, respect_workflow_status=True)
         _history(connection, company_id, reservation_id, 'STATUS_CHANGED', updated_at, actor,
                  old=_mapping(previous)['state'] if previous else None, new=state, reason=reason)
 

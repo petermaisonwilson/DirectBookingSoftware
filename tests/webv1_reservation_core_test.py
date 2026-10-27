@@ -219,7 +219,9 @@ class ReservationLifecycleTests(unittest.TestCase):
             CREATE TABLE reservations(id INTEGER, company_id INTEGER, state TEXT, enquiry_id INTEGER, booking_id INTEGER);
             CREATE TABLE reservation_elements(id INTEGER, company_id INTEGER, reservation_id INTEGER,
                 element_id INTEGER, arrival_date TEXT, departure_date TEXT, recovery_state TEXT DEFAULT "held");
-            CREATE TABLE bookings(id INTEGER, company_id INTEGER, enquiry_id INTEGER);
+            CREATE TABLE bookings(id INTEGER, company_id INTEGER, enquiry_id INTEGER, workflow_status_id INTEGER);
+            CREATE TABLE enquiries(id INTEGER, company_id INTEGER, workflow_status_id INTEGER);
+            CREATE TABLE booking_status_definitions(id INTEGER, company_id INTEGER, blocks_availability INTEGER);
             INSERT INTO reservations VALUES (1,1,'CONFIRMED',NULL,NULL);
             INSERT INTO reservation_elements (id,company_id,reservation_id,element_id,arrival_date,departure_date) VALUES (1,1,1,10,'2026-11-01','2026-11-05');
         """)
