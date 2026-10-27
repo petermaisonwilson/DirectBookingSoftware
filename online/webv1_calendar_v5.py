@@ -344,6 +344,11 @@ def register_calendar_v5_routes(app) -> None:
                 markup = _bar(label, colour, cols, href=href, css=css)
                 bars += markup.replace('grid-row:1;', f'grid-row:{lane + 1};', 1)
             for booking in bookings:
+                # Terminal and non-blocking bookings remain in history, not inventory.
+                if (str(booking['status']).lower() == 'cancelled'
+                        or str(booking['internal_state'] or '').upper() == 'RELEASED'
+                        or (booking['blocks_availability'] is not None and not int(booking['blocks_availability']))):
+                    continue
                 cols = _cols(booking['arrival_date'], booking['departure_date'], visible_start, visible_end)
                 if staff:
                     customer = (f"{booking['first_name']} {booking['last_name']}").strip() or 'Customer'
