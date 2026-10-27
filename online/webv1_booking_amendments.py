@@ -99,7 +99,7 @@ def amendment_quote(database, company_id: int, booking_id: int, booking_element_
     if prior is not None:
         try: prior_calc=json.loads(prior['calculation_json'] or '{}')
         except (TypeError,json.JSONDecodeError): prior_calc={}
-        element_old_final=float(prior_calc.get('new_element_total') or element_old_final)
+        element_old_final=float(prior_calc['new_element_total']) if 'new_element_total' in prior_calc else element_old_final
     other_total=float(booking['total_amount'])-element_old_final
     new_element_total=round(float(discount['final_amount'])-manual,2)
     new_booking_total=round(other_total+new_element_total,2)
