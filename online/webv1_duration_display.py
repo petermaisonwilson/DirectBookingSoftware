@@ -103,16 +103,16 @@ def install_duration_display(app) -> None:
 }})();</script>'''
             text = text.replace('</body>', script + '</body>', 1)
 
-        elif path.startswith('/operations/bookings/') and path.rstrip('/').split('/')[-1].isdigit():
-            booking_id = int(path.rstrip('/').split('/')[-1])
+        elif (path.startswith('/operations/bookings/') or getattr(request.state, 'reservation_booking_id', None) is not None) and path.rstrip('/').split('/')[-1].isdigit():
+            booking_id = getattr(request.state, 'reservation_booking_id', None) or int(path.rstrip('/').split('/')[-1])
             items = rows(database, "SELECT be.arrival_date,be.departure_date,se.name AS element_name,se.element_type,\n                                             COALESCE(NULLIF(be.pricing_method_snapshot,''),se.pricing_method) AS pricing_method\n                                      FROM booking_elements be\n                                      JOIN setup_elements se ON se.id=be.element_id AND se.company_id=be.company_id\n                                      WHERE be.company_id=:q646_0 AND be.booking_id=:q646_1 ORDER BY be.id", (company_id, booking_id))
             for item in items:
                 old = f'''<strong>{item['element_name']}</strong> ({item['element_type']}) — {_fmt(item['arrival_date'])} to {_fmt(item['departure_date'])}'''
                 new = f'''<strong>{item['element_name']}</strong> ({item['element_type']}) — {_label(item['arrival_date'], item['departure_date'], item['pricing_method'])}'''
                 text = text.replace(old, new, 1)
 
-        elif path.startswith('/operations/enquiries/') and path.rstrip('/').split('/')[-1].isdigit():
-            enquiry_id = int(path.rstrip('/').split('/')[-1])
+        elif (path.startswith('/operations/enquiries/') or getattr(request.state, 'reservation_enquiry_id', None) is not None) and path.rstrip('/').split('/')[-1].isdigit():
+            enquiry_id = getattr(request.state, 'reservation_enquiry_id', None) or int(path.rstrip('/').split('/')[-1])
             item = rows(database, 'SELECT e.arrival_date,e.departure_date,se.pricing_method\n                                     FROM enquiries e\n                                     LEFT JOIN enquiry_requests er ON er.enquiry_id=e.id AND er.company_id=e.company_id\n                                     LEFT JOIN setup_elements se ON se.id=er.element_id AND se.company_id=er.company_id\n                                     WHERE e.company_id=:q647_0 AND e.id=:q647_1 LIMIT 1', (company_id, enquiry_id))
             if item and item[0]['arrival_date'] and item[0]['departure_date'] and item[0]['pricing_method']:
                 r = item[0]

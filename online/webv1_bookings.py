@@ -1,5 +1,6 @@
 from __future__ import annotations
 from .webv1_operational_reservations import insert_financial, save_booking
+from .webv1_reservation_routes import booking_path, enquiry_path
 from .sql import lock_inventory, execute_sql, insert_sql, local_schema, column_rows
 
 import json
@@ -309,7 +310,11 @@ def convert_enquiry_with_payment(database,context,cid,enquiry_id,workflow_status
 
 
 def _history(database, cid: int, booking_id: int):
-    return rows(database, "SELECT a.*,u.first_name,u.last_name FROM audit_log a\n        LEFT JOIN users u ON u.id=a.actor_user_id\n        WHERE a.company_id=:q192_0 AND a.entity_type='booking' AND a.entity_id=:q192_1\n        ORDER BY a.id DESC", (cid, str(booking_id)))
+    return rows(database, "SELECT a.*,u.first_name,u.last_name FROM reservation_history h "
+        "JOIN reservations r ON r.company_id=h.company_id AND r.id=h.reservation_id "
+        "JOIN audit_log a ON a.company_id=h.company_id AND a.id=h.audit_log_id "
+        "LEFT JOIN users u ON u.id=a.actor_user_id "
+        "WHERE r.company_id=:tenant AND r.booking_id=:booking ORDER BY h.created_at DESC,h.id DESC", (cid, booking_id))
 
 
 def register_booking_routes(app) -> None:
@@ -319,14 +324,14 @@ def register_booking_routes(app) -> None:
     def booking_register(request: Request):
         context = context_for(database, request); cid = int(working_company(context))
         data = rows(database, 'SELECT b.*,c.first_name,c.last_name,s.name AS workflow_name,s.colour\n            FROM bookings b LEFT JOIN customer_records c ON c.id=b.customer_id AND c.company_id=b.company_id\n            LEFT JOIN booking_status_definitions s ON s.id=b.workflow_status_id AND s.company_id=b.company_id\n            WHERE b.company_id=:q196_0 ORDER BY b.arrival_date,b.id', (cid,))
-        trs = ''.join(f'''<tr><td><a href="/operations/bookings/{int(r['id'])}">{esc(r['reference'])}</a></td><td>{esc((str(r['first_name'] or '')+' '+str(r['last_name'] or '')).strip() or 'Customer')}</td><td><span style="padding:4px 8px;border-radius:4px;background:{esc(r['colour'] or '#eee')}">{esc(r['workflow_name'] or r['status'])}</span></td><td>{_fmt_day(r['arrival_date'])}</td><td>{_fmt_day(r['departure_date'])}</td><td>{_money(r['total_amount'])}</td></tr>''' for r in data) or '<tr><td colspan="6" class="muted">No Bookings yet.</td></tr>'
+        trs = ''.join(f'''<tr><td><a href="{booking_path(database,cid,int(r['id']))}">{esc(r['reference'])}</a></td><td>{esc((str(r['first_name'] or '')+' '+str(r['last_name'] or '')).strip() or 'Customer')}</td><td><span style="padding:4px 8px;border-radius:4px;background:{esc(r['colour'] or '#eee')}">{esc(r['workflow_name'] or r['status'])}</span></td><td>{_fmt_day(r['arrival_date'])}</td><td>{_fmt_day(r['departure_date'])}</td><td>{_money(r['total_amount'])}</td></tr>''' for r in data) or '<tr><td colspan="6" class="muted">No Bookings yet.</td></tr>'
         body = f'''<h1>Bookings</h1><p><a href="/operations">← Operations</a></p><div class="card"><table><thead><tr><th>Reference</th><th>Customer</th><th>Status</th><th>Arrival</th><th>Departure</th><th>Total</th></tr></thead><tbody>{trs}</tbody></table></div>'''
         return layout('Bookings', body, context)
 
     @app.post('/operations/enquiries/{enquiry_id}/convert')
     async def convert(enquiry_id: int, request: Request):
         context=context_for(database,request); data=await form_data(request); require_csrf(context,data)
-        return RedirectResponse(f'/operations/enquiries/{enquiry_id}/confirm',303)
+        return RedirectResponse(f'{enquiry_path(database,working_company(context),enquiry_id)}/confirm',303)
 
     @app.get('/operations/enquiries/{enquiry_id}/confirm', response_class=HTMLResponse)
     def confirm_booking(enquiry_id: int, request: Request):
@@ -334,9 +339,9 @@ def register_booking_routes(app) -> None:
         enquiry=one(database, 'SELECT e.*,c.first_name,c.last_name FROM enquiries e LEFT JOIN customer_records c ON c.id=e.customer_id AND c.company_id=e.company_id WHERE e.id=:q197_0 AND e.company_id=:q197_1',(enquiry_id,cid))
         if enquiry is None: return RedirectResponse('/operations/enquiries',303)
         if _unresolved_recovery_count(database,cid,enquiry_id):
-            return RedirectResponse(f'/operations/enquiries/{enquiry_id}?convert_error=Resolve+all+unavailable+Elements+before+confirming+this+Enquiry',303)
+            return RedirectResponse(f'{enquiry_path(database,cid,enquiry_id)}?convert_error=Resolve+all+unavailable+Elements+before+confirming+this+Enquiry',303)
         elements=_enquiry_elements(database,cid,enquiry_id)
-        if not elements:return RedirectResponse(f'/operations/enquiries/{enquiry_id}?convert_error=No+bookable+Elements+saved',303)
+        if not elements:return RedirectResponse(f'{enquiry_path(database,cid,enquiry_id)}?convert_error=No+bookable+Elements+saved',303)
         methods=rows(database,'SELECT * FROM payment_method_definitions WHERE company_id=:q198_0 AND active=1 ORDER BY display_order,name',(cid,))
         options=''.join(f'<option value="{int(m["id"])}">{esc(m["name"])}</option>' for m in methods)
         total=sum(float(e['provisional_total'] or 0) for e in elements); first_arrival=min(str(e['arrival_date']) for e in elements); required,reason=payment_due(database,cid,total,first_arrival); customer=(str(enquiry['first_name'] or '')+' '+str(enquiry['last_name'] or '')).strip() or 'Customer'; party=int(enquiry['party_size'] or 0)
@@ -359,7 +364,7 @@ def register_booking_routes(app) -> None:
             element_cards.append(f'<div class="frozen-element"><h3>{esc(e["element_name"])}</h3><p><strong>Stay:</strong> {_fmt_day(e["arrival_date"])} to {_fmt_day(e["departure_date"])}<br><strong>Lead Passenger:</strong> {esc(lead)}<br><strong>People:</strong> {", ".join(people_bits) or "—"}<br><strong>Add-ons:</strong> {", ".join(addons) or "—"}<br><strong>Element total:</strong> {_money(e["provisional_total"])}</p></div>')
         element_summary=''.join(element_cards)
         method_block=f'<div><label>Payment Method</label><select name="payment_method_id" required>{options}</select></div>' if methods else '<div class="error">No active Payment Methods. Add one in Setup before taking payment.</div>'
-        body=f'''<h1>Confirm Booking</h1><p><a href="/operations/enquiries/{enquiry_id}">Back to Enquiry</a></p><div class="card"><h2>{esc(customer)}</h2><p><strong>Stay:</strong> {_fmt_day(enquiry['arrival_date'])} to {_fmt_day(enquiry['departure_date'])}<br><strong>Party:</strong> {party}<br><strong>Booking total:</strong> {_money(total)}<br><strong>Payment Required Now:</strong> {_money(required)}<br><strong>Reason:</strong> {esc(reason)}<br><strong>Payment status:</strong> {pending}</p></div><div class="card"><h2>Booking Elements</h2>{element_summary}</div><div class="card"><h2>Take Payment</h2><p>Minimum required now: <strong>{_money(required)}</strong>. You may take any amount from this minimum up to the full booking total.</p><form method="post" action="/operations/enquiries/{enquiry_id}/confirm-payment"><input type="hidden" name="csrf" value="{esc(context['csrf_token'])}"><div class="grid"><div><label>Amount</label><input name="amount" type="number" step="0.01" min="{required:.2f}" max="{total:.2f}" value="{required:.2f}" required></div><div><label>Payment Date</label><input type="date" name="payment_date" value="{_local_today().isoformat()}" required></div>{method_block}<div><label>Reference</label><input name="reference"></div></div><label>Notes</label><input name="notes"><p><button {'disabled' if not methods else ''}>CONFIRM BOOKING</button></p></form></div><div class="card"><h2>Exception: confirm without payment</h2><p>A reason is compulsory and is written to the audit trail.</p><form method="post" action="/operations/enquiries/{enquiry_id}/confirm-without-payment"><input type="hidden" name="csrf" value="{esc(context['csrf_token'])}"><label>Reason</label><input name="reason" required><p><button class="warning">CONFIRM WITHOUT PAYMENT</button></p></form></div>'''
+        body=f'''<h1>Confirm Booking</h1><p><a href="{enquiry_path(database,cid,enquiry_id)}">Back to Enquiry</a></p><div class="card"><h2>{esc(customer)}</h2><p><strong>Stay:</strong> {_fmt_day(enquiry['arrival_date'])} to {_fmt_day(enquiry['departure_date'])}<br><strong>Party:</strong> {party}<br><strong>Booking total:</strong> {_money(total)}<br><strong>Payment Required Now:</strong> {_money(required)}<br><strong>Reason:</strong> {esc(reason)}<br><strong>Payment status:</strong> {pending}</p></div><div class="card"><h2>Booking Elements</h2>{element_summary}</div><div class="card"><h2>Take Payment</h2><p>Minimum required now: <strong>{_money(required)}</strong>. You may take any amount from this minimum up to the full booking total.</p><form method="post" action="{enquiry_path(database,cid,enquiry_id)}/confirm-payment"><input type="hidden" name="csrf" value="{esc(context['csrf_token'])}"><div class="grid"><div><label>Amount</label><input name="amount" type="number" step="0.01" min="{required:.2f}" max="{total:.2f}" value="{required:.2f}" required></div><div><label>Payment Date</label><input type="date" name="payment_date" value="{_local_today().isoformat()}" required></div>{method_block}<div><label>Reference</label><input name="reference"></div></div><label>Notes</label><input name="notes"><p><button {'disabled' if not methods else ''}>CONFIRM BOOKING</button></p></form></div><div class="card"><h2>Exception: confirm without payment</h2><p>A reason is compulsory and is written to the audit trail.</p><form method="post" action="{enquiry_path(database,cid,enquiry_id)}/confirm-without-payment"><input type="hidden" name="csrf" value="{esc(context['csrf_token'])}"><label>Reason</label><input name="reason" required><p><button class="warning">CONFIRM WITHOUT PAYMENT</button></p></form></div>'''
         return layout('Confirm Booking',body,context)
 
     @app.post('/operations/enquiries/{enquiry_id}/confirm-payment')
@@ -369,23 +374,23 @@ def register_booking_routes(app) -> None:
             method_id=int(data.get('payment_method_id','')); amount=round(float(str(data.get('amount','')).replace(',','.')),2)
             if amount<=0: raise ValueError
             datetime.strptime(str(data.get('payment_date','')),'%Y-%m-%d')
-        except (TypeError,ValueError): return RedirectResponse(f'/operations/enquiries/{enquiry_id}?convert_error=Enter+valid+payment+details',303)
+        except (TypeError,ValueError): return RedirectResponse(f'{enquiry_path(database,cid,enquiry_id)}?convert_error=Enter+valid+payment+details',303)
         method=one(database,'SELECT * FROM payment_method_definitions WHERE company_id=:q199_0 AND id=:q199_1 AND active=1',(cid,method_id))
-        if method is None: return RedirectResponse(f'/operations/enquiries/{enquiry_id}?convert_error=Choose+an+active+Payment+Method',303)
-        if str(method['method_type'])=='card': return RedirectResponse(f'/operations/enquiries/{enquiry_id}?convert_error=Card+provider+connection+is+not+configured+yet',303)
+        if method is None: return RedirectResponse(f'{enquiry_path(database,cid,enquiry_id)}?convert_error=Choose+an+active+Payment+Method',303)
+        if str(method['method_type'])=='card': return RedirectResponse(f'{enquiry_path(database,cid,enquiry_id)}?convert_error=Card+provider+connection+is+not+configured+yet',303)
         total=sum(float(e['provisional_total'] or 0) for e in _enquiry_elements(database,cid,enquiry_id)); status=status_by_system_code(database,cid,'BALANCE_PAID' if round(amount,2)>=round(total,2) else 'DEPOSIT_PAID') or default_status(database,cid,'CONFIRMED')
         try: booking_id=convert_enquiry_with_payment(database,context,cid,enquiry_id,int(status['id']),amount=amount,payment_date=str(data.get('payment_date','')),method=method,reference=str(data.get('reference','')).strip(),notes=str(data.get('notes','')).strip())
-        except ValueError as exc: return RedirectResponse(f'/operations/enquiries/{enquiry_id}?convert_error={esc(str(exc))}',303)
-        return RedirectResponse(f'/operations/bookings/{booking_id}?created=1',303)
+        except ValueError as exc: return RedirectResponse(f'{enquiry_path(database,cid,enquiry_id)}?convert_error={esc(str(exc))}',303)
+        return RedirectResponse(f'{booking_path(database,cid,booking_id)}?created=1',303)
 
     @app.post('/operations/enquiries/{enquiry_id}/confirm-without-payment')
     async def confirm_without_payment(enquiry_id:int,request:Request):
         context=context_for(database,request); cid=int(working_company(context)); data=await form_data(request); require_csrf(context,data); reason=str(data.get('reason','')).strip()
-        if not reason: return RedirectResponse(f'/operations/enquiries/{enquiry_id}?convert_error=A+reason+is+required+to+confirm+without+payment',303)
+        if not reason: return RedirectResponse(f'{enquiry_path(database,cid,enquiry_id)}?convert_error=A+reason+is+required+to+confirm+without+payment',303)
         pending=status_by_system_code(database,cid,'PAYMENT_PENDING') or default_status(database,cid,'RESERVED')
         try: booking_id=convert_enquiry(database,context,cid,enquiry_id,int(pending['id']),authorisation_reason=reason)
-        except (TypeError,ValueError) as exc: return RedirectResponse(f'/operations/enquiries/{enquiry_id}?convert_error={esc(str(exc))}',303)
-        return RedirectResponse(f'/operations/bookings/{booking_id}?created=1&message=Confirmed+without+payment',303)
+        except (TypeError,ValueError) as exc: return RedirectResponse(f'{enquiry_path(database,cid,enquiry_id)}?convert_error={esc(str(exc))}',303)
+        return RedirectResponse(f'{booking_path(database,cid,booking_id)}?created=1&message=Confirmed+without+payment',303)
 
 
     @app.get('/operations/bookings/{booking_id}', response_class=HTMLResponse)
@@ -480,14 +485,14 @@ def register_booking_routes(app) -> None:
         else:
             cancellation_panel = (f'<div class="card"><h2>Cancel Booking</h2>'
                 f'<p>Permanent action: all reserved Elements will be released and cannot be reinstated.</p>'
-                f'<p><a href="/operations/bookings/{booking_id}/cancel">Review Cancellation</a></p></div>')
+                f'<p><a href="{booking_path(database,cid,booking_id)}/cancel">Review Cancellation</a></p></div>')
         refunds = rows(database, 'SELECT * FROM booking_refunds WHERE company_id=:q206_0 AND booking_id=:q206_1 ORDER BY id', (cid,booking_id))
         refunded = round(sum(float(x['amount']) for x in refunds),2)
         refund_rows = ''.join(f'<tr><td>{esc(x["refund_date"])}</td><td>{_money(x["amount"])}</td><td>{esc(x["method"])}</td><td>{esc(x["reference"])}</td><td>{esc(x["notes"])}</td></tr>' for x in refunds) or '<tr><td colspan="5">No refunds recorded.</td></tr>'
         refundable = round(max(0.0,float(cancellation['refund_amount'])-refunded),2) if cancellation else 0.0
         refund_panel = (f'<div class="card"><h2>Refund Settlement</h2><p>Approved refund: {_money(cancellation["refund_amount"])}; recorded as refunded: {_money(refunded)}; remaining to refund: {_money(refundable)}.</p>'
             f'<table><thead><tr><th>Date</th><th>Amount</th><th>Method</th><th>Reference</th><th>Notes</th></tr></thead><tbody>{refund_rows}</tbody></table>'
-            + (f'<form method="post" action="/operations/bookings/{booking_id}/refunds"><input type="hidden" name="csrf" value="{esc(context["csrf_token"])}">'
+            + (f'<form method="post" action="{booking_path(database,cid,booking_id)}/refunds"><input type="hidden" name="csrf" value="{esc(context["csrf_token"])}">'
                f'<label>Amount actually refunded (€)</label><input type="number" name="amount" min="0.01" max="{refundable:.2f}" step="0.01" value="{refundable:.2f}" required>'
                f'<label>Refund date</label><input type="date" name="refund_date" value="{_local_today().isoformat()}" required>'
                f'<label>Refund method</label><input name="method" required><label>Transaction reference</label><input name="reference" required>'
@@ -500,9 +505,9 @@ def register_booking_routes(app) -> None:
         <div class="card"><h2>Booking Status</h2><p><strong>{esc(b['workflow_name'] or b['status'])}</strong></p><p class="muted">Status is controlled automatically by DBS from the booking lifecycle and account balance.</p></div>
         {cancellation_panel}
         {refund_panel}
-        {'<div class="card"><h2>Accommodation locked</h2><p>This booking is permanently cancelled. Financial records and history remain accessible.</p></div>' if cancelled else '<div class="card"><h2>Amend Booking</h2>'}<p class="muted">Preview the price before applying. Original frozen booking values remain in history.</p>{''.join(f'<form method="post" action="/operations/bookings/{booking_id}/amend-preview"><input type="hidden" name="csrf" value="{esc(context["csrf_token"])}"><input type="hidden" name="booking_element_id" value="{int(e["id"])}"><h3>{esc(e["element_name"])}</h3><div class="grid"><div><label>Arrival</label><input type="date" name="arrival_date" value="{esc(e["arrival_date"])}" required></div><div><label>Departure</label><input type="date" name="departure_date" value="{esc(e["departure_date"])}" required></div><div><label>Staff discount</label><input type="number" name="manual_discount" min="0" step="0.01" value="{manual_by_element.get(int(e["id"]),0):.2f}"></div></div><p><button>Preview Amendment</button></p></form>' for e in elements)}{'' if cancelled else '</div>'}
+        {'<div class="card"><h2>Accommodation locked</h2><p>This booking is permanently cancelled. Financial records and history remain accessible.</p></div>' if cancelled else '<div class="card"><h2>Amend Booking</h2>'}<p class="muted">Preview the price before applying. Original frozen booking values remain in history.</p>{''.join(f'<form method="post" action="{booking_path(database,cid,booking_id)}/amend-preview"><input type="hidden" name="csrf" value="{esc(context["csrf_token"])}"><input type="hidden" name="booking_element_id" value="{int(e["id"])}"><h3>{esc(e["element_name"])}</h3><div class="grid"><div><label>Arrival</label><input type="date" name="arrival_date" value="{esc(e["arrival_date"])}" required></div><div><label>Departure</label><input type="date" name="departure_date" value="{esc(e["departure_date"])}" required></div><div><label>Staff discount</label><input type="number" name="manual_discount" min="0" step="0.01" value="{manual_by_element.get(int(e["id"]),0):.2f}"></div></div><p><button>Preview Amendment</button></p></form>' for e in elements)}{'' if cancelled else '</div>'}
         <div class="card"><h2>Frozen Booking</h2>{element_html}<p class="muted">Each element is shown from its own frozen snapshot. Later Setup price changes do not alter this Booking.</p></div>
-        <div class="card"><h2>Payments</h2><table><thead><tr><th>Date</th><th>Amount</th><th>Method</th><th>Reference</th><th>Notes</th></tr></thead><tbody>{payment_rows}</tbody></table><h3>Record payment</h3><form method="post" action="/operations/bookings/{booking_id}/payments"><input type="hidden" name="csrf" value="{esc(context['csrf_token'])}"><div class="grid"><div><label>Amount</label><input name="amount" type="number" min="0.01" step="0.01" value="{balance:.2f}" required></div><div><label>Date</label><input name="payment_date" type="date" value="{_local_today().isoformat()}" required></div><div><label>Method</label><select name="payment_method_id" required>{''.join(f'<option value="{int(m["id"])}">{esc(m["name"])}</option>' for m in rows(database,'SELECT * FROM payment_method_definitions WHERE company_id=:q235_0 AND active=1 ORDER BY display_order,name',(cid,)))}</select></div><div><label>Reference</label><input name="reference"></div></div><label>Notes</label><input name="notes"><p><button>Record Payment</button></p></form></div>
+        <div class="card"><h2>Payments</h2><table><thead><tr><th>Date</th><th>Amount</th><th>Method</th><th>Reference</th><th>Notes</th></tr></thead><tbody>{payment_rows}</tbody></table><h3>Record payment</h3><form method="post" action="{booking_path(database,cid,booking_id)}/payments"><input type="hidden" name="csrf" value="{esc(context['csrf_token'])}"><div class="grid"><div><label>Amount</label><input name="amount" type="number" min="0.01" step="0.01" value="{balance:.2f}" required></div><div><label>Date</label><input name="payment_date" type="date" value="{_local_today().isoformat()}" required></div><div><label>Method</label><select name="payment_method_id" required>{''.join(f'<option value="{int(m["id"])}">{esc(m["name"])}</option>' for m in rows(database,'SELECT * FROM payment_method_definitions WHERE company_id=:q235_0 AND active=1 ORDER BY display_order,name',(cid,)))}</select></div><div><label>Reference</label><input name="reference"></div></div><label>Notes</label><input name="notes"><p><button>Record Payment</button></p></form></div>
         <div class="card"><h2>Booking History</h2><table><thead><tr><th>When</th><th>Who</th><th>What happened</th></tr></thead><tbody>{history_rows}</tbody></table></div>'''
         return layout(f'Booking {b["reference"]}', body, context)
 
@@ -514,7 +519,7 @@ def register_booking_routes(app) -> None:
         b=_booking(database,cid,booking_id)
         if b is None: return HTMLResponse(layout('Not found','<p>Booking not found.</p>',context),404)
         if str(b['status'] or '').lower()=='cancelled' or str(b['internal_state'] or '')=='RELEASED':
-            return RedirectResponse(f'/operations/bookings/{booking_id}?message=Already+cancelled',303)
+            return RedirectResponse(f'{booking_path(database,cid,booking_id)}?message=Already+cancelled',303)
         f=booking_financials(database,cid,booking_id)
         paid=round(float(f['paid']),2)
         body=f'''<h1>Permanent Booking Cancellation — {esc(b['reference'])}</h1>
@@ -524,7 +529,7 @@ def register_booking_routes(app) -> None:
         <strong>Payments received:</strong> {_money(paid)}<br>
         <strong>Outstanding:</strong> {_money(f['outstanding'])}</p>
         <p><strong>WARNING: Cancellation is permanent and cannot be reversed. All Elements will be released.</strong></p>
-        <form method="post" action="/operations/bookings/{booking_id}/cancel">
+        <form method="post" action="{booking_path(database,cid,booking_id)}/cancel">
         <input type="hidden" name="csrf" value="{esc(context['csrf_token'])}">
         <label>Cancellation reason (required)</label><textarea name="reason" required></textarea>
         <label>Decision for payments already received</label>
@@ -535,7 +540,7 @@ def register_booking_routes(app) -> None:
         <label>Refund to be processed later (€)</label><input name="refund_amount" type="number" min="0" max="{paid:.2f}" step="0.01" required value="0.00">
         <label>Financial explanation</label><textarea name="financial_note" required></textarea>
         <label style="display:inline-flex;align-items:center;justify-content:flex-start;gap:8px;width:auto;max-width:100%;cursor:pointer"><input type="checkbox" name="acknowledge" value="yes" required style="width:22px;height:22px;min-width:22px;flex:0 0 22px;margin:0;cursor:pointer"> <span>I authorise cancellation and release of all Elements</span></label>
-        <p><button>Confirm Permanent Cancellation</button> <a href="/operations/bookings/{booking_id}">Go back</a></p>
+        <p><button>Confirm Permanent Cancellation</button> <a href="{booking_path(database,cid,booking_id)}">Go back</a></p>
         </form></div>'''
         return layout('Cancel Booking',body,context)
 
@@ -569,8 +574,8 @@ def register_booking_routes(app) -> None:
                 save_booking(c, cid, booking_id)
                 audit(database, context, cid, 'BOOKING_CANCELLED', 'booking', booking_id, after={'reason': reason, 'refund_decision': decision, 'refund_amount': refund, 'retained_amount': round(paid - refund, 2), 'financial_note': note}, connection=c)
         except ValueError as exc:
-            return HTMLResponse(layout('Cancellation not completed',f'<p>{esc(str(exc))}</p><a href="/operations/bookings/{booking_id}/cancel">Return</a>',context),400)
-        return RedirectResponse(f'/operations/bookings/{booking_id}?message=Booking+cancelled+permanently',303)
+            return HTMLResponse(layout('Cancellation not completed',f'<p>{esc(str(exc))}</p><a href="{booking_path(database,cid,booking_id)}/cancel">Return</a>',context),400)
+        return RedirectResponse(f'{booking_path(database,cid,booking_id)}?message=Booking+cancelled+permanently',303)
 
     @app.post('/operations/bookings/{booking_id}/amend-preview', response_class=HTMLResponse)
     async def amend_preview(booking_id: int, request: Request):
@@ -579,7 +584,7 @@ def register_booking_routes(app) -> None:
             beid=int(data.get('booking_element_id','')); manual=float(str(data.get('manual_discount','0')).replace(',','.'))
             quote=amendment_quote(database,cid,booking_id,beid,str(data.get('arrival_date','')),str(data.get('departure_date','')),manual)
         except (TypeError,ValueError) as exc:
-            return RedirectResponse(f'/operations/bookings/{booking_id}?message='+str(exc).replace(' ','+'),303)
+            return RedirectResponse(f'{booking_path(database,cid,booking_id)}?message='+str(exc).replace(' ','+'),303)
         rule=quote.get('duration_rule') or {}
         discount_line=(f"<p><strong>Duration discount:</strong> {_money(quote['duration_discount'])} — {esc(rule.get('name',''))}</p>" if quote['duration_discount'] else '<p><strong>Duration discount:</strong> €0.00</p>')
         private_note=(f"<p><strong>Private staff discount:</strong> {_money(quote['manual_discount'])}</p>" if quote['manual_discount'] else '')
@@ -589,7 +594,7 @@ def register_booking_routes(app) -> None:
         <strong>Historical portion retained:</strong> {quote['retained_nights']} night(s) — {_money(quote['retained_historic_base'])}<br>
         <strong>New nights at current pricing:</strong> {quote['added_nights']} — {_money(quote['added_current_element']+quote['added_recurring'])}</p>
         {discount_line}{private_note}<p><strong>Old booking total:</strong> {_money(quote['old_booking_total'])}<br><strong>New booking total:</strong> {_money(quote['new_booking_total'])}</p>
-        <form method="post" action="/operations/bookings/{booking_id}/amend-apply"><input type="hidden" name="csrf" value="{esc(context['csrf_token'])}"><input type="hidden" name="quote" value="{payload}"><button>Apply Amendment</button> <a href="/operations/bookings/{booking_id}">Cancel</a></form></div>'''
+        <form method="post" action="{booking_path(database,cid,booking_id)}/amend-apply"><input type="hidden" name="csrf" value="{esc(context['csrf_token'])}"><input type="hidden" name="quote" value="{payload}"><button>Apply Amendment</button> <a href="{booking_path(database,cid,booking_id)}">Cancel</a></form></div>'''
         return layout('Preview Booking Amendment',body,context)
 
     @app.post('/operations/bookings/{booking_id}/amend-apply')
@@ -604,8 +609,8 @@ def register_booking_routes(app) -> None:
                     raise ValueError('The Booking or price has changed. Review a new amendment preview before saving.')
             amendment_id=apply_amendment(database,context,quote)
         except (KeyError,TypeError,ValueError,json.JSONDecodeError) as exc:
-            return RedirectResponse(f'/operations/bookings/{booking_id}?message='+str(exc).replace(' ','+'),303)
-        return RedirectResponse(f'/operations/bookings/{booking_id}?message=Booking+amended',303)
+            return RedirectResponse(f'{booking_path(database,cid,booking_id)}?message='+str(exc).replace(' ','+'),303)
+        return RedirectResponse(f'{booking_path(database,cid,booking_id)}?message=Booking+amended',303)
 
 
     @app.post('/operations/bookings/{booking_id}/refunds')
@@ -630,8 +635,8 @@ def register_booking_routes(app) -> None:
                 refund_id=insert_financial(c, 'booking_refunds', cid,booking_id,amount,date,method,reference,str(data.get('notes','')).strip(),context['user_id'],iso_now())
                 audit(database, context, cid, 'BOOKING_REFUND_RECORDED', 'booking', booking_id, after={'refund_id': refund_id, 'amount': amount, 'method': method, 'reference': reference, 'refund_date': date}, connection=c)
         except (ValueError,TypeError) as exc:
-            return HTMLResponse(layout('Refund not recorded',f'<p>{esc(str(exc))}</p><a href="/operations/bookings/{booking_id}">Return to booking</a>',context),400)
-        return RedirectResponse(f'/operations/bookings/{booking_id}?message=Refund+recorded',303)
+            return HTMLResponse(layout('Refund not recorded',f'<p>{esc(str(exc))}</p><a href="{booking_path(database,cid,booking_id)}">Return to booking</a>',context),400)
+        return RedirectResponse(f'{booking_path(database,cid,booking_id)}?message=Refund+recorded',303)
 
     @app.post('/operations/bookings/{booking_id}/payments')
     async def add_payment(booking_id: int, request: Request):
@@ -643,24 +648,24 @@ def register_booking_routes(app) -> None:
             if amount <= 0:
                 raise ValueError
         except ValueError:
-            return RedirectResponse(f'/operations/bookings/{booking_id}?message=Enter+a+valid+payment+amount', 303)
+            return RedirectResponse(f'{booking_path(database,cid,booking_id)}?message=Enter+a+valid+payment+amount', 303)
         payment_date = str(data.get('payment_date', '')).strip()
         try:
             datetime.strptime(payment_date, '%Y-%m-%d')
         except ValueError:
-            return RedirectResponse(f'/operations/bookings/{booking_id}?message=Enter+a+valid+payment+date', 303)
+            return RedirectResponse(f'{booking_path(database,cid,booking_id)}?message=Enter+a+valid+payment+date', 303)
         try: method_id=int(data.get('payment_method_id',''))
-        except (TypeError,ValueError): return RedirectResponse(f'/operations/bookings/{booking_id}?message=Choose+an+active+Payment+Method',303)
+        except (TypeError,ValueError): return RedirectResponse(f'{booking_path(database,cid,booking_id)}?message=Choose+an+active+Payment+Method',303)
         method=one(database,'SELECT * FROM payment_method_definitions WHERE company_id=:q207_0 AND id=:q207_1 AND active=1',(cid,method_id))
-        if method is None: return RedirectResponse(f'/operations/bookings/{booking_id}?message=Choose+an+active+Payment+Method',303)
-        if str(method['method_type'])=='card': return RedirectResponse(f'/operations/bookings/{booking_id}?message=Card+provider+connection+is+not+configured+yet',303)
+        if method is None: return RedirectResponse(f'{booking_path(database,cid,booking_id)}?message=Choose+an+active+Payment+Method',303)
+        if str(method['method_type'])=='card': return RedirectResponse(f'{booking_path(database,cid,booking_id)}?message=Card+provider+connection+is+not+configured+yet',303)
         with database.reservation_write_transaction(cid) as c:
             payment_id = insert_financial(c, 'booking_payments', cid, booking_id, amount, payment_date, str(method['name']), str(data.get('reference','')).strip(), str(data.get('notes','')).strip(), context['user_id'], iso_now())
             total=float(execute_sql(c, 'SELECT total_amount FROM bookings WHERE id=:q236_0 AND company_id=:q236_1',(booking_id,cid)).fetchone()['total_amount'])
             paid=float(execute_sql(c, 'SELECT COALESCE(SUM(amount),0) AS n FROM booking_payments WHERE booking_id=:q237_0 AND company_id=:q237_1',(booking_id,cid)).fetchone()['n'])
             sync_payment_status(database,cid,booking_id,connection=c,context=context)
             audit(database, context, cid, 'BOOKING_PAYMENT_RECORDED', 'booking', booking_id, after={'payment_id': payment_id, 'amount': amount, 'payment_date': payment_date, 'method': str(method['name']), 'reference': str(data.get('reference', '')).strip()}, connection=c)
-        return RedirectResponse(f'/operations/bookings/{booking_id}?message=Payment+recorded', 303)
+        return RedirectResponse(f'{booking_path(database,cid,booking_id)}?message=Payment+recorded', 303)
 
 
 def _unresolved_recovery_count(database,cid:int,enquiry_id:int)->int:
@@ -675,9 +680,9 @@ def enquiry_conversion_panel(database, context, enquiry_id: int) -> str:
     cid = int(working_company(context))
     existing = one(database, 'SELECT id,reference FROM bookings WHERE company_id=:q193_0 AND enquiry_id=:q193_1 ORDER BY id DESC LIMIT 1', (cid, enquiry_id))
     if existing:
-        return f'<div class="card"><h2>Booking</h2><p>This Enquiry has been converted to <a href="/operations/bookings/{int(existing["id"])}"><strong>{esc(existing["reference"])}</strong></a>.</p></div>'
+        return f'<div class="card"><h2>Booking</h2><p>This Enquiry has been converted to <a href="{booking_path(database,cid,int(existing["id"]))}"><strong>{esc(existing["reference"])}</strong></a>.</p></div>'
     unresolved=_unresolved_recovery_count(database,cid,enquiry_id)
     if unresolved:
         return f'<div class="card" style="border:2px solid #b42318"><h2>Confirm Booking</h2><p><strong>{unresolved} Element(s) require replacement.</strong> Resolve the red unavailable Element(s) above before this Enquiry can be confirmed.</p><button disabled>CONFIRM BOOKING</button></div>'
-    booking_html = f'''<div class="card"><h2>Confirm Booking</h2><p>Continue to Take Payment. The Booking is not created until payment is recorded or deliberately confirmed without payment.</p><form method="post" action="/operations/enquiries/{enquiry_id}/convert"><input type="hidden" name="csrf" value="{esc(context['csrf_token'])}"><p><button>CONFIRM BOOKING</button></p></form></div>'''
+    booking_html = f'''<div class="card"><h2>Confirm Booking</h2><p>Continue to Take Payment. The Booking is not created until payment is recorded or deliberately confirmed without payment.</p><form method="post" action="{enquiry_path(database,cid,enquiry_id)}/convert"><input type="hidden" name="csrf" value="{esc(context['csrf_token'])}"><p><button>CONFIRM BOOKING</button></p></form></div>'''
     return booking_html

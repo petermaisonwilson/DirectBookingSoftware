@@ -1,5 +1,5 @@
 from __future__ import annotations
-from operational_backend import create_app
+from operational_backend import create_app, reservation_id_for, source_id_from_location
 from online.sql import execute_sql, insert_sql
 
 import sys
@@ -130,8 +130,8 @@ def main() -> None:
 
         saved = client.post('/availability/basket/customer', data=customer_payload | {'existing_customer_id': str(customer_id)}, follow_redirects=False)
         assert saved.status_code == 303
-        assert saved.headers['location'].startswith('/operations/enquiries/')
-        enquiry_id = int(saved.headers['location'].split('/')[3].split('?')[0])
+        enquiry_id = source_id_from_location(db, cid, saved.headers['location'], kind='enquiry')
+        reservation_id = reservation_id_for(db, cid, enquiry_id=enquiry_id)
         # TEST DATA ONLY: a newly-created Enquiry is holding space for the first
         # time. "HELD AGAIN" is reserved for an Enquiry that has actually been reopened.
         new_enquiry_page = client.get(f'/operations/enquiries/{enquiry_id}')
@@ -203,8 +203,8 @@ def main() -> None:
         second_state=availability_state(db,cid,element2_id,'2036-08-15','2036-08-18')
         assert first_state['available'] is False and first_state['state']=='ENQUIRY' and int(first_state['enquiry_id'])==enquiry_id
         holding_report=client.get('/operations/enquiries?holding=1')
-        assert holding_report.status_code==200 and f'<a href="/operations/enquiries/{enquiry_id}">#{enquiry_id}</a>' in holding_report.text
-        enquiry_anchor=f'<a href="/operations/enquiries/{enquiry_id}">#{enquiry_id}</a>'
+        assert holding_report.status_code==200 and f'<a href="/operations/reservations/{reservation_id}">#{enquiry_id}</a>' in holding_report.text
+        enquiry_anchor=f'<a href="/operations/reservations/{reservation_id}">#{enquiry_id}</a>'
         enquiry_row=holding_report.text.split(enquiry_anchor,1)[1].split('</tr>',1)[0]
         assert 'Holding Space' in enquiry_row and 'RELEASE ENQUIRY' in enquiry_row
         assert second_state['available'] is False and second_state['state']=='ENQUIRY' and int(second_state['enquiry_id'])==enquiry_id
@@ -249,7 +249,9 @@ def main() -> None:
         assert calendar.status_code==200
         assert 'REPLACE UNAVAILABLE ELEMENT' in calendar.text and 'Bridge Pitch B' in calendar.text
         assert 'USE REPLACEMENT' in calendar.text
-        replacement=client.post(f'/operations/enquiries/{enquiry_id}/elements/{missing_eeid}/replace',data={'csrf':csrf,'element_id':element3_id,'arrival_date':'2036-08-16','departure_date':'2036-08-19'})
+        with db.connect() as c:
+            allocation_id = int(execute_sql(c, 'SELECT id FROM reservation_elements WHERE company_id=:tenant AND reservation_id=:reservation AND enquiry_element_id=:element', (cid, reservation_id, missing_eeid)).fetchone()[0])
+        replacement=client.post(f'/operations/reservations/{reservation_id}/elements/{allocation_id}/replace',data={'csrf':csrf,'element_id':element3_id,'arrival_date':'2036-08-16','departure_date':'2036-08-19'})
         assert replacement.status_code==200 and replacement.json()['ok'] is True and replacement.json()['remaining_replacements']==0
         with db.connect() as c:
             changed=execute_sql(c, 'SELECT element_id,arrival_date,departure_date,recovery_state FROM enquiry_elements WHERE id=:q458_0',(missing_eeid,)).fetchone()

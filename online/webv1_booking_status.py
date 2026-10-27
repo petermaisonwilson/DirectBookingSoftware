@@ -278,7 +278,7 @@ def register_booking_status_routes(app) -> None:
         context = context_for(database, request); cid = int(working_company(context)); data = await form_data(request); require_csrf(context, data)
         try: booking_id = int(data.get('booking_id', '')); status_id = int(data.get('status_id', ''))
         except ValueError: return RedirectResponse('/availability/calendar', 303)
-        with database.connect() as c:
+        with database.reservation_write_transaction(cid) as c:
             booking = execute_sql(c, 'SELECT * FROM bookings WHERE id=:q407_0 AND company_id=:q407_1', (booking_id, cid)).fetchone()
             status = execute_sql(c, 'SELECT * FROM booking_status_definitions WHERE id=:q408_0 AND company_id=:q408_1 AND active=1', (status_id, cid)).fetchone()
             if booking is None or status is None: return RedirectResponse('/availability/calendar', 303)
@@ -288,12 +288,17 @@ def register_booking_status_routes(app) -> None:
                 'SELECT internal_state FROM booking_status_definitions WHERE id=:q409_0 AND company_id=:q409_1',
                 (booking['workflow_status_id'], cid),
             ).fetchone()
-            if current is not None and str(current['internal_state']) == 'RELEASED':
+            if str(booking['status']) == 'cancelled' or (current is not None and str(current['internal_state']) == 'RELEASED'):
                 return RedirectResponse(f'/operations/bookings/{booking_id}?message=Cancelled+bookings+cannot+be+reinstated', 303)
             if str(status['internal_state']) == 'RELEASED':
                 return RedirectResponse(f'/operations/bookings/{booking_id}?message=Use+the+authorised+cancellation+procedure', 303)
+            from .webv1_operational_reservations import identity, save_booking
+            from .reservation_identity_upgrade import adopt_company
+            if identity(c, cid, booking_id=booking_id) is None:
+                adopt_company(c, cid)
             before = dict(booking)
             execute_sql(c, 'UPDATE bookings SET workflow_status_id=:q402_0,updated_at=:q402_1 WHERE id=:q402_2 AND company_id=:q402_3', (status_id, iso_now(), booking_id, cid))
-        audit(database, context, cid, 'BOOKING_STATUS_CHANGED', 'booking', booking_id, before,
-              {'workflow_status_id': status_id, 'status_name': status['name'], 'internal_state': status['internal_state'], 'blocks_availability': int(status['blocks_availability'])})
+            save_booking(c, cid, booking_id)
+            audit(database, context, cid, 'BOOKING_STATUS_CHANGED', 'booking', booking_id, before,
+                  {'workflow_status_id': status_id, 'status_name': status['name'], 'internal_state': status['internal_state'], 'blocks_availability': int(status['blocks_availability'])}, connection=c)
         return RedirectResponse(f'/operations/bookings/{booking_id}', 303)

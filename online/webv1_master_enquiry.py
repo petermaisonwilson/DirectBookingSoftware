@@ -311,4 +311,4 @@ def register_master_enquiry_routes(app):
             return HTMLResponse(layout('Enquiry unavailable',
                                         f'<div class="error">{esc(str(exc))}</div>', context),
                                 status_code=409)
-        return RedirectResponse(f'/operations/master-reservations/{rid}', status_code=303)
+        return RedirectResponse(f'/operations/reservations/{rid}', status_code=303)

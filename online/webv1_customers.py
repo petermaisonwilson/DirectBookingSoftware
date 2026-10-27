@@ -1,4 +1,5 @@
 from __future__ import annotations
+from .webv1_reservation_routes import booking_path, enquiry_path
 from .sql import execute_sql, insert_sql, column_rows
 
 import re
@@ -170,11 +171,11 @@ def register_customer_routes(app) -> None:
         enquiries = rows(database, 'SELECT * FROM enquiries WHERE customer_id=:q378_0 AND company_id=:q378_1 ORDER BY id DESC', (customer_id, company_id))
         bookings = rows(database, 'SELECT * FROM bookings WHERE customer_id=:q379_0 AND company_id=:q379_1 ORDER BY arrival_date DESC,id DESC', (customer_id, company_id))
         enquiry_rows = ''.join(
-            f'''<tr><td><a href="/operations/enquiries/{int(row['id'])}">#{int(row['id'])}</a></td><td>{esc(row['status'].title())}</td><td>{esc(row['arrival_date'] or '—')}</td><td>{esc(row['departure_date'] or '—')}</td><td>{esc(row['party_size'] if row['party_size'] is not None else '—')}</td><td>{esc(row['source'] or '—')}</td></tr>'''
+            f'''<tr><td><a href="{enquiry_path(database,working_company(context),int(row['id']))}">#{int(row['id'])}</a></td><td>{esc(row['status'].title())}</td><td>{esc(row['arrival_date'] or '—')}</td><td>{esc(row['departure_date'] or '—')}</td><td>{esc(row['party_size'] if row['party_size'] is not None else '—')}</td><td>{esc(row['source'] or '—')}</td></tr>'''
             for row in enquiries
         ) or '<tr><td colspan="6" class="muted">No Enquiries yet.</td></tr>'
         booking_rows = ''.join(
-            f'''<tr><td><a href="/operations/bookings/{int(row['id'])}">{esc(row['reference'])}</a></td><td>{esc(row['status'].title())}</td><td>{esc(row['arrival_date'])}</td><td>{esc(row['departure_date'])}</td><td>€{float(row['total_amount'] or 0):.2f}</td></tr>'''
+            f'''<tr><td><a href="{booking_path(database,working_company(context),int(row['id']))}">{esc(row['reference'])}</a></td><td>{esc(row['status'].title())}</td><td>{esc(row['arrival_date'])}</td><td>{esc(row['departure_date'])}</td><td>€{float(row['total_amount'] or 0):.2f}</td></tr>'''
             for row in bookings
         ) or '<tr><td colspan="5" class="muted">No Bookings yet.</td></tr>'
         notice = '<div class="ok">Customer created.</div>' if created else ('<div class="ok">Enquiry created.</div>' if enquiry_created else '')
@@ -223,14 +224,14 @@ def register_customer_routes(app) -> None:
             return HTMLResponse(layout('Booking not found', '<div class="error">Booking not found.</div>', context), 404)
         current = one(database, 'SELECT * FROM customer_records WHERE id=:q386_0 AND company_id=:q386_1', (booking['customer_id'], company_id)) if booking['customer_id'] else None
         if current is None:
-            body = f'''<h1>Customer match for {esc(booking['reference'])}</h1><div class="error">This Booking does not yet have Customer contact details to match.</div><p><a href="/operations/bookings/{booking_id}">← Booking</a></p>'''
+            body = f'''<h1>Customer match for {esc(booking['reference'])}</h1><div class="error">This Booking does not yet have Customer contact details to match.</div><p><a href="{booking_path(database,working_company(context),booking_id)}">← Booking</a></p>'''
             return layout('Customer match', body, context)
         matches = customer_matches(database, company_id, email=current['email'], mobile_phone=current['mobile_phone'] or current['phone'], fixed_phone=current['fixed_phone'], exclude_customer_id=int(current['id']))
         rows_html = []
         for row, reasons in matches:
-            rows_html.append(f'''<tr><td>{esc(_customer_name(row))}</td><td>{esc(' + '.join(reasons))}</td><td>{int(row['booking_count'] or 0)} previous Booking(s)</td><td><form method="post" action="/operations/bookings/{booking_id}/link-customer"><input type="hidden" name="csrf" value="{esc(context['csrf_token'])}"><input type="hidden" name="customer_id" value="{int(row['id'])}"><button type="submit">Add Booking to this Customer master file</button></form></td></tr>''')
+            rows_html.append(f'''<tr><td>{esc(_customer_name(row))}</td><td>{esc(' + '.join(reasons))}</td><td>{int(row['booking_count'] or 0)} previous Booking(s)</td><td><form method="post" action="{booking_path(database,working_company(context),booking_id)}/link-customer"><input type="hidden" name="csrf" value="{esc(context['csrf_token'])}"><input type="hidden" name="customer_id" value="{int(row['id'])}"><button type="submit">Add Booking to this Customer master file</button></form></td></tr>''')
         table = '<table><thead><tr><th>Possible existing Customer</th><th>Match</th><th>History</th><th>Client decision</th></tr></thead><tbody>' + ''.join(rows_html) + '</tbody></table>' if rows_html else '<p class="muted">No existing Customer matches the booking contact details.</p>'
-        body = f'''<h1>Customer match for {esc(booking['reference'])}</h1><p><a href="/operations/bookings/{booking_id}">← Booking</a></p><div class="card"><p><strong>Current booking contact:</strong> {esc(_customer_name(current))} — {esc(current['email'])} — {esc(current['mobile_phone'] or current['phone'])}</p><p>DBS will never merge or relink this Booking automatically.</p>{table}</div>'''
+        body = f'''<h1>Customer match for {esc(booking['reference'])}</h1><p><a href="{booking_path(database,working_company(context),booking_id)}">← Booking</a></p><div class="card"><p><strong>Current booking contact:</strong> {esc(_customer_name(current))} — {esc(current['email'])} — {esc(current['mobile_phone'] or current['phone'])}</p><p>DBS will never merge or relink this Booking automatically.</p>{table}</div>'''
         return layout('Customer match', body, context)
 
     @app.post('/operations/bookings/{booking_id}/link-customer')
@@ -256,4 +257,4 @@ def register_customer_routes(app) -> None:
             execute_sql(connection, 'UPDATE bookings SET customer_id=:q387_0,updated_at=:q387_1 WHERE id=:q387_2 AND company_id=:q387_3', (customer_id, iso_now(), booking_id, company_id))
             save_booking(connection, company_id, booking_id)
             audit(database, context, company_id, 'BOOKING_LINKED_TO_CUSTOMER', 'booking', booking_id, before={'customer_id': previous_customer_id}, after={'customer_id': customer_id}, connection=connection)
-        return RedirectResponse(f'/operations/bookings/{booking_id}?message=Booking+added+to+existing+Customer+master+file', 303)
+        return RedirectResponse(f'{booking_path(database,working_company(context),booking_id)}?message=Booking+added+to+existing+Customer+master+file', 303)

@@ -56,3 +56,30 @@ def cleanup():
         with admin.begin() as c:
             c.execute(text('DROP SCHEMA ' + schema + ' CASCADE'))
         admin.dispose()
+
+
+def reservation_id_for(database, company_id, *, enquiry_id=None, booking_id=None):
+    """Read the persisted identity for source-based compatibility assertions."""
+    from online.sql import execute_sql
+    assert (enquiry_id is None) != (booking_id is None)
+    column, value = ('enquiry_id', enquiry_id) if enquiry_id is not None else ('booking_id', booking_id)
+    with database.connect() as connection:
+        row = execute_sql(connection, f'SELECT id FROM reservations WHERE company_id=:tenant AND {column}=:source',
+                          (company_id, value)).fetchone()
+    assert row is not None, 'The operational record must retain its canonical reservation identity'
+    return int(row[0])
+
+
+def source_id_from_location(database, company_id, location, *, kind):
+    """Validate a canonical redirect before resolving a fixture's legacy ID."""
+    from online.sql import execute_sql
+    from urllib.parse import urlparse
+    import re
+    match = re.fullmatch(r'/operations/reservations/(\d+)', urlparse(location).path)
+    assert match, location
+    assert kind in ('enquiry', 'booking')
+    with database.connect() as connection:
+        row = execute_sql(connection, f'SELECT {kind}_id FROM reservations WHERE company_id=:tenant AND id=:reservation',
+                          (company_id, int(match.group(1)))).fetchone()
+    assert row is not None and row[0] is not None, 'Redirect must resolve to the expected operational record'
+    return int(row[0])

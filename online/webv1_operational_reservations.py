@@ -39,6 +39,13 @@ def _allocation(connection, company_id, reservation_id, item, *, enquiry_element
                 (company_id, value)).fetchone()
             if existing is not None:
                 break
+    if enquiry_element_id is None and booking_element_id is None:
+        old = execute_sql(connection,
+            'SELECT id,reservation_id FROM reservation_elements WHERE company_id=:tenant AND reservation_id=:reservation '
+            'AND enquiry_element_id IS NULL AND booking_element_id IS NULL', (company_id, reservation_id)).fetchall()
+        if len(old) > 1:
+            raise ValueError('Ambiguous single-element enquiry allocation')
+        existing = old[0] if old else None
     if existing is not None and int(existing['reservation_id']) != int(reservation_id):
         raise ValueError('Element belongs to another reservation')
     if booking_element_id is not None:
@@ -83,11 +90,17 @@ def save_enquiry(connection, company_id, enquiry_id):
     if master is not None and master['state'] in ('CONFIRMED', 'CANCELLED'):
         raise ValueError('Confirmed reservation requirements must be changed through its booking')
     rid = int(master['id']) if master else _create(connection, company_id, source, enquiry_id=enquiry_id)
-    elements = execute_sql(connection,
+    elements = [dict(row) for row in execute_sql(connection,
         'SELECT * FROM enquiry_elements WHERE company_id=:tenant AND enquiry_id=:enquiry ORDER BY sort_order,id',
-        (company_id, enquiry_id)).fetchall()
+        (company_id, enquiry_id)).fetchall()]
+    if not elements and source['arrival_date'] and source['departure_date']:
+        legacy = execute_sql(connection,
+            'SELECT element_id,provisional_total,pricing_snapshot_json FROM enquiry_requests '
+            'WHERE company_id=:tenant AND enquiry_id=:enquiry AND element_id IS NOT NULL', (company_id, enquiry_id)).fetchone()
+        if legacy is not None:
+            elements = [dict(legacy, arrival_date=source['arrival_date'], departure_date=source['departure_date'])]
     for row in elements:
-        _allocation(connection, company_id, rid, dict(row), enquiry_element_id=row['id'])
+        _allocation(connection, company_id, rid, row, enquiry_element_id=row.get('id'))
     state = 'ENQUIRY_RELEASED' if source['status'] == 'closed' or source['blocks_availability'] == 0 else 'ENQUIRY_HELD'
     execute_sql(connection,
         'UPDATE reservations SET state=:state,customer_id=:customer,notes=:notes,total_amount=:total,updated_at=:updated '
@@ -116,6 +129,11 @@ def confirm_enquiry(connection, company_id, enquiry_id, booking_id, element_pair
                 (booking_element_id, company_id, rid, enquiry_element_id))
             if result.rowcount != 1:
                 raise ValueError('Original enquiry allocation is missing')
+        elif len(element_pairs) == 1:
+            execute_sql(connection,
+                'UPDATE reservation_elements SET booking_element_id=:booking_element '
+                'WHERE company_id=:tenant AND reservation_id=:reservation AND enquiry_element_id IS NULL AND booking_element_id IS NULL',
+                (booking_element_id, company_id, rid))
     return save_booking(connection, company_id, booking_id)
 
 

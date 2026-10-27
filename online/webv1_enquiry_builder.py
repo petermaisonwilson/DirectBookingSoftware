@@ -1,4 +1,5 @@
 from __future__ import annotations
+from .webv1_reservation_routes import enquiry_path, booking_path
 from .sql import lock_inventory, execute_sql, insert_sql, column_rows
 
 import json
@@ -248,7 +249,7 @@ def _form_page(database, context, customer, values: dict[str,str], *, enquiry_id
     if selected_type not in type_names: selected_type=''; selected_element_id=0
     type_options='<option value="">-- not decided yet --</option>'+''.join(f'<option value="{esc(n)}" {"selected" if n==selected_type else ""}>{esc(n)}</option>' for n in type_names)
     element_options='<option value="">-- no specific Element yet --</option>'+''.join(f'<option value="{int(e["id"])}" data-type="{esc(e["element_type"])}" {"selected" if int(e["id"])==selected_element_id else ""}>{esc(e["name"])}</option>' for e in elements)
-    error_html=f'<div class="error">{esc(message)}</div>' if message else ''; title=f'Edit Enquiry #{enquiry_id}' if enquiry_id else 'New Enquiry'; back=f'/operations/enquiries/{enquiry_id}' if enquiry_id else f'/operations/customers/{int(customer["id"])}'; action=f'/operations/enquiries/{enquiry_id}/edit' if enquiry_id else f'/operations/customers/{int(customer["id"])}/enquiries/new'
+    error_html=f'<div class="error">{esc(message)}</div>' if message else ''; title=f'Edit Enquiry #{enquiry_id}' if enquiry_id else 'New Enquiry'; back=f'{enquiry_path(database,working_company(context),enquiry_id)}' if enquiry_id else f'/operations/customers/{int(customer["id"])}'; action=f'{enquiry_path(database,working_company(context),enquiry_id)}/edit' if enquiry_id else f'/operations/customers/{int(customer["id"])}/enquiries/new'
     def style(key): return 'border:2px solid #c62828;' if key in errors else ''
     edit_notice = '<div class="ok"><strong>Current space remains held while you edit.</strong> Nothing changes until you save. If the proposed Element or dates are unavailable, the existing hold is kept.</div>' if enquiry_id else ''
     current_summary = ''
@@ -449,14 +450,14 @@ def register_enquiry_builder_routes(app)->None:
             eid=_save(database,context,cid,customer_id,basic|values,calculation)
         except ValueError as exc:
             return HTMLResponse(_form_page(database,context,customer,values,message=str(exc)),409)
-        return RedirectResponse(f'/operations/enquiries/{eid}?saved=1',303)
+        return RedirectResponse(f'{enquiry_path(database,cid,eid)}?saved=1',303)
     @app.get('/operations/enquiries/{enquiry_id}/edit',response_class=HTMLResponse)
     def edit(enquiry_id:int,request:Request):
         context=context_for(database,request); cid=working_company(context); enquiry=_enquiry(database,cid,enquiry_id)
         if enquiry is None:return HTMLResponse(layout('Enquiry not found','<div class="error">Enquiry not found.</div>',context),404)
         if str(enquiry['status'] or '').lower() == 'converted':
             booking=one(database,'SELECT id,reference FROM bookings WHERE company_id=:q125_0 AND enquiry_id=:q125_1 ORDER BY id DESC LIMIT 1',(cid,enquiry_id))
-            destination=f'/operations/bookings/{int(booking["id"])}' if booking is not None else f'/operations/enquiries/{enquiry_id}'
+            destination=f'{booking_path(database,working_company(context),int(booking["id"]))}' if booking is not None else f'{enquiry_path(database,working_company(context),enquiry_id)}'
             return RedirectResponse(destination,303)
         return _form_page(database,context,_customer(database,cid,int(enquiry['customer_id'])),_saved_values(database,cid,enquiry),enquiry_id=enquiry_id)
     @app.post('/operations/enquiries/{enquiry_id}/edit',response_class=HTMLResponse)
@@ -465,11 +466,11 @@ def register_enquiry_builder_routes(app)->None:
         if enquiry is None:return HTMLResponse(layout('Enquiry not found','<div class="error">Enquiry not found.</div>',context),404)
         if str(enquiry['status'] or '').lower() == 'converted':
             booking=one(database,'SELECT id,reference FROM bookings WHERE company_id=:q126_0 AND enquiry_id=:q126_1 ORDER BY id DESC LIMIT 1',(cid,enquiry_id))
-            destination=f'/operations/bookings/{int(booking["id"])}' if booking is not None else f'/operations/enquiries/{enquiry_id}'
+            destination=f'{booking_path(database,working_company(context),int(booking["id"]))}' if booking is not None else f'{enquiry_path(database,working_company(context),enquiry_id)}'
             return RedirectResponse(destination,303)
         element_count=int(one(database,'SELECT COUNT(*) AS n FROM enquiry_elements WHERE enquiry_id=:q133_0 AND company_id=:q133_1',(enquiry_id,cid))['n'])
         if element_count > 1:
-            return HTMLResponse(layout(f'Edit Enquiry #{enquiry_id}',f'<h1>Edit Enquiry #{enquiry_id}</h1><p><a href="/operations/enquiries/{enquiry_id}">← Back</a></p><div class="error"><strong>This Enquiry contains {element_count} Elements.</strong><br>DBS has not changed anything. Return to the Enquiry and choose the Element you want to change.</div>',context),409)
+            return HTMLResponse(layout(f'Edit Enquiry #{enquiry_id}',f'<h1>Edit Enquiry #{enquiry_id}</h1><p><a href="{enquiry_path(database,working_company(context),enquiry_id)}">← Back</a></p><div class="error"><strong>This Enquiry contains {element_count} Elements.</strong><br>DBS has not changed anything. Return to the Enquiry and choose the Element you want to change.</div>',context),409)
         customer=_customer(database,cid,int(enquiry['customer_id'])); data=await form_data(request); require_csrf(context,data); values=dict(data); basic=_basic_values(data); _,_,date_error=_validate_dates(basic)
         if date_error:return HTMLResponse(_form_page(database,context,customer,values,enquiry_id=enquiry_id,errors={'arrival_date','departure_date'},message=date_error),400)
         calculation=None; action=data.get('action','save')
@@ -499,16 +500,16 @@ def register_enquiry_builder_routes(app)->None:
             lock_inventory(locked, cid)
             current = execute_sql(locked, 'SELECT status FROM enquiries WHERE company_id=:tenant AND id=:enquiry', (cid, enquiry_id)).fetchone()
             if current is None or str(current['status']) == 'converted':
-                return RedirectResponse(f'/operations/enquiries/{enquiry_id}', 303)
+                return RedirectResponse(f'{enquiry_path(database,working_company(context),enquiry_id)}', 303)
             if calculation and _int_or_zero(basic['element_id']):
                 final_state=availability_state(database,cid,_int_or_zero(basic['element_id']),basic['arrival_date'],basic['departure_date'],exclude_enquiry_id=enquiry_id)
                 if not final_state.get('available'):
                     msg='Changes not saved. Your existing held space is unchanged. '+str(final_state.get('reason') or 'The proposed Element or dates are not available.')
                     return HTMLResponse(_form_page(database,context,customer,values,enquiry_id=enquiry_id,message=msg),409)
             _save(database,context,cid,int(enquiry['customer_id']),save_values,calculation,enquiry_id=enquiry_id,locked_connection=locked)
-        return RedirectResponse(f'/operations/enquiries/{enquiry_id}?saved=1',303)
+        return RedirectResponse(f'{enquiry_path(database,working_company(context),enquiry_id)}?saved=1',303)
     @app.get('/operations/enquiries/{enquiry_id}/build',response_class=HTMLResponse)
     def old(enquiry_id:int,request:Request,element_type:str='',element:str=''):
         context=context_for(database,request); cid=working_company(context)
         if _enquiry(database,cid,enquiry_id) is None:return HTMLResponse(layout('Enquiry not found','<div class="error">Enquiry not found.</div>',context),404)
-        return RedirectResponse(f'/operations/enquiries/{enquiry_id}/edit',303)
+        return RedirectResponse(f'{enquiry_path(database,working_company(context),enquiry_id)}/edit',303)

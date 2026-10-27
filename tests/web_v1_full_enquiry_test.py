@@ -1,5 +1,5 @@
 from __future__ import annotations
-from operational_backend import create_app
+from operational_backend import create_app, reservation_id_for, source_id_from_location
 from online.sql import execute_sql, insert_sql
 
 import json
@@ -86,8 +86,8 @@ def main() -> None:
 
         saved = client.post(f'/operations/customers/{customer_id}/enquiries/new', data=payload | {'action': 'save'}, follow_redirects=False)
         assert saved.status_code == 303
-        assert saved.headers['location'].startswith('/operations/enquiries/')
-        enquiry_id = int(saved.headers['location'].split('/')[3].split('?')[0])
+        enquiry_id = source_id_from_location(db, forest, saved.headers['location'], kind='enquiry')
+        reservation_id = reservation_id_for(db, forest, enquiry_id=enquiry_id)
         with db.connect() as c:
             enquiry = execute_sql(c, 'SELECT * FROM enquiries WHERE id=:q205_0 AND company_id=:q205_1', (enquiry_id, forest)).fetchone()
             assert enquiry['arrival_date'] == '2026-09-10' and enquiry['departure_date'] == '2026-09-12'
@@ -104,7 +104,7 @@ def main() -> None:
         detail = client.get(f'/operations/enquiries/{enquiry_id}')
         assert detail.status_code == 200
         assert 'Pitch A' in detail.text and '€77.00' in detail.text and 'Electric Hook-up' in detail.text
-        assert f'/operations/enquiries/{enquiry_id}/edit' in detail.text
+        assert f'/operations/reservations/{reservation_id}/edit' in detail.text
 
         edit = client.get(f'/operations/enquiries/{enquiry_id}/edit')
         assert edit.status_code == 200
@@ -143,7 +143,7 @@ def main() -> None:
             f'person_{child_id}': '1'
         }, follow_redirects=False)
         assert available.status_code == 303
-        assert available.headers['location'] == f'/operations/enquiries/{enquiry_id}?saved=1'
+        assert available.headers['location'] == f'/operations/reservations/{reservation_id}?saved=1'
         with db.connect() as c:
             changed_element = execute_sql(c, 'SELECT element_id,arrival_date,departure_date,party_size,provisional_total,recovery_state FROM enquiry_elements WHERE enquiry_id=:q213_0 AND company_id=:q213_1',(enquiry_id,forest)).fetchone()
             assert int(changed_element['element_id']) == element_id
@@ -239,7 +239,7 @@ def main() -> None:
         # The old staged URL now safely redirects to the integrated editor. A blank element never causes FastAPI integer parsing errors.
         old = client.get(f'/operations/enquiries/{enquiry_id}/build?element_type=Camping%20Pitch&element=', follow_redirects=False)
         assert old.status_code == 303
-        assert old.headers['location'] == f'/operations/enquiries/{enquiry_id}/edit'
+        assert old.headers['location'] == f'/operations/reservations/{reservation_id}/edit'
 
         # Type-only enquiries can still be saved without a specific Element or price.
         type_only = client.post(f'/operations/customers/{customer_id}/enquiries/new', data={
@@ -247,7 +247,7 @@ def main() -> None:
             'element_type': 'Camping Pitch', 'element_id': '', 'action': 'save'
         }, follow_redirects=False)
         assert type_only.status_code == 303
-        type_only_id = int(type_only.headers['location'].split('/')[3].split('?')[0])
+        type_only_id = source_id_from_location(db, forest, type_only.headers['location'], kind='enquiry')
         with db.connect() as c:
             req = execute_sql(c, 'SELECT * FROM enquiry_requests WHERE enquiry_id=:q218_0 AND company_id=:q218_1', (type_only_id, forest)).fetchone()
             assert req is not None and req['element_type'] == 'Camping Pitch' and req['element_id'] is None and req['provisional_total'] is None

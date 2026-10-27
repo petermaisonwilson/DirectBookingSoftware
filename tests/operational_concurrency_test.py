@@ -105,8 +105,9 @@ class OperationalJourneyTests(unittest.TestCase):
         response = self.clients[0].post('/availability/basket/customer',
             data=self.basket_payload(held.json()['hold']['id']), follow_redirects=False)
         self.assertEqual(response.status_code, 303, response.text)
-        self.assertRegex(response.headers['location'], r'/operations/enquiries/\d+')
-        return int(re.search(r'/enquiries/(\d+)', response.headers['location']).group(1))
+        self.assertRegex(response.headers['location'], r'/operations/reservations/\d+')
+        rid = int(re.search(r'/reservations/(\d+)', response.headers['location']).group(1))
+        return int(self.scalar('SELECT enquiry_id FROM reservations WHERE company_id=:tenant AND id=:reservation', (self.cid, rid)))
 
     def payment_payload(self):
         return {'csrf': self.csrf(), 'amount': '200', 'payment_date': '2038-05-01',
@@ -116,8 +117,9 @@ class OperationalJourneyTests(unittest.TestCase):
         response = self.clients[0].post(f'/operations/enquiries/{enquiry_id}/confirm-payment',
             data=self.payment_payload(), follow_redirects=False)
         self.assertEqual(response.status_code, 303, response.text)
-        self.assertRegex(response.headers['location'], r'/operations/bookings/\d+')
-        return int(re.search(r'/bookings/(\d+)', response.headers['location']).group(1))
+        self.assertRegex(response.headers['location'], r'/operations/reservations/\d+')
+        rid = int(re.search(r'/reservations/(\d+)', response.headers['location']).group(1))
+        return int(self.scalar('SELECT booking_id FROM reservations WHERE company_id=:tenant AND id=:reservation', (self.cid, rid)))
 
     def race(self, functions):
         barrier = Barrier(len(functions))
@@ -247,6 +249,47 @@ class OperationalJourneyTests(unittest.TestCase):
                     else:
                         execute_sql(c, "INSERT INTO booking_refunds(company_id,booking_id,reservation_id,amount,refund_date,method,created_at) VALUES (:tenant,:booking,:reservation,-1,'2038-05-01','Cash',:created)",
                                     (self.cid, booking, rid, now))
+
+    def test_canonical_url_forms_and_lifecycle_keep_the_same_identity(self):
+        # Make canonical and compatibility IDs differ so the URL tests cannot
+        # accidentally pass by interpreting an enquiry/booking ID as a reservation.
+        from online.webv1_reservation_service import create_enquiry, change_reservation_state
+        previous = create_enquiry(self.db, self.cid, 'PREVIOUS-RESERVATION', self.customer,
+            [{'element_id': self.element, 'arrival_date': '2038-07-01', 'departure_date': '2038-07-02', 'total_amount': 100}], iso_now())
+        change_reservation_state(self.db, self.cid, previous, 'ENQUIRY_RELEASED', iso_now())
+        enquiry = self.enquiry()
+        rid = int(self.scalar('SELECT id FROM reservations WHERE company_id=:tenant AND enquiry_id=:enquiry', (self.cid, enquiry)))
+        self.assertNotEqual(rid, enquiry)
+        url = f'/operations/reservations/{rid}'
+        for suffix in ('', '/edit', '/confirm'):
+            page = self.clients[0].get(url + suffix)
+            self.assertEqual(page.status_code, 200, page.text)
+            self.assertIn('text/html', page.headers['content-type'])
+        edited = self.clients[0].get(url + '/edit')
+        self.assertIn(f'action="{url}/edit"', edited.text)
+        self.assertIn('addon-auto-one', edited.text)
+        confirmation = self.clients[0].get(url + '/confirm')
+        self.assertIn(f'action="{url}/confirm-payment"', confirmation.text)
+        for action, state in (('release', 'ENQUIRY_RELEASED'), ('reopen', 'ENQUIRY_HELD')):
+            result = self.clients[0].post(url + '/' + action, data={'csrf': self.csrf()}, follow_redirects=False)
+            self.assertEqual(result.status_code, 303)
+            self.assertEqual(self.clients[0].get(url).status_code, 200)
+            if action == 'reopen':
+                self.assertTrue(result.headers['location'].startswith(url))
+            self.assertEqual(self.scalar('SELECT state FROM reservations WHERE company_id=:tenant AND id=:reservation', (self.cid, rid)), state)
+        converted = self.clients[0].post(url + '/confirm-without-payment', data={
+            'csrf': self.csrf(), 'reason': 'Approved staff exception'}, follow_redirects=False)
+        self.assertEqual(converted.status_code, 303)
+        self.assertEqual(converted.headers['location'].split('?', 1)[0], url)
+        self.assertIn('created=1', converted.headers['location'])
+        booking_page = self.clients[0].get(url)
+        self.assertEqual(booking_page.status_code, 200)
+        self.assertIn(f'action="{url}/payments"', booking_page.text)
+        self.assertIn('Enquiry Released', booking_page.text)
+        self.assertIn('Enquiry Reopened', booking_page.text)
+        rejected = self.clients[0].post(url + '/payments', data=dict(self.payment_payload(), csrf='wrong'), follow_redirects=False)
+        self.assertEqual(rejected.status_code, 403)
+        self.assertEqual(self.scalar('SELECT COUNT(*) FROM booking_payments WHERE company_id=:tenant', (self.cid,)), 0)
 
     def test_actual_launcher_uses_the_configured_database(self):
         with socket.socket() as sock:
@@ -418,7 +461,8 @@ class OperationalJourneyTests(unittest.TestCase):
         response = self.clients[0].post('/availability/basket/customer',
             data=self.basket_payload(hold_id), follow_redirects=False)
         self.assertEqual(response.status_code, 303, response.text)
-        enquiry_id = int(re.search(r'/enquiries/(\d+)', response.headers['location']).group(1))
+        reservation_id = int(re.search(r'/reservations/(\d+)', response.headers['location']).group(1))
+        enquiry_id = int(self.scalar('SELECT enquiry_id FROM reservations WHERE company_id=:tenant AND id=:reservation', (self.cid, reservation_id)))
         self.assertEqual(self.scalar('SELECT COUNT(*) FROM element_holds WHERE company_id=:tenant', (self.cid,)), 0)
         self.assertEqual(self.scalar('SELECT COUNT(*) FROM enquiries WHERE company_id=:tenant', (self.cid,)), 1)
         rid = int(self.scalar('SELECT id FROM reservations WHERE company_id=:tenant AND enquiry_id=:enquiry', (self.cid, enquiry_id)))
@@ -426,10 +470,10 @@ class OperationalJourneyTests(unittest.TestCase):
         # Both submissions originate from the same authorised payment screen.
         self.clients[1].cookies.update(self.clients[0].cookies)
         responses = self.race([lambda client=client: client.post(
-            f'/operations/enquiries/{enquiry_id}/confirm-payment', data=self.payment_payload(),
+            f'/operations/reservations/{rid}/confirm-payment', data=self.payment_payload(),
             follow_redirects=False) for client in self.clients])
         self.assertTrue(all(r.status_code == 303 for r in responses), [r.text for r in responses])
-        self.assertEqual(sum('/operations/bookings/' in r.headers['location'] for r in responses), 1)
+        self.assertEqual(sum('created=1' in r.headers['location'] for r in responses), 1)
         booking_id = int(self.scalar('SELECT id FROM bookings WHERE company_id=:tenant AND enquiry_id=:enquiry',
                                      (self.cid, enquiry_id)))
         self.assertEqual(self.scalar('SELECT COUNT(*) FROM booking_payments WHERE company_id=:tenant AND booking_id=:booking',
@@ -437,11 +481,11 @@ class OperationalJourneyTests(unittest.TestCase):
         beid = int(self.scalar('SELECT id FROM booking_elements WHERE company_id=:tenant AND booking_id=:booking',
                               (self.cid, booking_id)))
         quote = amendment_quote(self.db, self.cid, booking_id, beid, '2038-06-01', '2038-06-04')
-        preview = self.clients[0].post(f'/operations/bookings/{booking_id}/amend-preview', data={
+        preview = self.clients[0].post(f'/operations/reservations/{rid}/amend-preview', data={
             'csrf': self.csrf(), 'booking_element_id': beid, 'arrival_date': '2038-06-01',
             'departure_date': '2038-06-04', 'manual_discount': '0'})
         self.assertEqual(preview.status_code, 200, preview.text)
-        response = self.clients[0].post(f'/operations/bookings/{booking_id}/amend-apply',
+        response = self.clients[0].post(f'/operations/reservations/{rid}/amend-apply',
             data={'csrf': self.csrf(), 'quote': json.dumps(quote)}, follow_redirects=False)
         self.assertEqual(response.status_code, 303, response.text)
         self.assertEqual(self.scalar('SELECT total_amount FROM bookings WHERE company_id=:tenant AND id=:booking',
@@ -450,12 +494,13 @@ class OperationalJourneyTests(unittest.TestCase):
             'start': '2038-06-01', 'end': '2038-06-07', 'element_type': 'Camping'})
         self.assertEqual(calendar.status_code, 200)
         self.assertIn('Customer', calendar.text)
-        response = self.clients[0].post(f'/operations/bookings/{booking_id}/cancel', data={
+        self.assertIn(f'href="/operations/reservations/{rid}"', calendar.text)
+        response = self.clients[0].post(f'/operations/reservations/{rid}/cancel', data={
             'csrf': self.csrf(), 'reason': 'Customer cancelled', 'refund_decision': 'full_refund',
             'refund_amount': '200', 'financial_note': 'Approved cash refund', 'acknowledge': 'yes'},
             follow_redirects=False)
         self.assertEqual(response.status_code, 303, response.text)
-        responses = self.race([lambda client=client: client.post(f'/operations/bookings/{booking_id}/refunds', data={
+        responses = self.race([lambda client=client: client.post(f'/operations/reservations/{rid}/refunds', data={
             'csrf': self.csrf(), 'amount': '150', 'refund_date': '2038-05-02', 'method': 'Cash',
             'reference': 'Refund receipt', 'acknowledge': 'yes'}, follow_redirects=False) for client in self.clients])
         self.assertEqual(sorted(r.status_code for r in responses), [303, 400])
@@ -478,8 +523,14 @@ class OperationalJourneyTests(unittest.TestCase):
         for action in ('BOOKING_CREATED','BOOKING_PAYMENT_RECORDED','BOOKING_AMENDED','BOOKING_CANCELLED','BOOKING_REFUND_RECORDED'):
             self.assertEqual(self.scalar("SELECT COUNT(*) FROM audit_log WHERE company_id=:tenant AND entity_type='booking' "
                 'AND entity_id=:booking AND action=:action', (self.cid, str(booking_id), action)), 1, action)
-        history = self.clients[0].get(f'/operations/bookings/{booking_id}')
+        history = self.clients[0].get(f'/operations/reservations/{rid}')
         self.assertEqual(history.status_code, 200)
+        self.assertIn('text/html', history.headers['content-type'])
+        self.assertNotIn(f'action="/operations/bookings/{booking_id}/', history.text)
+        with TestClient(self.app) as foreign:
+            self.assertEqual(foreign.post('/login', data={'email': 'operator@riverside.test', 'password': 'Operator013!'}, follow_redirects=False).status_code, 303)
+            self.assertEqual(foreign.get(f'/operations/reservations/{rid}').status_code, 404)
+            self.assertEqual(foreign.post(f'/operations/reservations/{rid}/payments', data=self.payment_payload(), follow_redirects=False).status_code, 404)
         self.assertIn('Cancelled', history.text)
         self.assertIn('Refund', history.text)
 
@@ -497,12 +548,13 @@ class OperationalJourneyTests(unittest.TestCase):
         response = self.clients[0].post('/availability/basket/customer',
             data=self.basket_payload(first_hold.json()['hold']['id']), follow_redirects=False)
         self.assertEqual(response.status_code, 303)
-        enquiry_id = int(re.search(r'/enquiries/(\d+)', response.headers['location']).group(1))
+        reservation_id = int(re.search(r'/reservations/(\d+)', response.headers['location']).group(1))
+        enquiry_id = int(self.scalar('SELECT enquiry_id FROM reservations WHERE company_id=:tenant AND id=:reservation', (self.cid, reservation_id)))
         response = self.clients[0].post(f'/operations/enquiries/{enquiry_id}/confirm-payment',
             data=dict(self.payment_payload(), amount='400'), follow_redirects=False)
         self.assertEqual(response.status_code, 303, response.text)
-        self.assertIn('/operations/bookings/', response.headers['location'])
-        bid = int(re.search(r'/bookings/(\d+)', response.headers['location']).group(1))
+        self.assertIn(f'/operations/reservations/{reservation_id}', response.headers['location'])
+        bid = int(self.scalar('SELECT booking_id FROM reservations WHERE company_id=:tenant AND id=:reservation', (self.cid, reservation_id)))
         with self.db.connect() as c:
             elements = execute_sql(c, 'SELECT id,element_id,lead_name,arrival_date,departure_date FROM booking_elements '
                 'WHERE company_id=:tenant AND booking_id=:booking ORDER BY id', (self.cid, bid)).fetchall()
@@ -572,7 +624,7 @@ class OperationalJourneyTests(unittest.TestCase):
         self.assertEqual(self.scalar('SELECT COUNT(*) FROM element_holds WHERE company_id=:tenant', (self.cid,)), 1)
         responses = self.race([lambda: self.clients[0].post('/availability/basket/customer',
             data=self.basket_payload(hold_id), follow_redirects=False) for _ in range(2)])
-        self.assertEqual(sum('/operations/enquiries/' in response.headers.get('location', '') for response in responses), 1)
+        self.assertEqual(sum('/operations/reservations/' in response.headers.get('location', '') for response in responses), 1)
         self.assertEqual(self.scalar('SELECT COUNT(*) FROM enquiries WHERE company_id=:tenant', (self.cid,)), 1)
         self.assertEqual(self.scalar('SELECT COUNT(*) FROM element_holds WHERE company_id=:tenant', (self.cid,)), 0)
 

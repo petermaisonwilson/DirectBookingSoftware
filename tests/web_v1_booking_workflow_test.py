@@ -1,5 +1,5 @@
 from __future__ import annotations
-from operational_backend import create_app
+from operational_backend import create_app, reservation_id_for, source_id_from_location
 from online.sql import execute_sql, insert_sql
 
 import json
@@ -104,6 +104,10 @@ def main() -> None:
             execute_sql(c, "UPDATE booking_status_definitions SET name='Part Paid' WHERE company_id=:q54_0 AND system_code='DEPOSIT_PAID'", (cid,))
             execute_sql(c, "UPDATE booking_status_definitions SET name='Settled' WHERE company_id=:q55_0 AND system_code='BALANCE_PAID'", (cid,))
 
+        # Adopt the deliberately seeded legacy fixture as an existing installation would.
+        from online.reservation_identity_upgrade import adopt_company
+        with db.reservation_write_transaction(cid) as c:
+            adopt_company(c, cid)
         detail = client.get(f'/operations/enquiries/{enquiry_id}')
         assert detail.status_code == 200
         assert 'Keep as Quote' not in detail.text and 'KEEP AS QUOTE' not in detail.text
@@ -113,8 +117,9 @@ def main() -> None:
         assert before['available'] is False and before['state'] == 'ENQUIRY'
         holding_report=client.get('/operations/enquiries?status=holding')
         assert holding_report.status_code==200 and f'#{enquiry_id}' in holding_report.text and 'Holding' in holding_report.text
+        reservation_id = reservation_id_for(db, cid, enquiry_id=enquiry_id)
         first = client.post(f'/operations/enquiries/{enquiry_id}/convert', data={'csrf': csrf, 'workflow_status_id': str(confirmed_id)}, follow_redirects=False)
-        assert first.status_code == 303 and f'/operations/enquiries/{enquiry_id}/confirm' in first.headers['location']
+        assert first.status_code == 303 and f'/operations/reservations/{reservation_id}/confirm' in first.headers['location']
         with db.connect() as c:
             assert execute_sql(c, 'SELECT id FROM bookings WHERE company_id=:q95_0 AND enquiry_id=:q95_1', (cid, enquiry_id)).fetchone() is None
             execute_sql(c, 'DELETE FROM element_holds WHERE id=:q56_0 AND company_id=:q56_1', (foreign_hold_id, cid))
@@ -170,8 +175,8 @@ def main() -> None:
         with db.connect() as c: assert execute_sql(c, 'SELECT id FROM bookings WHERE company_id=:q103_0 AND enquiry_id=:q103_1',(cid,enquiry_id)).fetchone() is None
 
         converted = client.post(f'/operations/enquiries/{enquiry_id}/confirm-payment', data={'csrf': csrf, 'workflow_status_id': str(confirmed_id), 'payment_method_id': str(cash_id), 'amount': '150.00', 'payment_date': '2035-05-01', 'reference': 'DEP-1', 'notes': 'Deposit above minimum'}, follow_redirects=False)
-        assert converted.status_code == 303 and '/operations/bookings/' in converted.headers['location']
-        booking_id = int(converted.headers['location'].split('/operations/bookings/')[1].split('?')[0])
+        assert converted.status_code == 303 and f'/operations/reservations/{reservation_id}' in converted.headers['location']
+        booking_id = source_id_from_location(db, cid, converted.headers['location'], kind='booking')
 
         with db.connect() as c:
             b = execute_sql(c, 'SELECT * FROM bookings WHERE id=:q80_0 AND company_id=:q80_1', (booking_id, cid)).fetchone()
@@ -214,9 +219,9 @@ def main() -> None:
         # Once converted, the Enquiry is historical source data: neither GET nor POST
         # may reopen its pricing editor or mutate the frozen Booking.
         edit_converted = client.get(f'/operations/enquiries/{enquiry_id}/edit', follow_redirects=False)
-        assert edit_converted.status_code == 303 and edit_converted.headers['location'] == f'/operations/bookings/{booking_id}'
+        assert edit_converted.status_code == 303 and edit_converted.headers['location'] == f'/operations/reservations/{reservation_id}'
         post_converted = client.post(f'/operations/enquiries/{enquiry_id}/edit', data={'csrf': csrf, 'arrival_date':'2035-06-11','departure_date':'2035-06-14'}, follow_redirects=False)
-        assert post_converted.status_code == 303 and post_converted.headers['location'] == f'/operations/bookings/{booking_id}'
+        assert post_converted.status_code == 303 and post_converted.headers['location'] == f'/operations/reservations/{reservation_id}'
         with db.connect() as c:
             still_frozen = execute_sql(c, 'SELECT arrival_date,departure_date,total_amount FROM bookings WHERE id=:q85_0',(booking_id,)).fetchone()
             assert still_frozen['arrival_date']=='2035-06-10' and still_frozen['departure_date']=='2035-06-13' and float(still_frozen['total_amount'])==380.0
@@ -292,8 +297,9 @@ def main() -> None:
         assert availability_state(db,cid,element_id,'2035-07-01','2035-07-04')['available'] is True
         released_report = client.get('/operations/enquiries?status=released')
         assert released_report.status_code == 200 and f'#{life_id}' in released_report.text
-        assert f'<a href="/operations/enquiries/{enquiry_id}">#{enquiry_id}</a>' not in released_report.text
-        released_anchor = f'<a href="/operations/enquiries/{life_id}">#{life_id}</a>'
+        assert f'<a href="/operations/reservations/{reservation_id}">#{enquiry_id}</a>' not in released_report.text
+        life_reservation_id = reservation_id_for(db, cid, enquiry_id=life_id)
+        released_anchor = f'<a href="/operations/reservations/{life_reservation_id}">#{life_id}</a>'
         assert released_anchor in released_report.text
         released_row = released_report.text.split(released_anchor, 1)[1].split('</tr>', 1)[0]
         assert 'RELEASE ENQUIRY' not in released_row and 'REOPEN ENQUIRY' in released_row

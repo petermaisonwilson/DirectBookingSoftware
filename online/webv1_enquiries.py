@@ -1,4 +1,5 @@
 from __future__ import annotations
+from .webv1_reservation_routes import enquiry_path
 from .sql import execute_sql, column_rows
 
 import json
@@ -36,13 +37,13 @@ def _fmt_day(value) -> str:
 
 
 
-def _enquiry_action(row, context) -> str:
+def _enquiry_action(database,row, context) -> str:
     enquiry_id=int(row['id']); csrf=esc(context['csrf_token']); status=str(row['status'])
     if status == 'converted': return '—'
     if status == 'closed':
-        return f'<form method="post" action="/operations/enquiries/{enquiry_id}/reopen" style="display:inline"><input type="hidden" name="csrf" value="{csrf}"><button class="secondary">REOPEN ENQUIRY</button></form>'
+        return f'<form method="post" action="{enquiry_path(database,working_company(context),enquiry_id)}/reopen" style="display:inline"><input type="hidden" name="csrf" value="{csrf}"><button class="secondary">REOPEN ENQUIRY</button></form>'
     if not int(row['holding_space'] or 0): return '—'
-    return f'''<form method="post" action="/operations/enquiries/{enquiry_id}/release" style="display:inline" onsubmit="return confirm('Release this enquiry? The enquiry and its history will be retained, but its reserved availability will be released.')"><input type="hidden" name="csrf" value="{csrf}"><button class="secondary">RELEASE ENQUIRY</button></form>'''
+    return f'''<form method="post" action="{enquiry_path(database,working_company(context),enquiry_id)}/release" style="display:inline" onsubmit="return confirm('Release this enquiry? The enquiry and its history will be retained, but its reserved availability will be released.')"><input type="hidden" name="csrf" value="{csrf}"><button class="secondary">RELEASE ENQUIRY</button></form>'''
 
 def _edit_history(database, company_id: int, enquiry_id: int) -> str:
     """Client-facing change history; technical audit stays append-only."""
@@ -167,7 +168,7 @@ def register_enquiry_routes(app) -> None:
             v=r['booking_total'] if r['booking_total'] is not None else (r['elements_total'] if r['elements_total'] is not None else r['legacy_total'])
             return float(v or 0)
         total=sum(amount(r) for r in enquiries)
-        result_rows=''.join(f"""<tr><td><a href="/operations/enquiries/{int(r['id'])}">#{int(r['id'])}</a></td><td>{esc(_customer_name(r))}</td><td>{_fmt_day(str(r['created_at'] or '')[:10])}</td><td>{_fmt_day(r['arrival_date'])}</td><td>{_fmt_day(r['departure_date'])}</td><td>{esc(r['element_names'] or '—')}</td><td>€{amount(r):,.2f}</td><td>{esc(report_status(r))}</td><td class="screen-only">{_enquiry_action(r,context)}</td></tr>""" for r in enquiries) or '<tr><td colspan="9">No matching enquiries.</td></tr>'
+        result_rows=''.join(f"""<tr><td><a href="{enquiry_path(database,company_id,int(r['id']))}">#{int(r['id'])}</a></td><td>{esc(_customer_name(r))}</td><td>{_fmt_day(str(r['created_at'] or '')[:10])}</td><td>{_fmt_day(r['arrival_date'])}</td><td>{_fmt_day(r['departure_date'])}</td><td>{esc(r['element_names'] or '—')}</td><td>€{amount(r):,.2f}</td><td>{esc(report_status(r))}</td><td class="screen-only">{_enquiry_action(database,r,context)}</td></tr>""" for r in enquiries) or '<tr><td colspan="9">No matching enquiries.</td></tr>'
         def date_input(name,value,label):
             return f'<div><label>{label}</label><input type="date" name="{name}" value="{esc(value)}"></div>'
         body=f"""<style>@media print{{nav,header,.screen-only,form,.button,button{{display:none!important}} .card{{box-shadow:none!important;border:0!important}} table{{width:100%;font-size:10pt}} th,td{{padding:5px!important}} a{{color:inherit;text-decoration:none}} }}</style>
@@ -222,9 +223,9 @@ def register_enquiry_routes(app) -> None:
                         hold_label = 'AVAILABLE — HELD AGAIN' if reopened else 'HOLDING SPACE'
                         recovery_html = f'<p><strong style="color:#267326">{hold_label}</strong></p>'
                 element_cards.append(f'<h3>{esc(erow["element_name"] or "Element")}</h3>{recovery_html}<p><strong>Element Type:</strong> {esc(erow["element_type"] or "—")}<br><strong>Guest surname:</strong> {esc(erow["lead_name"] or "—")}<br><strong>Arrival:</strong> {_fmt_day(erow["arrival_date"])}<br><strong>Departure:</strong> {_fmt_day(erow["departure_date"])}<br><strong>People:</strong> {people_text}<br><strong>Add-ons:</strong> {addons_text}<br><strong>Element total:</strong> €{subtotal:.2f}</p>')
-            request_html=f'<div class="card"><h2>Requested stay</h2>{"".join(element_cards)}<p><strong>Provisional total: €{grand_total:.2f}</strong></p><p><a class="button" href="/operations/enquiries/{enquiry_id}/edit">Edit / Recalculate Enquiry</a></p></div>'
+            request_html=f'<div class="card"><h2>Requested stay</h2>{"".join(element_cards)}<p><strong>Provisional total: €{grand_total:.2f}</strong></p><p><a class="button" href="{enquiry_path(database,working_company(context),enquiry_id)}/edit">Edit / Recalculate Enquiry</a></p></div>'
         elif request_row is None:
-            request_html = f'<div class="card"><h2>Requested stay</h2><p>No Element Type or Element has been attached yet.</p><p><a class="button" href="/operations/enquiries/{enquiry_id}/edit">Edit Enquiry</a></p></div>'
+            request_html = f'<div class="card"><h2>Requested stay</h2><p>No Element Type or Element has been attached yet.</p><p><a class="button" href="{enquiry_path(database,working_company(context),enquiry_id)}/edit">Edit Enquiry</a></p></div>'
         else:
             people_text = ', '.join(f'{esc(r["name"])} × {int(r["quantity"])}' for r in people) or '—'
             addons_text = ', '.join(f'{esc(r["name"])} × {int(r["quantity"])}' for r in addons) or '—'
@@ -235,14 +236,14 @@ def register_enquiry_routes(app) -> None:
             if snapshot.get('lines'):
                 line_rows = ''.join(f'<tr><td>{esc(line.get("item", ""))}</td><td>{esc(line.get("rule", ""))}</td><td>€{float(line.get("amount", 0)):.2f}</td></tr>' for line in snapshot['lines'])
                 breakdown = f'<h3>Provisional price breakdown</h3><table><thead><tr><th>Item</th><th>Rule used</th><th>Amount</th></tr></thead><tbody>{line_rows}</tbody></table>'
-            request_html = f'''<div class="card"><h2>Requested stay</h2><p><strong>Element Type:</strong> {esc(request_row['element_type'] or '—')}<br><strong>Specific Element:</strong> {esc(request_row['element_name'] or 'Not selected')}<br><strong>People:</strong> {people_text}<br><strong>Add-ons:</strong> {addons_text}<br><strong>Provisional total:</strong> {total_text}</p>{breakdown}<p><a class="button" href="/operations/enquiries/{enquiry_id}/edit">Edit / Recalculate Enquiry</a></p></div>'''
+            request_html = f'''<div class="card"><h2>Requested stay</h2><p><strong>Element Type:</strong> {esc(request_row['element_type'] or '—')}<br><strong>Specific Element:</strong> {esc(request_row['element_name'] or 'Not selected')}<br><strong>People:</strong> {people_text}<br><strong>Add-ons:</strong> {addons_text}<br><strong>Provisional total:</strong> {total_text}</p>{breakdown}<p><a class="button" href="{enquiry_path(database,working_company(context),enquiry_id)}/edit">Edit / Recalculate Enquiry</a></p></div>'''
         conversion = enquiry_conversion_panel(database, context, enquiry_id)
         # Enquiry detail is also opened from the calendar conflict inspector.
         # Expose the existing edit and release controls without forcing a
         # detour through the enquiry search results.
-        edit_actions = f'<a class="button" href="/operations/enquiries/{enquiry_id}/edit">Edit / Recalculate Enquiry</a>'
+        edit_actions = f'<a class="button" href="{enquiry_path(database,working_company(context),enquiry_id)}/edit">Edit / Recalculate Enquiry</a>'
         if str(enquiry['status']) not in ('closed', 'converted'):
-            edit_actions += f''' <form method="post" action="/operations/enquiries/{enquiry_id}/release" style="display:inline" onsubmit="return confirm('Release this enquiry and free its reserved space? The record and history will be retained.')"><input type="hidden" name="csrf" value="{esc(context['csrf_token'])}"><button type="submit" class="secondary">Release Enquiry</button></form>'''
+            edit_actions += f''' <form method="post" action="{enquiry_path(database,working_company(context),enquiry_id)}/release" style="display:inline" onsubmit="return confirm('Release this enquiry and free its reserved space? The record and history will be retained.')"><input type="hidden" name="csrf" value="{esc(context['csrf_token'])}"><button type="submit" class="secondary">Release Enquiry</button></form>'''
         body = f'''<h1>Enquiry #{int(enquiry['id'])}</h1><p><a href="/availability/calendar-v2">← Return to Master Calendar</a> &nbsp; <a href="/operations/enquiries">Enquiry Search</a></p><div class="card"><strong>Enquiry actions:</strong> {edit_actions}</div>{notice}<div class="grid"><div class="card"><h2>Customer</h2><p><strong>{customer_link}</strong></p><p>Email: {esc(enquiry['email'] or '—')}<br>Telephone: {esc(enquiry['phone'] or '—')}</p></div><div class="card"><h2>Enquiry</h2><p><strong>Status:</strong> {esc(_status_label(enquiry['status']))}<br><strong>Arrival:</strong> {_fmt_day(enquiry['arrival_date'])}<br><strong>Departure:</strong> {_fmt_day(enquiry['departure_date'])}<br><strong>Party size:</strong> {esc(enquiry['party_size'] if enquiry['party_size'] is not None else '—')}<br><strong>Source:</strong> {esc(enquiry['source'] or '—')}</p></div></div><div class="card"><h2>Notes</h2><p>{esc(enquiry['notes'] or '—')}</p></div>{request_html}{conversion}{_edit_history(database,company_id,enquiry_id)}'''
         return layout(f'Enquiry #{int(enquiry["id"])}', body, context)
 
@@ -286,11 +287,11 @@ def register_enquiry_routes(app) -> None:
                     'AND enquiry_id=:enquiry', (company_id, enquiry_id)).fetchone()
                 if (legacy is None or legacy['element_id'] is None
                         or not enquiry['arrival_date'] or not enquiry['departure_date']):
-                    return RedirectResponse(f'/operations/enquiries/{enquiry_id}?convert_error=Availability+must+be+rechecked+before+this+Enquiry+can+be+reopened', 303)
+                    return RedirectResponse(f'{enquiry_path(database,working_company(context),enquiry_id)}?convert_error=Availability+must+be+rechecked+before+this+Enquiry+can+be+reopened', 303)
                 final = availability_state(database, company_id, int(legacy['element_id']),
                     str(enquiry['arrival_date']), str(enquiry['departure_date']), exclude_enquiry_id=enquiry_id)
                 if not final.get('available'):
-                    return RedirectResponse(f'/operations/enquiries/{enquiry_id}?convert_error=Cannot+reopen:+the+original+Element+is+no+longer+available', 303)
+                    return RedirectResponse(f'{enquiry_path(database,working_company(context),enquiry_id)}?convert_error=Cannot+reopen:+the+original+Element+is+no+longer+available', 303)
                 execute_sql(c, "UPDATE enquiries SET status='new',updated_at=:now WHERE company_id=:tenant AND id=:enquiry",
                             (now, company_id, enquiry_id))
                 from .webv1_operational_reservations import save_enquiry
@@ -298,7 +299,7 @@ def register_enquiry_routes(app) -> None:
                 audit(database, context, company_id, 'ENQUIRY_REOPENED', 'enquiry', enquiry_id,
                     before={'status': 'closed'}, after={'status': 'new', 'availability_rechecked': True,
                     'legacy_single_element': True}, connection=c)
-                return RedirectResponse(f'/operations/enquiries/{enquiry_id}?saved=1', 303)
+                return RedirectResponse(f'{enquiry_path(database,working_company(context),enquiry_id)}?saved=1', 303)
             available_ids, missing_ids = [], []
             for element in elements:
                 final = availability_state(database, company_id, int(element['element_id']),
@@ -318,7 +319,7 @@ def register_enquiry_routes(app) -> None:
                 'elements_reheld': available_ids, 'elements_needing_replacement': missing_ids}, connection=c)
         message = ('Enquiry+reopened.' if not missing_ids else
             f'Enquiry+partly+reopened:+{len(available_ids)}+Element(s)+held,+{len(missing_ids)}+require+replacement.')
-        return RedirectResponse(f'/operations/enquiries/{enquiry_id}?convert_error={message}', 303)
+        return RedirectResponse(f'{enquiry_path(database,working_company(context),enquiry_id)}?convert_error={message}', 303)
 
     @app.post('/operations/enquiries/{enquiry_id}/elements/{enquiry_element_id}/replace')
     async def replace_recovery_element(enquiry_id:int,enquiry_element_id:int,request:Request):

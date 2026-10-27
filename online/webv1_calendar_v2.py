@@ -68,8 +68,8 @@ def _records(database, cid: int, element_id: int, start: date, end: date):
 
 
 def _record_href(record, kind):
-    if 'reservation_id' in record.keys():
-        return f"/operations/master-reservations/{int(record['reservation_id'])}"
+    if 'reservation_id' in record.keys() and record['reservation_id'] is not None:
+        return f"/operations/reservations/{int(record['reservation_id'])}"
     field = 'booking_id' if kind == 'booking' else 'enquiry_id'
     segment = 'bookings' if kind == 'booking' else 'enquiries'
     return f'/operations/{segment}/{int(record[field])}'
@@ -91,6 +91,20 @@ def _records_bulk(database, cid: int, element_ids: list[int], start: date, end: 
         holds = execute_sql(c, f'SELECT * FROM element_holds WHERE company_id=:q362_0 AND element_id IN ({marks}) AND expires_at>:q362_1\n                             AND date(arrival_date)<date(:q362_2) AND date(departure_date)>date(:q362_3) ORDER BY arrival_date',
                           (cid, *ids, iso_now(), *bounds)).fetchall()
         if table_exists(c, 'reservations') and table_exists(c, 'reservation_elements'):
+            # Resolve the permanent identity once for all visible source records.
+            source_ids = {'booking_id': sorted({int(row['booking_id']) for row in bookings}),
+                          'enquiry_id': sorted({int(row['enquiry_id']) for row in enquiries})}
+            clauses, parameters = [], {'tenant': cid}
+            for source, values in source_ids.items():
+                if values:
+                    names = [f'{source}_{index}' for index in range(len(values))]
+                    clauses.append(source + ' IN (' + ','.join(':' + name for name in names) + ')')
+                    parameters.update(zip(names, values))
+            owners = execute_sql(c, 'SELECT id,booking_id,enquiry_id FROM reservations WHERE company_id=:tenant AND (' +
+                                 ' OR '.join(clauses) + ')', parameters).fetchall() if clauses else []
+            for source, collection in (('booking_id', bookings), ('enquiry_id', enquiries)):
+                ids_by_source = {int(row[source]): int(row['id']) for row in owners if row[source] is not None}
+                collection[:] = [dict(row, reservation_id=ids_by_source.get(int(row[source]))) for row in collection]
             canonical = execute_sql(c,
                 'SELECT re.element_id,re.arrival_date,re.departure_date,r.id AS reservation_id,'
                 'r.id AS booking_id,r.id AS enquiry_id,r.reference,r.state AS canonical_state,'

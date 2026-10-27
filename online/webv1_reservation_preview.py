@@ -41,7 +41,7 @@ def register_reservation_preview_routes(app):
         body += '<table><tr><th>Reference</th><th>Status</th><th>Total</th><th>Created</th></tr>'
         for item in records:
             rid = int(item['id'])
-            href = f'/operations/master-reservations/{rid}'
+            href = f'/operations/reservations/{rid}'
             body += (f'<tr><td><a href="{href}">{esc(item["reference"])}</a></td>'
                      f'<td>{esc(_STATES.get(item["state"], item["state"]))}</td>'
                      f'<td>{float(item["total_amount"] or 0):.2f} {esc(item["currency"])}</td>'

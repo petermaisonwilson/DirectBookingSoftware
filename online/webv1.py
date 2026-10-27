@@ -194,3 +194,6 @@ def register_web_v1(app) -> None:
                 execute_sql(c, 'DELETE FROM booking_requirement_addons WHERE session_token=:q177_0 AND company_id=:q177_1', (token, cid))
                 execute_sql(c, "INSERT INTO booking_requirement_sessions(session_token,company_id,ready,arrival_date,departure_date,lead_name,updated_at)\n                             VALUES (:q178_0,:q178_1,0,'','','',CURRENT_TIMESTAMP)\n                             ON CONFLICT(session_token,company_id) DO UPDATE SET ready=0,arrival_date='',departure_date='',lead_name='',updated_at=CURRENT_TIMESTAMP", (token, cid))
         return RedirectResponse('/availability/start', 303)
+
+    from .webv1_reservation_routes import register_reservation_routes
+    register_reservation_routes(app)

@@ -194,9 +194,9 @@ const root=document.getElementById('integrated-enquiry-form');if(!root)return;ne
 })();</script>'''
 
 
-def _booking_duration_html(database, company_id: int, request_path: str) -> str:
+def _booking_duration_html(database, company_id: int, request_path: str, *, booking_id=None) -> str:
     try:
-        booking_id = int(request_path.rstrip('/').split('/')[-1])
+        booking_id = int(booking_id) if booking_id is not None else int(request_path.rstrip('/').split('/')[-1])
     except ValueError:
         return ''
     with database.connect() as c:
@@ -328,11 +328,11 @@ def register_pricing_usability_routes(app) -> None:
             if request.url.path == '/setup/pricing':
                 text = _move_season_maintenance(text)
 
-            if ('/enquiries/' in request.url.path or '/enquiries/new' in request.url.path) and 'integrated-enquiry-form' in text and 'addon-auto-one' not in text:
+            if 'integrated-enquiry-form' in text and 'addon-auto-one' not in text:
                 text = text.replace('</body>', _addon_auto_one_script() + '</body>', 1)
 
-            if request.url.path.startswith('/operations/bookings/') and request.method == 'GET':
-                duration = _booking_duration_html(database, cid, request.url.path)
+            if (request.url.path.startswith('/operations/bookings/') or getattr(request.state, 'reservation_booking_id', None) is not None) and request.method == 'GET':
+                duration = _booking_duration_html(database, cid, request.url.path, booking_id=getattr(request.state, 'reservation_booking_id', None))
                 if duration and '<div class="card"><h2>Frozen Booking</h2>' in text:
                     text = text.replace('<div class="card"><h2>Frozen Booking</h2>', '<div class="card"><h2>Frozen Booking</h2>' + duration, 1)
 

@@ -1,4 +1,5 @@
 from __future__ import annotations
+from .webv1_reservation_routes import enquiry_path
 from .sql import execute_sql, insert_sql
 
 import json
@@ -290,7 +291,7 @@ def register_booking_progress_routes(app):
             enquiry_id=_save_basket_enquiry(database,context,company_id,int(customer_id),token,values['notes'])
         except ValueError as exc:
             return HTMLResponse(_customer_stage(database,context,company_id,token,hold_id,values,'The held booking cannot yet be saved as an Enquiry: '+str(exc)),409)
-        return RedirectResponse(f'/operations/enquiries/{enquiry_id}?saved=1',303)
+        return RedirectResponse(f'{enquiry_path(database,company_id,enquiry_id)}?saved=1',303)
 
     @app.get('/availability/basket/review',response_class=HTMLResponse)
     def basket_review(request:Request):
