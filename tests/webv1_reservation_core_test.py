@@ -82,12 +82,12 @@ class ReservationLifecycleTests(unittest.TestCase):
                 'CREATE TABLE reservations (id INTEGER, company_id INTEGER, state TEXT)'))
             connection.execute(text(
                 'CREATE TABLE reservation_elements (reservation_id INTEGER, company_id INTEGER, '
-                'element_id INTEGER, arrival_date TEXT, departure_date TEXT)'))
+                'element_id INTEGER, arrival_date TEXT, departure_date TEXT, recovery_state TEXT DEFAULT "held")'))
             connection.execute(text(
                 "INSERT INTO reservations VALUES (1,1,'CONFIRMED'),"
                 "(2,2,'CONFIRMED'),(3,1,'ENQUIRY_RELEASED')"))
             connection.execute(text(
-                "INSERT INTO reservation_elements VALUES "
+                "INSERT INTO reservation_elements (reservation_id,company_id,element_id,arrival_date,departure_date) VALUES "
                 "(1,1,10,'2026-11-10','2026-11-15'),"
                 "(2,2,10,'2026-11-10','2026-11-15'),"
                 "(3,1,11,'2026-11-10','2026-11-15')"))
@@ -115,7 +115,7 @@ class ReservationLifecycleTests(unittest.TestCase):
                 'CREATE TABLE reservations (id INTEGER, company_id INTEGER, state TEXT)'))
             connection.execute(text(
                 'CREATE TABLE reservation_elements (reservation_id INTEGER, company_id INTEGER, '
-                'element_id INTEGER, arrival_date TEXT, departure_date TEXT)'))
+                'element_id INTEGER, arrival_date TEXT, departure_date TEXT, recovery_state TEXT DEFAULT "held")'))
             connection.execute(text('INSERT INTO setup_elements VALUES (10,1,1),(11,2,1),(12,1,0)'))
             valid = [{'element_id': 10, 'arrival_date': '2026-11-10',
                       'departure_date': '2026-11-15'}]
@@ -141,10 +141,10 @@ class ReservationLifecycleTests(unittest.TestCase):
         db.executescript("""
             CREATE TABLE reservations(id INTEGER, company_id INTEGER, state TEXT, updated_at TEXT);
             CREATE TABLE reservation_elements(id INTEGER, company_id INTEGER, reservation_id INTEGER,
-                element_id INTEGER, arrival_date TEXT, departure_date TEXT);
+                element_id INTEGER, arrival_date TEXT, departure_date TEXT, recovery_state TEXT DEFAULT "held");
             INSERT INTO reservations VALUES (1,1,'ENQUIRY_HELD',''),(2,1,'ENQUIRY_RELEASED',''),
                 (3,2,'CONFIRMED',''),(4,1,'CANCELLED','');
-            INSERT INTO reservation_elements VALUES (1,1,1,10,'2026-11-01','2026-11-05'),
+            INSERT INTO reservation_elements (id,company_id,reservation_id,element_id,arrival_date,departure_date) VALUES (1,1,1,10,'2026-11-01','2026-11-05'),
                 (2,1,2,11,'2026-11-01','2026-11-05'),
                 (3,2,3,10,'2026-11-01','2026-11-05'),
                 (4,1,4,12,'2026-11-01','2026-11-05');
@@ -169,10 +169,10 @@ class ReservationLifecycleTests(unittest.TestCase):
             CREATE TABLE setup_elements(id INTEGER, company_id INTEGER, active INTEGER);
             CREATE TABLE reservations(id INTEGER, company_id INTEGER, state TEXT);
             CREATE TABLE reservation_elements(id INTEGER, company_id INTEGER, reservation_id INTEGER,
-                element_id INTEGER, arrival_date TEXT, departure_date TEXT);
+                element_id INTEGER, arrival_date TEXT, departure_date TEXT, recovery_state TEXT DEFAULT "held");
             INSERT INTO setup_elements VALUES (10,1,1),(11,1,0),(20,2,1);
             INSERT INTO reservations VALUES (1,1,'CONFIRMED');
-            INSERT INTO reservation_elements VALUES (1,1,1,10,'2026-11-01','2026-11-05');
+            INSERT INTO reservation_elements (id,company_id,reservation_id,element_id,arrival_date,departure_date) VALUES (1,1,1,10,'2026-11-01','2026-11-05');
         """)
         def entry(element, arrival='2026-11-10', departure='2026-11-15'):
             return {'element_id':element,'arrival_date':arrival,'departure_date':departure}
@@ -193,10 +193,10 @@ class ReservationLifecycleTests(unittest.TestCase):
             CREATE TABLE setup_elements(id INTEGER, company_id INTEGER, active INTEGER);
             CREATE TABLE reservations(id INTEGER, company_id INTEGER, state TEXT, updated_at TEXT);
             CREATE TABLE reservation_elements(id INTEGER, company_id INTEGER, reservation_id INTEGER,
-                element_id INTEGER, arrival_date TEXT, departure_date TEXT);
+                element_id INTEGER, arrival_date TEXT, departure_date TEXT, recovery_state TEXT DEFAULT "held");
             INSERT INTO setup_elements VALUES (10,1,1);
             INSERT INTO reservations VALUES (1,1,'CONFIRMED',''),(2,1,'ENQUIRY_RELEASED','');
-            INSERT INTO reservation_elements VALUES (1,1,1,10,'2026-11-01','2026-11-05'),
+            INSERT INTO reservation_elements (id,company_id,reservation_id,element_id,arrival_date,departure_date) VALUES (1,1,1,10,'2026-11-01','2026-11-05'),
                 (2,1,2,10,'2026-11-03','2026-11-06');
         """)
         with self.assertRaises(ReservationError):
@@ -216,12 +216,12 @@ class ReservationLifecycleTests(unittest.TestCase):
         db = sqlite3.connect(':memory:')
         db.row_factory = sqlite3.Row
         db.executescript("""
-            CREATE TABLE reservations(id INTEGER, company_id INTEGER, state TEXT);
+            CREATE TABLE reservations(id INTEGER, company_id INTEGER, state TEXT, enquiry_id INTEGER, booking_id INTEGER);
             CREATE TABLE reservation_elements(id INTEGER, company_id INTEGER, reservation_id INTEGER,
-                element_id INTEGER, arrival_date TEXT, departure_date TEXT);
+                element_id INTEGER, arrival_date TEXT, departure_date TEXT, recovery_state TEXT DEFAULT "held");
             CREATE TABLE bookings(id INTEGER, company_id INTEGER, enquiry_id INTEGER);
-            INSERT INTO reservations VALUES (1,1,'CONFIRMED');
-            INSERT INTO reservation_elements VALUES (1,1,1,10,'2026-11-01','2026-11-05');
+            INSERT INTO reservations VALUES (1,1,'CONFIRMED',NULL,NULL);
+            INSERT INTO reservation_elements (id,company_id,reservation_id,element_id,arrival_date,departure_date) VALUES (1,1,1,10,'2026-11-01','2026-11-05');
         """)
         with self.assertRaisesRegex(ValueError, 'allocated to another reservation'):
             _lock_and_verify_conversion(db, 1, 22, [
@@ -238,7 +238,7 @@ class ReservationLifecycleTests(unittest.TestCase):
             CREATE TABLE setup_elements(id INTEGER,company_id INTEGER,active INTEGER);
             CREATE TABLE reservations(id INTEGER PRIMARY KEY,company_id INTEGER,state TEXT);
             CREATE TABLE reservation_elements(id INTEGER,company_id INTEGER,reservation_id INTEGER,
-                element_id INTEGER,arrival_date TEXT,departure_date TEXT);
+                element_id INTEGER,arrival_date TEXT,departure_date TEXT, recovery_state TEXT DEFAULT "held");
             INSERT INTO setup_elements VALUES (10,1,1);
         """)
         item = {'element_id':10,'arrival_date':'2026-11-01','departure_date':'2026-11-05'}
@@ -259,7 +259,7 @@ class ReservationLifecycleTests(unittest.TestCase):
             CREATE TABLE setup_elements(id INTEGER,company_id INTEGER,active INTEGER);
             CREATE TABLE reservations(id INTEGER PRIMARY KEY,company_id INTEGER,state TEXT);
             CREATE TABLE reservation_elements(id INTEGER,company_id INTEGER,reservation_id INTEGER,
-                element_id INTEGER,arrival_date TEXT,departure_date TEXT);
+                element_id INTEGER,arrival_date TEXT,departure_date TEXT, recovery_state TEXT DEFAULT "held");
             INSERT INTO setup_elements VALUES (10,1,1);
         """)
         item = {'element_id':10,'arrival_date':'2026-11-01','departure_date':'2026-11-05'}
@@ -281,10 +281,10 @@ class ReservationLifecycleTests(unittest.TestCase):
                 total_amount REAL,updated_at TEXT);
             CREATE TABLE reservation_elements(id INTEGER PRIMARY KEY,company_id INTEGER,reservation_id INTEGER,
                 element_id INTEGER,arrival_date TEXT,departure_date TEXT,total_amount REAL,
-                pricing_snapshot_json TEXT,lead_name TEXT);
+                pricing_snapshot_json TEXT,lead_name TEXT, recovery_state TEXT DEFAULT "held");
             INSERT INTO setup_elements VALUES (10,1,1),(11,1,1);
             INSERT INTO reservations VALUES (1,1,'ENQUIRY_HELD',50,'');
-            INSERT INTO reservation_elements VALUES (1,1,1,10,'2026-11-01','2026-11-05',50,'{}','');
+            INSERT INTO reservation_elements (id,company_id,reservation_id,element_id,arrival_date,departure_date,total_amount,pricing_snapshot_json,lead_name) VALUES (1,1,1,10,'2026-11-01','2026-11-05',50,'{}','');
         """)
         items = [
             {'element_id':10,'arrival_date':'2026-11-02','departure_date':'2026-11-06','total_amount':80},
@@ -325,7 +325,7 @@ class ReservationLifecycleTests(unittest.TestCase):
                 created_at TEXT,updated_at TEXT);
             CREATE TABLE reservation_elements(id INTEGER PRIMARY KEY,company_id INTEGER,
                 reservation_id INTEGER,element_id INTEGER,arrival_date TEXT,departure_date TEXT,
-                total_amount REAL,pricing_snapshot_json TEXT,lead_name TEXT);
+                total_amount REAL,pricing_snapshot_json TEXT,lead_name TEXT, recovery_state TEXT DEFAULT "held");
             INSERT INTO setup_elements VALUES (10,1,1),(11,1,1),(10,2,1);
         """)
         items = [

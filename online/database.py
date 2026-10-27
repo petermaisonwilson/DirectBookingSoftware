@@ -422,7 +422,7 @@ class OnlineDatabase:
         acting_company_id: int | None, before: dict[str, Any] | None = None,
         after: dict[str, Any] | None = None, connection=None,
     ) -> None:
-        from .sql import execute_sql
+        from .sql import execute_sql, insert_sql
         values = {
             'company_id': company_id, 'actor_user_id': actor_user_id, 'actor_role': actor_role,
             'acting_company_id': acting_company_id, 'action': action, 'entity_type': entity_type,
@@ -436,10 +436,19 @@ class OnlineDatabase:
             'VALUES (:company_id,:actor_user_id,:actor_role,:acting_company_id,:action,'
             ':entity_type,:entity_id,:before_json,:after_json,:created_at)')
         if connection is not None:
-            execute_sql(connection, statement, values)
+            audit_id = insert_sql(connection, statement, values).lastrowid
+            values['audit_log_id'] = audit_id
+            from .webv1_operational_reservations import append_operational_history
+            append_operational_history(connection, values)
         else:
             with self.connect() as owned:
-                execute_sql(owned, statement, values)
+                audit_id = insert_sql(owned, statement, values).lastrowid
+                values['audit_log_id'] = audit_id
+                # Only registered operational reservations have canonical history.
+                from .sql import table_exists
+                if entity_type in ('enquiry', 'booking') and table_exists(owned, 'reservation_history'):
+                    from .webv1_operational_reservations import append_operational_history
+                    append_operational_history(owned, values)
 
     def audit_rows(self, *, company_id: int | None = None, date_from: str = "", date_to: str = ""):
         if self.is_sqlite:

@@ -334,7 +334,7 @@ def _save(database, context, company_id:int, customer_id:int, values:dict[str,st
             lock_inventory(c, company_id)
         if element_id and values.get('arrival_date') and values.get('departure_date'):
             from .webv1_reservation_core import migrated_inventory_conflict
-            if migrated_inventory_conflict(c, company_id, element_id, values['arrival_date'], values['departure_date']):
+            if migrated_inventory_conflict(c, company_id, element_id, values['arrival_date'], values['departure_date'], exclude_enquiry_id=enquiry_id):
                 raise ValueError('This Element is allocated to a central reservation.')
             if calculation is not None:
                 token = str(context['token']) if 'token' in context.keys() else ''
@@ -395,6 +395,8 @@ def _save(database, context, company_id:int, customer_id:int, values:dict[str,st
                 for d,pp in bydate.items():
                     for pid,qty in pp.items():
                         if qty:execute_sql(c, 'INSERT INTO enquiry_element_addon_person_days(enquiry_element_id,company_id,addon_id,person_type_id,service_date,quantity) VALUES (:q148_0,:q148_1,:q148_2,:q148_3,:q148_4,:q148_5)',(eeid,company_id,aid,pid,d,qty))
+        from .webv1_operational_reservations import save_enquiry
+        save_enquiry(c, company_id, enquiry_id)
         if created:
             audit(database, context, company_id, 'ENQUIRY_CREATED', 'enquiry', enquiry_id,
                   after={'customer_id': customer_id, 'element_type': selected_type,

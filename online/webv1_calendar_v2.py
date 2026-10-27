@@ -106,6 +106,7 @@ def _records_bulk(database, cid: int, element_ids: list[int], start: date, end: 
                 'LEFT JOIN customer_records cr ON cr.company_id=r.company_id AND cr.id=r.customer_id '
                 f'WHERE re.company_id=:tenant AND re.element_id IN ({marks}) '
                 "AND r.state IN ('ENQUIRY_HELD','CONFIRMED') "
+                "AND r.enquiry_id IS NULL AND r.booking_id IS NULL "
                 'AND re.arrival_date<:departure AND re.departure_date>:arrival '
                 'ORDER BY re.arrival_date,r.id', (cid, *ids, *bounds)).fetchall()
             for record in canonical:

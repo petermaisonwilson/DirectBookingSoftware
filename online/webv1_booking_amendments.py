@@ -1,4 +1,5 @@
 from __future__ import annotations
+from .webv1_operational_reservations import insert_financial
 from .sql import lock_inventory, execute_sql, insert_sql
 
 import json
@@ -127,7 +128,7 @@ def apply_amendment(database, context, quote: dict) -> int:
         if round(float(current_booking['total_amount']), 2) != round(float(quote['old_booking_total']), 2):
             raise ValueError('This Booking has changed since the amendment was calculated. Recalculate before saving.')
         from .webv1_reservation_core import migrated_inventory_conflict
-        if migrated_inventory_conflict(c, cid, int(be['element_id']), quote['new_arrival'], quote['new_departure']):
+        if migrated_inventory_conflict(c, cid, int(be['element_id']), quote['new_arrival'], quote['new_departure'], exclude_booking_id=booking_id):
             raise ValueError('The amended dates overlap a central reservation.')
         if _booking_conflict(c,cid,int(be['element_id']),quote['new_arrival'],quote['new_departure'],exclude_booking_id=booking_id):
             raise ValueError('The amended dates overlap another Booking.')
@@ -138,14 +139,15 @@ def apply_amendment(database, context, quote: dict) -> int:
         for other in execute_sql(c, 'SELECT arrival_date,departure_date FROM booking_elements WHERE company_id=:q525_0 AND booking_id=:q525_1 AND element_id=:q525_2 AND id<>:q525_3', (cid,booking_id,int(be['element_id']),beid)):
             if str(other['arrival_date']) < str(quote['new_departure']) and str(other['departure_date']) > str(quote['new_arrival']):
                 raise ValueError('The amended dates overlap another Element allocation in this Booking.')
-        amendment_id=int(insert_sql(c, 'INSERT INTO booking_amendments\n            (company_id,booking_id,booking_element_id,old_arrival_date,old_departure_date,new_arrival_date,new_departure_date,\n             old_booking_total,new_booking_total,manual_discount,calculation_json,created_by_user_id,created_at)\n            VALUES (:q532_0,:q532_1,:q532_2,:q532_3,:q532_4,:q532_5,:q532_6,:q532_7,:q532_8,:q532_9,:q532_10,:q532_11,:q532_12)',
-            (cid,booking_id,beid,quote['old_arrival'],quote['old_departure'],quote['new_arrival'],quote['new_departure'],
-             quote['old_booking_total'],quote['new_booking_total'],quote['manual_discount'],calculation,context['user_id'],now)).lastrowid)
+        amendment_id=insert_financial(c, 'booking_amendments', cid,booking_id,beid,quote['old_arrival'],quote['old_departure'],quote['new_arrival'],quote['new_departure'],
+             quote['old_booking_total'],quote['new_booking_total'],quote['manual_discount'],calculation,context['user_id'],now)
         execute_sql(c, 'UPDATE booking_elements SET arrival_date=:q526_0,departure_date=:q526_1 WHERE id=:q526_2 AND company_id=:q526_3',
                   (quote['new_arrival'],quote['new_departure'],beid,cid))
         bounds=execute_sql(c, 'SELECT MIN(arrival_date) AS a,MAX(departure_date) AS d FROM booking_elements WHERE booking_id=:q533_0 AND company_id=:q533_1',(booking_id,cid)).fetchone()
         execute_sql(c, 'UPDATE bookings SET arrival_date=:q527_0,departure_date=:q527_1,total_amount=:q527_2,updated_at=:q527_3 WHERE id=:q527_4 AND company_id=:q527_5',
                   (bounds['a'],bounds['d'],quote['new_booking_total'],now,booking_id,cid))
+        from .webv1_operational_reservations import save_booking
+        save_booking(c, cid, booking_id)
         sync_payment_status(database,cid,booking_id,connection=c,context=context)
         from .setup015_core import audit
         private_detail = dict(quote, amendment_id=amendment_id)

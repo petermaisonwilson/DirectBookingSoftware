@@ -158,6 +158,8 @@ def _save_basket_enquiry(database,context,company_id,customer_id,token,notes):
         hold_ids=[int(x[1]['id']) for x in prepared]
         for hid in hold_ids:
             execute_sql(c, 'DELETE FROM hold_requirement_people WHERE hold_id=:q57_0',(hid,));execute_sql(c, 'DELETE FROM hold_requirement_addons WHERE hold_id=:q58_0',(hid,));execute_sql(c, 'DELETE FROM element_holds WHERE id=:q59_0 AND company_id=:q59_1 AND session_token=:q59_2',(hid,company_id,token))
+        from .webv1_operational_reservations import save_enquiry
+        save_enquiry(c, company_id, enquiry_id)
         audit(database, context, company_id, 'ENQUIRY_CREATED', 'enquiry', enquiry_id, after={'customer_id': customer_id, 'element_count': len(prepared), 'provisional_total': total}, connection=c)
         audit(database, context, company_id, 'ELEMENT_HOLDS_CONVERTED_TO_ENQUIRY', 'enquiry', enquiry_id, after={'hold_ids': [int(x[1]['id']) for x in prepared]}, connection=c)
     return enquiry_id

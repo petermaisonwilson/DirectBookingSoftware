@@ -190,6 +190,64 @@ class OperationalJourneyTests(unittest.TestCase):
         self.assertEqual(rejected.status_code, 303)
         self.assertEqual(self.scalar('SELECT COUNT(*) FROM element_closures WHERE element_id=:element', (third,)), 0)
 
+    def test_existing_operational_identity_upgrade_preserves_data_and_is_atomic(self):
+        now = iso_now()
+        with self.db.connect() as c:
+            enquiry = int(insert_sql(c, "INSERT INTO enquiries(company_id,customer_id,status,arrival_date,departure_date,notes,created_at,updated_at) "
+                "VALUES (:tenant,:customer,'converted','2038-08-01','2038-08-03','Original notes',:created,:updated)",
+                (self.cid, self.customer, now, now)).lastrowid)
+            ee = int(insert_sql(c, "INSERT INTO enquiry_elements(company_id,enquiry_id,element_type,element_id,arrival_date,departure_date,lead_name,provisional_total,pricing_snapshot_json,created_at,updated_at) "
+                "VALUES (:tenant,:enquiry,'Camping',:element,'2038-08-01','2038-08-03','Original surname',200,:snapshot,:created,:updated)",
+                (self.cid, enquiry, self.element, json.dumps({'total': 200, 'marker': 'Original quote'}), now, now)).lastrowid)
+            booking = int(insert_sql(c, "INSERT INTO bookings(company_id,enquiry_id,customer_id,reference,status,arrival_date,departure_date,currency,total_amount,notes,created_at,updated_at) "
+                "VALUES (:tenant,:enquiry,:customer,'HISTORIC-1','confirmed','2038-08-01','2038-08-03','GBP',200,'Original notes',:created,:updated)",
+                (self.cid, enquiry, self.customer, now, now)).lastrowid)
+            be = int(insert_sql(c, "INSERT INTO booking_elements(company_id,booking_id,element_id,arrival_date,departure_date,pricing_method_snapshot,unit_price_snapshot,total_amount,pricing_snapshot_json,lead_name) "
+                "VALUES (:tenant,:booking,:element,'2038-08-01','2038-08-03','Per night',100,200,:snapshot,'Original surname')",
+                (self.cid, booking, self.element, json.dumps({'total': 200, 'marker': 'Original quote'}))).lastrowid)
+            payment = int(insert_sql(c, "INSERT INTO booking_payments(company_id,booking_id,amount,payment_date,method,reference,created_at) "
+                "VALUES (:tenant,:booking,75,'2038-05-01','Cash','Original receipt',:created)", (self.cid, booking, now)).lastrowid)
+            event = int(insert_sql(c, "INSERT INTO audit_log(company_id,actor_user_id,actor_role,action,entity_type,entity_id,after_json,created_at) "
+                "VALUES (:tenant,:staff,'Operator','BOOKING_PAYMENT_RECORDED','booking',:booking,:details,:created)",
+                (self.cid, self.contexts[0]['user_id'], str(booking), json.dumps({'payment_id': payment, 'amount': 75}), now)).lastrowid)
+        from online.reservation_identity_upgrade import adopt_company
+        with patch('online.webv1_reservation_service._history', side_effect=RuntimeError('Injected upgrade history failure')):
+            with self.assertRaisesRegex(RuntimeError, 'upgrade history failure'):
+                with self.db.reservation_write_transaction(self.cid) as c:
+                    adopt_company(c, self.cid)
+        self.assertEqual(self.scalar('SELECT COUNT(*) FROM reservations WHERE company_id=:tenant', (self.cid,)), 0)
+        self.assertIsNone(self.scalar('SELECT reservation_id FROM booking_payments WHERE company_id=:tenant AND id=:payment', (self.cid, payment)))
+        # Restart uses the additive importer on the real configured backend.
+        restarted = create_app(Path(self.temp.name) / 'operational.sqlite', seed_demo=False)
+        register_web_v1(restarted)
+        rid = int(self.scalar('SELECT id FROM reservations WHERE company_id=:tenant AND enquiry_id=:enquiry AND booking_id=:booking',
+                              (self.cid, enquiry, booking)))
+        allocation = int(self.scalar('SELECT id FROM reservation_elements WHERE company_id=:tenant AND reservation_id=:reservation AND enquiry_element_id=:enquiry_element AND booking_element_id=:booking_element',
+                                     (self.cid, rid, ee, be)))
+        self.assertEqual(self.scalar('SELECT reservation_id FROM booking_payments WHERE company_id=:tenant AND id=:payment', (self.cid, payment)), rid)
+        self.assertEqual(self.scalar('SELECT amount FROM booking_payments WHERE company_id=:tenant AND id=:payment', (self.cid, payment)), 75)
+        self.assertEqual(self.scalar('SELECT reference FROM booking_payments WHERE company_id=:tenant AND id=:payment', (self.cid, payment)), 'Original receipt')
+        self.assertEqual(self.scalar('SELECT currency FROM reservations WHERE company_id=:tenant AND id=:reservation', (self.cid, rid)), 'GBP')
+        self.assertEqual(self.scalar('SELECT total_amount FROM reservations WHERE company_id=:tenant AND id=:reservation', (self.cid, rid)), 200)
+        self.assertEqual(self.scalar('SELECT lead_name FROM reservation_elements WHERE company_id=:tenant AND id=:allocation', (self.cid, allocation)), 'Original surname')
+        self.assertEqual(self.scalar('SELECT COUNT(*) FROM reservation_history WHERE company_id=:tenant AND reservation_id=:reservation AND audit_log_id=:event', (self.cid, rid, event)), 1)
+        from online.webv1_operational_reservations import reservation_financials
+        with self.db.reservation_write_transaction(self.cid) as c:
+            repeated = adopt_company(c, self.cid)
+            self.assertEqual(repeated, {'enquiries': 0, 'bookings': 0, 'history': 0})
+            self.assertEqual(reservation_financials(c, self.cid, rid), {'total': 200, 'paid': 75, 'outstanding': 125})
+        self.assertEqual(self.scalar('SELECT id FROM reservation_elements WHERE company_id=:tenant AND reservation_id=:reservation', (self.cid, rid)), allocation)
+        from online.sql import INTEGRITY_ERRORS
+        for table in ('booking_payments', 'booking_refunds'):
+            with self.assertRaises(INTEGRITY_ERRORS):
+                with self.db.connect() as c:
+                    if table == 'booking_payments':
+                        execute_sql(c, "INSERT INTO booking_payments(company_id,booking_id,reservation_id,amount,payment_date,method,created_at) VALUES (:tenant,:booking,:reservation,-1,'2038-05-01','Cash',:created)",
+                                    (self.cid, booking, rid, now))
+                    else:
+                        execute_sql(c, "INSERT INTO booking_refunds(company_id,booking_id,reservation_id,amount,refund_date,method,created_at) VALUES (:tenant,:booking,:reservation,-1,'2038-05-01','Cash',:created)",
+                                    (self.cid, booking, rid, now))
+
     def test_actual_launcher_uses_the_configured_database(self):
         with socket.socket() as sock:
             sock.bind(('127.0.0.1', 0))
@@ -363,6 +421,8 @@ class OperationalJourneyTests(unittest.TestCase):
         enquiry_id = int(re.search(r'/enquiries/(\d+)', response.headers['location']).group(1))
         self.assertEqual(self.scalar('SELECT COUNT(*) FROM element_holds WHERE company_id=:tenant', (self.cid,)), 0)
         self.assertEqual(self.scalar('SELECT COUNT(*) FROM enquiries WHERE company_id=:tenant', (self.cid,)), 1)
+        rid = int(self.scalar('SELECT id FROM reservations WHERE company_id=:tenant AND enquiry_id=:enquiry', (self.cid, enquiry_id)))
+        allocation = int(self.scalar('SELECT id FROM reservation_elements WHERE company_id=:tenant AND reservation_id=:reservation', (self.cid, rid)))
         # Both submissions originate from the same authorised payment screen.
         self.clients[1].cookies.update(self.clients[0].cookies)
         responses = self.race([lambda client=client: client.post(
@@ -402,6 +462,19 @@ class OperationalJourneyTests(unittest.TestCase):
         self.assertEqual(self.scalar('SELECT SUM(amount) FROM booking_refunds WHERE company_id=:tenant AND booking_id=:booking',
                                      (self.cid, booking_id)), 150)
         self.assertTrue(availability_state(self.db, self.cid, self.element, '2038-06-01', '2038-06-04')['available'])
+        self.assertEqual(self.scalar('SELECT id FROM reservations WHERE company_id=:tenant AND booking_id=:booking', (self.cid, booking_id)), rid)
+        self.assertEqual(self.scalar('SELECT COUNT(*) FROM reservations WHERE company_id=:tenant', (self.cid,)), 1)
+        self.assertEqual(self.scalar('SELECT id FROM reservation_elements WHERE company_id=:tenant AND reservation_id=:reservation', (self.cid, rid)), allocation)
+        self.assertEqual(self.scalar('SELECT state FROM reservations WHERE company_id=:tenant AND id=:reservation', (self.cid, rid)), 'CANCELLED')
+        self.assertEqual(self.scalar('SELECT total_amount FROM reservations WHERE company_id=:tenant AND id=:reservation', (self.cid, rid)), 300)
+        self.assertEqual(self.scalar('SELECT total_amount FROM reservation_elements WHERE company_id=:tenant AND id=:allocation', (self.cid, allocation)), 300)
+        for table in ('booking_payments', 'booking_refunds', 'booking_cancellations', 'booking_amendments'):
+            self.assertEqual(self.scalar(f'SELECT COUNT(*) FROM {table} WHERE company_id=:tenant AND booking_id=:booking AND reservation_id=:reservation',
+                                         (self.cid, booking_id, rid)), 1, table)
+        for event in ('ENQUIRY_CREATED', 'BOOKING_CREATED', 'BOOKING_PAYMENT_RECORDED', 'BOOKING_AMENDED', 'BOOKING_CANCELLED', 'BOOKING_REFUND_RECORDED'):
+            self.assertEqual(self.scalar('SELECT COUNT(*) FROM reservation_history WHERE company_id=:tenant AND reservation_id=:reservation AND event_type=:event',
+                                         (self.cid, rid, event)), 1, event)
+
         for action in ('BOOKING_CREATED','BOOKING_PAYMENT_RECORDED','BOOKING_AMENDED','BOOKING_CANCELLED','BOOKING_REFUND_RECORDED'):
             self.assertEqual(self.scalar("SELECT COUNT(*) FROM audit_log WHERE company_id=:tenant AND entity_type='booking' "
                 'AND entity_id=:booking AND action=:action', (self.cid, str(booking_id), action)), 1, action)

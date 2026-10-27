@@ -1,4 +1,5 @@
 from __future__ import annotations
+from .webv1_operational_reservations import insert_financial, save_booking
 from .sql import lock_inventory, execute_sql, insert_sql, local_schema, column_rows
 
 import json
@@ -185,6 +186,9 @@ def _enquiry_elements(database,cid,enquiry_id):
     return [legacy] if legacy is not None else []
 
 def _write_booking(c,database,context,cid,enquiry,elements,workflow_status_id):
+    from .webv1_operational_reservations import save_enquiry, confirm_enquiry
+    save_enquiry(c, cid, int(enquiry['id']))
+    element_pairs = []
     now=iso_now();total=sum(float(e['provisional_total'] or 0) for e in elements);reference=_next_reference(c,cid)
     company = execute_sql(c, 'SELECT currency FROM companies WHERE id=:tenant', (cid,)).fetchone()
     currency = str(company['currency'] or 'EUR').upper() if company else 'EUR'
@@ -195,6 +199,7 @@ def _write_booking(c,database,context,cid,enquiry,elements,workflow_status_id):
         except (TypeError,json.JSONDecodeError):snapshot={}
         element_amount=_snapshot_line_amount(snapshot,str(ee['element_name'] or ''))
         beid=int(insert_sql(c, 'INSERT INTO booking_elements(company_id,booking_id,element_id,arrival_date,departure_date,pricing_method_snapshot,unit_price_snapshot,total_amount,pricing_snapshot_json,lead_name) VALUES (:q214_0,:q214_1,:q214_2,:q214_3,:q214_4,:q214_5,:q214_6,:q214_7,:q214_8,:q214_9)',(cid,booking_id,ee['element_id'],ee['arrival_date'],ee['departure_date'],ee['pricing_method'] or '',0,element_amount,ee['pricing_snapshot_json'],ee['lead_name'] or '')).lastrowid)
+        element_pairs.append((ee['id'] if 'id' in ee.keys() else None, beid))
         execute_sql(c, 'UPDATE booking_elements SET original_arrival_date=arrival_date,original_departure_date=departure_date,original_total_amount=total_amount WHERE id=:q195_0',(beid,))
         year=int(snapshot.get('year') or str(ee['arrival_date'])[:4])
         if 'id' in ee.keys():
@@ -228,6 +233,7 @@ def _write_booking(c,database,context,cid,enquiry,elements,workflow_status_id):
                 execute_sql(c, 'DELETE FROM hold_requirement_people WHERE hold_id=:q216_0',(hold_id,))
                 execute_sql(c, 'DELETE FROM hold_requirement_addons WHERE hold_id=:q217_0',(hold_id,))
                 execute_sql(c, 'DELETE FROM element_holds WHERE id=:q218_0 AND company_id=:q218_1',(hold_id,cid))
+    confirm_enquiry(c, cid, int(enquiry['id']), booking_id, element_pairs)
     return booking_id,reference,total
 
 def _conversion_enquiry(database,context,cid,enquiry_id,workflow_status_id):
@@ -267,7 +273,7 @@ def _lock_and_verify_conversion(c, cid, enquiry_id, elements, *, lock_held=False
     for element in elements:
         eid = int(element['element_id'])
         arrival, departure = str(element['arrival_date']), str(element['departure_date'])
-        if migrated_inventory_conflict(c, cid, eid, arrival, departure):
+        if migrated_inventory_conflict(c, cid, eid, arrival, departure, exclude_enquiry_id=enquiry_id):
             raise ValueError('This Element is allocated to another reservation. Refresh the Enquiry.')
         if _booking_conflict(c, cid, eid, arrival, departure):
             raise ValueError('This Element has been booked by another reservation. Refresh the Enquiry.')
@@ -295,7 +301,7 @@ def convert_enquiry_with_payment(database,context,cid,enquiry_id,workflow_status
         if amount > round(total,2):raise ValueError(f'Payment cannot exceed the booking total of {_money(total)}.')
         _lock_and_verify_conversion(c,cid,enquiry_id,elements,lock_held=True)
         booking_id,bref,total=_write_booking(c,database,context,cid,enquiry,elements,workflow_status_id)
-        payment_id=int(insert_sql(c, 'INSERT INTO booking_payments(company_id,booking_id,amount,payment_date,method,reference,notes,created_by_user_id,created_at) VALUES (:q219_0,:q219_1,:q219_2,:q219_3,:q219_4,:q219_5,:q219_6,:q219_7,:q219_8)',(cid,booking_id,amount,payment_date,str(method['name']),reference,notes,context['user_id'],iso_now())).lastrowid)
+        payment_id=insert_financial(c, 'booking_payments', cid,booking_id,amount,payment_date,str(method['name']),reference,notes,context['user_id'],iso_now())
         audit(database, context, cid, 'ENQUIRY_CONVERTED_TO_BOOKING', 'enquiry', enquiry_id, after={'booking_id': booking_id, 'reference': bref, 'element_count': len(elements)}, connection=c)
         audit(database, context, cid, 'BOOKING_CREATED', 'booking', booking_id, after={'reference': bref, 'enquiry_id': enquiry_id, 'workflow_status_id': workflow_status_id, 'total_amount': total}, connection=c)
         audit(database, context, cid, 'BOOKING_PAYMENT_RECORDED', 'booking', booking_id, after={'payment_id': payment_id, 'amount': amount, 'payment_date': payment_date, 'method': str(method['name'])}, connection=c)
@@ -557,9 +563,10 @@ def register_booking_routes(app) -> None:
                 status=execute_sql(c, "SELECT id FROM booking_status_definitions WHERE company_id=:q232_0 AND internal_state='RELEASED' AND blocks_availability=0 AND active=1 ORDER BY id LIMIT 1",(cid,)).fetchone()
                 if status is None: raise ValueError('No active non-blocking cancellation status configured.')
                 now=iso_now()
-                execute_sql(c, 'INSERT INTO booking_cancellations(company_id,booking_id,reason,refund_decision,refund_amount,retained_amount,financial_note,created_by_user_id,created_at)\n                    VALUES(:q221_0,:q221_1,:q221_2,:q221_3,:q221_4,:q221_5,:q221_6,:q221_7,:q221_8)',(cid,booking_id,reason,decision,refund,round(paid-refund,2),note,context['user_id'],now))
+                insert_financial(c, 'booking_cancellations', cid,booking_id,reason,decision,refund,round(paid-refund,2),note,context['user_id'],now)
                 execute_sql(c, 'UPDATE bookings SET status=:q222_0,workflow_status_id=:q222_1,updated_at=:q222_2 WHERE company_id=:q222_3 AND id=:q222_4',
                           ('cancelled',int(status['id']),now,cid,booking_id))
+                save_booking(c, cid, booking_id)
                 audit(database, context, cid, 'BOOKING_CANCELLED', 'booking', booking_id, after={'reason': reason, 'refund_decision': decision, 'refund_amount': refund, 'retained_amount': round(paid - refund, 2), 'financial_note': note}, connection=c)
         except ValueError as exc:
             return HTMLResponse(layout('Cancellation not completed',f'<p>{esc(str(exc))}</p><a href="/operations/bookings/{booking_id}/cancel">Return</a>',context),400)
@@ -620,7 +627,7 @@ def register_booking_routes(app) -> None:
                 previous=round(float(execute_sql(c, 'SELECT COALESCE(SUM(amount),0) AS n FROM booking_refunds WHERE company_id=:q239_0 AND booking_id=:q239_1',(cid,booking_id)).fetchone()['n']),2)
                 if amount>round(float(cancellation['refund_amount'])-previous,2):
                     raise ValueError('Refund exceeds the amount authorised at cancellation.')
-                refund_id=int(insert_sql(c, 'INSERT INTO booking_refunds(company_id,booking_id,amount,refund_date,method,reference,notes,created_by_user_id,created_at)\n                    VALUES(:q234_0,:q234_1,:q234_2,:q234_3,:q234_4,:q234_5,:q234_6,:q234_7,:q234_8)',(cid,booking_id,amount,date,method,reference,str(data.get('notes','')).strip(),context['user_id'],iso_now())).lastrowid)
+                refund_id=insert_financial(c, 'booking_refunds', cid,booking_id,amount,date,method,reference,str(data.get('notes','')).strip(),context['user_id'],iso_now())
                 audit(database, context, cid, 'BOOKING_REFUND_RECORDED', 'booking', booking_id, after={'refund_id': refund_id, 'amount': amount, 'method': method, 'reference': reference, 'refund_date': date}, connection=c)
         except (ValueError,TypeError) as exc:
             return HTMLResponse(layout('Refund not recorded',f'<p>{esc(str(exc))}</p><a href="/operations/bookings/{booking_id}">Return to booking</a>',context),400)
@@ -648,7 +655,7 @@ def register_booking_routes(app) -> None:
         if method is None: return RedirectResponse(f'/operations/bookings/{booking_id}?message=Choose+an+active+Payment+Method',303)
         if str(method['method_type'])=='card': return RedirectResponse(f'/operations/bookings/{booking_id}?message=Card+provider+connection+is+not+configured+yet',303)
         with database.reservation_write_transaction(cid) as c:
-            payment_id = int(insert_sql(c, 'INSERT INTO booking_payments(company_id,booking_id,amount,payment_date,method,reference,notes,created_by_user_id,created_at)\n                VALUES (:q228_0,:q228_1,:q228_2,:q228_3,:q228_4,:q228_5,:q228_6,:q228_7,:q228_8)', (cid, booking_id, amount, payment_date, str(method['name']), str(data.get('reference','')).strip(), str(data.get('notes','')).strip(), context['user_id'], iso_now())).lastrowid)
+            payment_id = insert_financial(c, 'booking_payments', cid, booking_id, amount, payment_date, str(method['name']), str(data.get('reference','')).strip(), str(data.get('notes','')).strip(), context['user_id'], iso_now())
             total=float(execute_sql(c, 'SELECT total_amount FROM bookings WHERE id=:q236_0 AND company_id=:q236_1',(booking_id,cid)).fetchone()['total_amount'])
             paid=float(execute_sql(c, 'SELECT COALESCE(SUM(amount),0) AS n FROM booking_payments WHERE booking_id=:q237_0 AND company_id=:q237_1',(booking_id,cid)).fetchone()['n'])
             sync_payment_status(database,cid,booking_id,connection=c,context=context)

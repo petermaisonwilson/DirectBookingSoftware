@@ -248,7 +248,12 @@ def register_customer_routes(app) -> None:
         if booking is None or target is None:
             return HTMLResponse(layout('Customer match', '<div class="error">Booking or Customer not found.</div>', context), 404)
         previous_customer_id = booking['customer_id']
-        with database.connect() as connection:
+        with database.reservation_write_transaction(company_id) as connection:
+            from .reservation_identity_upgrade import adopt_company
+            from .webv1_operational_reservations import identity, save_booking
+            if identity(connection, company_id, booking_id=booking_id) is None:
+                adopt_company(connection, company_id)
             execute_sql(connection, 'UPDATE bookings SET customer_id=:q387_0,updated_at=:q387_1 WHERE id=:q387_2 AND company_id=:q387_3', (customer_id, iso_now(), booking_id, company_id))
-        audit(database, context, company_id, 'BOOKING_LINKED_TO_CUSTOMER', 'booking', booking_id, before={'customer_id': previous_customer_id}, after={'customer_id': customer_id})
+            save_booking(connection, company_id, booking_id)
+            audit(database, context, company_id, 'BOOKING_LINKED_TO_CUSTOMER', 'booking', booking_id, before={'customer_id': previous_customer_id}, after={'customer_id': customer_id}, connection=connection)
         return RedirectResponse(f'/operations/bookings/{booking_id}?message=Booking+added+to+existing+Customer+master+file', 303)

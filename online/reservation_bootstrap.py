@@ -17,10 +17,15 @@ def initialise_reservation_storage(database):
         missing = required - set(inspect(database.engine).get_table_names())
         if missing:
             raise RuntimeError('Run the DBS Alembic migrations before starting PostgreSQL: ' + ', '.join(sorted(missing)))
+        if not {'enquiry_id', 'booking_id'} <= {col['name'] for col in inspect(database.engine).get_columns('reservations')}:
+            raise RuntimeError('Run the DBS Alembic migrations before starting PostgreSQL: operational reservation identities are missing')
+        _adopt_operational_identities(database)
         return
     engine = create_engine(database.config.database_url)
     try:
         with engine.begin() as connection:
+            # Make additive DDL atomic too; pysqlite otherwise defers BEGIN.
+            connection.exec_driver_sql('BEGIN IMMEDIATE')
             inspector = inspect(connection)
             tables = set(inspector.get_table_names())
             context = MigrationContext.configure(connection)
@@ -41,5 +46,18 @@ def initialise_reservation_storage(database):
                 constraints = {fk['name'] for fk in inspect(connection).get_foreign_keys('reservations')}
                 if 'fk_reservation_customer_tenant' not in constraints:
                     import_module('migrations.versions.0011_reservation_tenant_refs').upgrade()
+                if 'enquiry_id' not in {col['name'] for col in inspect(connection).get_columns('reservations')}:
+                    import_module('migrations.versions.0013_operational_identity').upgrade()
     finally:
         engine.dispose()
+    _adopt_operational_identities(database)
+
+
+def _adopt_operational_identities(database):
+    from .sql import execute_sql
+    from .reservation_identity_upgrade import adopt_company
+    with database.connect() as connection:
+        companies = [int(row[0]) for row in execute_sql(connection, 'SELECT id FROM companies ORDER BY id').fetchall()]
+    for company_id in companies:
+        with database.reservation_write_transaction(company_id) as connection:
+            adopt_company(connection, company_id)

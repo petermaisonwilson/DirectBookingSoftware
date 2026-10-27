@@ -11,12 +11,12 @@ def booking_financials(database, company_id: int, booking_id: int, *, connection
         with database.connect() as c:
             return booking_financials(database, company_id, booking_id, connection=c)
     c = connection
-    booking = execute_sql(c, 'SELECT total_amount,workflow_status_id FROM bookings WHERE company_id=:q589_0 AND id=:q589_1', (company_id, booking_id)).fetchone()
-    if booking is None:
-        raise ValueError('Booking not found.')
-    paid = float(execute_sql(c, 'SELECT COALESCE(SUM(amount),0) AS n FROM booking_payments WHERE company_id=:q592_0 AND booking_id=:q592_1', (company_id, booking_id)).fetchone()['n'])
-    total = round(float(booking['total_amount'] or 0), 2)
-    return {'total': total, 'paid': round(paid, 2), 'outstanding': round(max(0.0, total-paid), 2)}
+    from .webv1_operational_reservations import identity, reservation_financials
+    master = identity(c, company_id, booking_id=booking_id)
+    if master is None:
+        raise ValueError('Booking has no reservation identity; complete its additive migration first.')
+    return reservation_financials(c, company_id, int(master['id']))
+
 
 
 def sync_payment_status(database, company_id: int, booking_id: int, *, connection=None, context=None) -> dict:
@@ -45,14 +45,11 @@ def sync_payment_status(database, company_id: int, booking_id: int, *, connectio
         new_status_id = int(status['id'])
         now = iso_now()
         execute_sql(c, 'UPDATE bookings SET workflow_status_id=:q587_0,updated_at=:q587_1 WHERE company_id=:q587_2 AND id=:q587_3', (new_status_id, now, company_id, booking_id))
-        execute_sql(c, 'INSERT INTO audit_log(company_id,actor_user_id,actor_role,acting_company_id,action,entity_type,entity_id,before_json,after_json,created_at)\n                     VALUES (:q588_0,:q588_1,:q588_2,:q588_3,:q588_4,:q588_5,:q588_6,:q588_7,:q588_8,:q588_9)',
-                  (company_id,
-                   context['user_id'] if context else None,
-                   context['role'] if context else 'System',
-                   context['acting_company_id'] if context else None,
-                   'BOOKING_STATUS_AUTOMATIC','booking',str(booking_id),
-                   json.dumps({'workflow_status_id': old_status_id}),
-                   json.dumps({'workflow_status_id': new_status_id, 'system_code': wanted,
-                               'paid': financials['paid'], 'outstanding': financials['outstanding']}),
-                   now))
+        database.write_audit(action='BOOKING_STATUS_AUTOMATIC', entity_type='booking', entity_id=booking_id,
+            actor_user_id=context['user_id'] if context else None,
+            actor_role=context['role'] if context else 'System', company_id=company_id,
+            acting_company_id=context['acting_company_id'] if context else None,
+            before={'workflow_status_id': old_status_id},
+            after={'workflow_status_id': new_status_id, 'system_code': wanted,
+                   'paid': financials['paid'], 'outstanding': financials['outstanding']}, connection=c)
     return financials

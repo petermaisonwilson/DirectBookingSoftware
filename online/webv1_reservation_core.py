@@ -17,18 +17,24 @@ class ReservationError(ValueError):
     """Reservation action violates the lifecycle or inventory rules."""
 
 
-def inventory_conflict(connection, company_id, element_id, arrival, departure, exclude_reservation_id=None):
+def inventory_conflict(connection, company_id, element_id, arrival, departure, exclude_reservation_id=None, *, exclude_enquiry_id=None, exclude_booking_id=None):
     """Check canonical allocations using explicit engine-compatible parameters."""
     sql = ("SELECT r.id FROM reservation_elements e "
            "JOIN reservations r ON r.id=e.reservation_id AND r.company_id=e.company_id "
            "WHERE e.company_id=:company_id AND e.element_id=:element_id "
-           "AND r.state IN ('ENQUIRY_HELD','CONFIRMED') "
+           "AND r.state IN ('ENQUIRY_HELD','CONFIRMED') AND e.recovery_state='held' "
            "AND e.arrival_date<:departure AND e.departure_date>:arrival")
     params = {'company_id': company_id, 'element_id': element_id,
               'departure': departure, 'arrival': arrival}
     if exclude_reservation_id is not None:
         sql += " AND r.id<>:exclude_id"
         params['exclude_id'] = exclude_reservation_id
+    if exclude_enquiry_id is not None:
+        sql += ' AND (r.enquiry_id IS NULL OR r.enquiry_id<>:exclude_enquiry)'
+        params['exclude_enquiry'] = exclude_enquiry_id
+    if exclude_booking_id is not None:
+        sql += ' AND (r.booking_id IS NULL OR r.booking_id<>:exclude_booking)'
+        params['exclude_booking'] = exclude_booking_id
     # sqlite3 accepts named placeholders directly; SQLAlchemy requires text().
     if hasattr(connection, 'dialect'):
         from sqlalchemy import text
@@ -36,7 +42,7 @@ def inventory_conflict(connection, company_id, element_id, arrival, departure, e
         return None if row is None else _mapping(row)
     return connection.execute(sql + " LIMIT 1", params).fetchone()
 
-def migrated_inventory_conflict(connection, company_id, element_id, arrival, departure):
+def migrated_inventory_conflict(connection, company_id, element_id, arrival, departure, **exclusions):
     """Canonical inventory check for legacy workflows that can predate migration 0008."""
     if hasattr(connection, 'dialect'):
         from sqlalchemy import inspect
@@ -47,7 +53,7 @@ def migrated_inventory_conflict(connection, company_id, element_id, arrival, dep
             "SELECT name FROM sqlite_master WHERE type='table' "
             "AND name IN ('reservations','reservation_elements')").fetchall()
         ready = len(tables) == 2
-    return inventory_conflict(connection, company_id, element_id, arrival, departure) if ready else None
+    return inventory_conflict(connection, company_id, element_id, arrival, departure, **exclusions) if ready else None
 
 
 def validate_allocations(connection, company_id, allocations, exclude_reservation_id=None):

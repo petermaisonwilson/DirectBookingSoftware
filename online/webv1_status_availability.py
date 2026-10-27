@@ -134,8 +134,24 @@ def availability_state(database, company_id: int, element_id: int, arrival: str,
             return {'available': False, 'state': 'CLOSED', 'reason': str(closed['reason'] or 'Closed'), 'closure_id': int(closed['id'])}
         # Legacy test databases may predate the canonical reservation migration.
         # Check the new inventory only where the canonical tables exist.
-        canonical = migrated_inventory_conflict(c, company_id, element_id, arrival, departure)
+        canonical = migrated_inventory_conflict(c, company_id, element_id, arrival, departure, exclude_enquiry_id=exclude_enquiry_id, exclude_booking_id=exclude_booking_id)
         if canonical:
+            owner = execute_sql(c, 'SELECT enquiry_id,booking_id FROM reservations WHERE company_id=:tenant AND id=:reservation',
+                                (company_id, canonical['id'])).fetchone()
+            if owner['booking_id'] is not None:
+                booked = _booking_conflict(c, company_id, element_id, arrival, departure, exclude_booking_id)
+                if booked:
+                    return {'available': False, 'state': 'BOOKED', 'reason': str(booked['workflow_name'] or f"Booked: {booked['reference']}"),
+                            'booking_id': int(booked['id']), 'booking_reference': str(booked['reference']),
+                            'workflow_name': str(booked['workflow_name'] or 'Booked'), 'colour': str(booked['colour'] or '#F3C5C9'),
+                            'reservation_id': int(canonical['id'])}
+            elif owner['enquiry_id'] is not None:
+                enquiry = _enquiry_conflict(c, company_id, element_id, arrival, departure, exclude_enquiry_id)
+                if enquiry:
+                    return {'available': False, 'state': 'ENQUIRY', 'reason': str(enquiry['workflow_name'] or 'Enquiry / Held'),
+                            'enquiry_id': int(enquiry['id']), 'expires_at': enquiry['availability_expires_at'],
+                            'workflow_name': str(enquiry['workflow_name'] or 'Enquiry / Held'), 'colour': str(enquiry['colour'] or '#FFE39A'),
+                            'reservation_id': int(canonical['id'])}
             return {'available': False, 'state': 'RESERVED', 'reason': 'Allocated to an existing reservation.', 'reservation_id': int(canonical['id'])}
         booked = _booking_conflict(c, company_id, element_id, arrival, departure, exclude_booking_id)
         if booked:

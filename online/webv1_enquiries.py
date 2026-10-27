@@ -262,6 +262,8 @@ def register_enquiry_routes(app) -> None:
                     return RedirectResponse('/operations/enquiries', 303)
                 enquiry = current
                 execute_sql(c, "UPDATE enquiries SET status='closed',updated_at=:q578_0 WHERE id=:q578_1 AND company_id=:q578_2", (iso_now(), enquiry_id, company_id))
+                from .webv1_operational_reservations import save_enquiry
+                save_enquiry(c, company_id, enquiry_id)
                 audit(database, context, company_id, 'ENQUIRY_RELEASED', 'enquiry', enquiry_id, before={'status': enquiry['status']}, after={'status': 'closed', 'availability_released': True}, connection=c)
         return RedirectResponse('/operations/enquiries', 303)
 
@@ -291,6 +293,8 @@ def register_enquiry_routes(app) -> None:
                     return RedirectResponse(f'/operations/enquiries/{enquiry_id}?convert_error=Cannot+reopen:+the+original+Element+is+no+longer+available', 303)
                 execute_sql(c, "UPDATE enquiries SET status='new',updated_at=:now WHERE company_id=:tenant AND id=:enquiry",
                             (now, company_id, enquiry_id))
+                from .webv1_operational_reservations import save_enquiry
+                save_enquiry(c, company_id, enquiry_id)
                 audit(database, context, company_id, 'ENQUIRY_REOPENED', 'enquiry', enquiry_id,
                     before={'status': 'closed'}, after={'status': 'new', 'availability_rechecked': True,
                     'legacy_single_element': True}, connection=c)
@@ -307,6 +311,8 @@ def register_enquiry_routes(app) -> None:
                     execute_sql(c, 'UPDATE enquiry_elements SET recovery_state=:state,updated_at=:now '
                         'WHERE company_id=:tenant AND enquiry_id=:enquiry AND id=:element',
                         (state, now, company_id, enquiry_id, element_id))
+            from .webv1_operational_reservations import save_enquiry
+            save_enquiry(c, company_id, enquiry_id)
             audit(database, context, company_id, 'ENQUIRY_REOPENED', 'enquiry', enquiry_id,
                 before={'status': 'closed'}, after={'status': 'new', 'availability_rechecked': True,
                 'elements_reheld': available_ids, 'elements_needing_replacement': missing_ids}, connection=c)
@@ -357,6 +363,8 @@ def register_enquiry_routes(app) -> None:
             bounds=execute_sql(c, 'SELECT MIN(arrival_date) a,MAX(departure_date) d,SUM(COALESCE(party_size,0)) p FROM enquiry_elements WHERE enquiry_id=:q583_0 AND company_id=:q583_1',(enquiry_id,company_id)).fetchone()
             execute_sql(c, 'UPDATE enquiries SET arrival_date=:q574_0,departure_date=:q574_1,party_size=:q574_2,updated_at=:q574_3 WHERE id=:q574_4 AND company_id=:q574_5',(bounds['a'],bounds['d'],int(bounds['p'] or 0),now,enquiry_id,company_id))
             unresolved=int(execute_sql(c, "SELECT COUNT(*) n FROM enquiry_elements WHERE enquiry_id=:q585_0 AND company_id=:q585_1 AND recovery_state='needs_replacement'",(enquiry_id,company_id)).fetchone()['n'])
+            from .webv1_operational_reservations import save_enquiry
+            save_enquiry(c, company_id, enquiry_id)
             audit(database, context, company_id, 'ENQUIRY_ELEMENT_REPLACED', 'enquiry', enquiry_id, before={'enquiry_element_id': enquiry_element_id, 'element_id': int(old['element_id']), 'arrival_date': old['arrival_date'], 'departure_date': old['departure_date']}, after={'enquiry_element_id': enquiry_element_id, 'element_id': element_id, 'arrival_date': arrival, 'departure_date': departure, 'remaining_replacements': unresolved}, connection=c)
         return JSONResponse({'ok':True,'enquiry_id':enquiry_id,'remaining_replacements':unresolved})
 
