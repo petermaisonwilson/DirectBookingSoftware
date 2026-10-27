@@ -352,6 +352,12 @@ def register_booking_routes(app) -> None:
         for ar in amendment_rows:
             latest_amendment[int(ar['booking_element_id'])] = ar
         manual_by_element = {eid: float(ar['manual_discount'] or 0) for eid, ar in latest_amendment.items()}
+        manual_reason_by_element = {}
+        for eid, amendment in latest_amendment.items():
+            try:
+                manual_reason_by_element[eid] = str(json.loads(amendment['calculation_json'] or '{}').get('manual_discount_reason') or '')
+            except (TypeError, ValueError, json.JSONDecodeError):
+                manual_reason_by_element[eid] = ''
         element_cards = []
         for element in elements:
             element_people = [p for p in people if int(p["booking_element_id"]) == int(element["id"])]
@@ -447,7 +453,7 @@ def register_booking_routes(app) -> None:
         <div class="card"><h2>Booking Status</h2><p><strong>{esc(b['workflow_name'] or b['status'])}</strong></p><p class="muted">Status is controlled automatically by DBS from the booking lifecycle and account balance.</p></div>
         {cancellation_panel}
         {refund_panel}
-        {'<div class="card"><h2>Accommodation locked</h2><p>This booking is permanently cancelled. Financial records and history remain accessible.</p></div>' if cancelled else '<div class="card"><h2>Amend Booking</h2>'}<p class="muted">Preview the price before applying. Original frozen booking values remain in history.</p>{''.join(f'<form method="post" action="{booking_path(database,cid,booking_id)}/amend-preview"><input type="hidden" name="csrf" value="{esc(context["csrf_token"])}"><input type="hidden" name="booking_element_id" value="{int(e["id"])}"><h3>{esc(e["element_name"])}</h3><div class="grid"><div><label>Arrival</label><input type="date" name="arrival_date" value="{esc(e["arrival_date"])}" required></div><div><label>Departure</label><input type="date" name="departure_date" value="{esc(e["departure_date"])}" required></div><div><label>Staff discount</label><input type="number" name="manual_discount" min="0" step="0.01" value="{manual_by_element.get(int(e["id"]),0):.2f}"></div></div><p><button>Preview Amendment</button></p></form>' for e in elements)}{'' if cancelled else '</div>'}
+        {'<div class="card"><h2>Accommodation locked</h2><p>This booking is permanently cancelled. Financial records and history remain accessible.</p></div>' if cancelled else '<div class="card"><h2>Amend Booking</h2>'}<p class="muted">Preview the price before applying. Original frozen booking values remain in history.</p>{''.join(f'<form method="post" action="{booking_path(database,cid,booking_id)}/amend-preview"><input type="hidden" name="csrf" value="{esc(context["csrf_token"])}"><input type="hidden" name="booking_element_id" value="{int(e["id"])}"><h3>{esc(e["element_name"])}</h3><div class="grid"><div><label>Arrival</label><input type="date" name="arrival_date" value="{esc(e["arrival_date"])}" required></div><div><label>Departure</label><input type="date" name="departure_date" value="{esc(e["departure_date"])}" required></div><div><label>Manual discount (booking currency)</label><input type="number" name="manual_discount" min="0" step="0.01" value="{manual_by_element.get(int(e["id"]),0):.2f}"></div><div><label>Discount explanation (max 40 characters)</label><input name="manual_discount_reason" maxlength="40" value="{esc(manual_reason_by_element.get(int(e["id"]),chr(34)+chr(34)))}"></div></div><p><button>Preview Amendment</button></p></form>' for e in elements)}{'' if cancelled else '</div>'}
         <div class="card"><h2>Frozen Booking</h2>{element_html}<p class="muted">Each element is shown from its own frozen snapshot. Later Setup price changes do not alter this Booking.</p></div>
         <div class="card"><h2>Payments</h2><table><thead><tr><th>Date</th><th>Amount</th><th>Method</th><th>Reference</th><th>Notes</th></tr></thead><tbody>{payment_rows}</tbody></table><h3>Record payment</h3><form method="post" action="{booking_path(database,cid,booking_id)}/payments"><input type="hidden" name="csrf" value="{esc(context['csrf_token'])}"><div class="grid"><div><label>Amount</label><input name="amount" type="number" min="0.01" step="0.01" value="{balance:.2f}" required></div><div><label>Date</label><input name="payment_date" type="date" value="{_local_today().isoformat()}" required></div><div><label>Method</label><select name="payment_method_id" required>{''.join(f'<option value="{int(m["id"])}">{esc(m["name"])}</option>' for m in rows(database,'SELECT * FROM payment_method_definitions WHERE company_id=:q235_0 AND active=1 ORDER BY display_order,name',(cid,)))}</select></div><div><label>Reference</label><input name="reference"></div></div><label>Notes</label><input name="notes"><p><button>Record Payment</button></p></form></div>
         <div class="card"><h2>Booking History</h2><table><thead><tr><th>When</th><th>Who</th><th>What happened</th></tr></thead><tbody>{history_rows}</tbody></table></div>'''
@@ -524,12 +530,12 @@ def register_booking_routes(app) -> None:
         context=context_for(database,request); cid=int(working_company(context)); data=await form_data(request); require_csrf(context,data)
         try:
             beid=int(data.get('booking_element_id','')); manual=float(str(data.get('manual_discount','0')).replace(',','.'))
-            quote=amendment_quote(database,cid,booking_id,beid,str(data.get('arrival_date','')),str(data.get('departure_date','')),manual)
+            quote=amendment_quote(database,cid,booking_id,beid,str(data.get('arrival_date','')),str(data.get('departure_date','')),manual,str(data.get('manual_discount_reason','')))
         except (TypeError,ValueError) as exc:
             return RedirectResponse(f'{booking_path(database,cid,booking_id)}?message='+str(exc).replace(' ','+'),303)
         rule=quote.get('duration_rule') or {}
-        discount_line=(f"<p><strong>Duration discount:</strong> {_money(quote['duration_discount'])} — {esc(rule.get('name',''))}</p>" if quote['duration_discount'] else '<p><strong>Duration discount:</strong> €0.00</p>')
-        private_note=(f"<p><strong>Private staff discount:</strong> {_money(quote['manual_discount'])}</p>" if quote['manual_discount'] else '')
+        discount_line=(f"<p><strong>Duration discount:</strong> {_money(quote['duration_discount'])} — {esc(rule.get('name',''))}</p>" if quote['duration_discount'] else '<p><strong>Duration discount:</strong> '+_money(0)+'</p>')
+        private_note=(f"<p><strong>Manual discount:</strong> {_money(quote['manual_discount'])} — {esc(quote['manual_discount_reason'])}</p>" if quote['manual_discount'] else '')
         payload=esc(json.dumps(quote,separators=(',',':')))
         body=f'''<h1>Preview Booking Amendment</h1><div class="card"><p><strong>Current stay:</strong> {_fmt_day(quote['old_arrival'])} → {_fmt_day(quote['old_departure'])}<br>
         <strong>New stay:</strong> {_fmt_day(quote['new_arrival'])} → {_fmt_day(quote['new_departure'])}<br>
@@ -545,8 +551,8 @@ def register_booking_routes(app) -> None:
         try:
             submitted=json.loads(str(data.get('quote','{}')))
             if int(submitted.get('booking_id',0))!=booking_id: raise ValueError('Invalid amendment.')
-            quote=amendment_quote(database,cid,booking_id,int(submitted['booking_element_id']),str(submitted['new_arrival']),str(submitted['new_departure']),float(submitted.get('manual_discount',0)))
-            for field in ('old_arrival','old_departure','old_booking_total','new_booking_total','manual_discount'):
+            quote=amendment_quote(database,cid,booking_id,int(submitted['booking_element_id']),str(submitted['new_arrival']),str(submitted['new_departure']),float(submitted.get('manual_discount',0)),str(submitted.get('manual_discount_reason','')))
+            for field in ('old_arrival','old_departure','old_booking_total','new_booking_total','manual_discount','manual_discount_reason'):
                 if field in submitted and submitted[field] != quote[field]:
                     raise ValueError('The Booking or price has changed. Review a new amendment preview before saving.')
             amendment_id=apply_amendment(database,context,quote)
