@@ -1,5 +1,11 @@
 # Build 302 v3 — operational reservation transition verification
 
+> Updated acceptance scope: all operational records are disposable test data.
+> See [fresh-database acceptance and permanent safeguards](build302-fresh-acceptance.md)
+> for the subsequent Build #697 checks and current development decision. No
+> historical customer-data migration project is required. This document retains
+> the earlier implementation/test record.
+
 27 October 2026. Repository: `petermaisonwilson/DirectBookingSoftware`.
 Branch: `build-302-payment-rules-fix`. Build/version remain **302 v3**.
 No Build 303 was created. PR #21 remains open and unmerged.
