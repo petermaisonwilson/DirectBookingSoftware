@@ -520,18 +520,24 @@ class OperationalJourneyTests(unittest.TestCase):
                     process.kill()
                     process.wait(timeout=5)
 
-    def test_canonical_creation_calendar_and_tenant_isolation(self):
+    def test_retained_standalone_records_and_creation_entry_are_tenant_scoped(self):
         second = self.new_element('Pitch B')
         self.assertEqual(self.clients[0].get('/operations/master-reservations').status_code, 200)
-        page = self.clients[0].get('/operations/master-reservations/new')
-        self.assertEqual(page.status_code, 200, page.text)
-        response = self.clients[0].post('/operations/master-reservations/new', data={
+        page = self.clients[0].get('/operations/master-reservations/new', follow_redirects=False)
+        self.assertEqual(page.status_code, 303)
+        self.assertEqual(page.headers['location'], '/availability/start')
+        stale_form = self.clients[0].post('/operations/master-reservations/new', data={
             'csrf': self.csrf(), 'customer_id': self.customer, 'element_ids': [self.element, second],
-            'arrival_date': '2038-07-01', 'departure_date': '2038-07-03', f'person_{self.person}': '1'},
-            follow_redirects=False)
-        self.assertEqual(response.status_code, 303, response.text)
-        url = response.headers['location']
-        rid = int(url.rsplit('/', 1)[1])
+            'arrival_date': '2038-07-01', 'departure_date': '2038-07-03', f'person_{self.person}': '1'}, follow_redirects=False)
+        self.assertEqual(stale_form.status_code, 409)
+        self.assertEqual(self.scalar('SELECT COUNT(*) FROM reservations WHERE company_id=:tenant', (self.cid,)), 0)
+        # Preserve and read an earlier standalone service record without inventing
+        # missing requirements. Normal UI creation is covered by the full journey.
+        from online.webv1_reservation_service import create_enquiry
+        rid = create_enquiry(self.db, self.cid, 'RETAINED-STANDALONE', self.customer,
+            [{'element_id': eid, 'arrival_date': '2038-07-01', 'departure_date': '2038-07-03', 'total_amount': 200}
+             for eid in (self.element, second)], iso_now(), actor='Forest Operator')
+        url = f'/operations/reservations/{rid}'
         detail = self.clients[0].get(url)
         self.assertEqual(detail.status_code, 200, detail.text)
         self.assertIn('Pitch A', detail.text)
@@ -553,7 +559,7 @@ class OperationalJourneyTests(unittest.TestCase):
             response = foreign.post('/operations/master-reservations/new', data={
                 'csrf': foreign_context['csrf_token'], 'customer_id': self.customer, 'element_ids': self.element,
                 'arrival_date': '2038-07-01', 'departure_date': '2038-07-03'}, follow_redirects=False)
-            self.assertEqual(response.status_code, 400)
+            self.assertEqual(response.status_code, 409)
         from online.webv1_reservation_service import change_reservation_state
         change_reservation_state(self.db, self.cid, rid, 'ENQUIRY_RELEASED', iso_now(), actor='Forest Operator')
         calendar = self.clients[0].get('/availability/calendar-v2', params={

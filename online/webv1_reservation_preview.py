@@ -1,12 +1,12 @@
-"""Read-only preview of the new single-record reservation screens.
+"""Reservation register and reader for retained standalone records.
 
-Kept separate from the existing operational screens until the full lifecycle,
-finance and history are migrated.
+Operational records open their complete canonical workflow. Earlier standalone
+summaries remain readable without inferring missing requirements or finance.
 """
 import json
 
 from fastapi import Request
-from fastapi.responses import HTMLResponse
+from fastapi.responses import HTMLResponse, RedirectResponse
 
 from .app import esc, layout
 from .setup015_core import context_for, working_company
@@ -31,8 +31,8 @@ def register_reservation_preview_routes(app):
         if selected and selected not in _STATES:
             return HTMLResponse(layout('Invalid status', '<div class="error">Invalid reservation status.</div>', context), status_code=400)
         records = list_reservations(database, company_id, state=selected or None)
-        body = '<h1>Single-record reservations — preview</h1>'
-        body += '<p class="muted">Read-only development view. Existing Enquiry and Booking screens remain in use.</p>'
+        body = '<h1>Reservations</h1>'
+        body += '<p class="muted">Open a reservation to manage its requirements, confirmation, financial records and history.</p>'
         body += '<form method="get"><label for="status">Status</label><select name="status" id="status">'
         body += '<option value="">All statuses</option>'
         for code, label in _STATES.items():
@@ -46,8 +46,8 @@ def register_reservation_preview_routes(app):
                      f'<td>{esc(_STATES.get(item["state"], item["state"]))}</td>'
                      f'<td>{float(item["total_amount"] or 0):.2f} {esc(item["currency"])}</td>'
                      f'<td>{esc(item["created_at"])}</td></tr>')
-        body += '</table><p><a href="/operations/master-reservations/new">Create development Enquiry</a></p>'
-        return HTMLResponse(layout('Single-record reservations', body, context))
+        body += '</table><p><a href="/availability/start">New Booking</a></p>'
+        return HTMLResponse(layout('Reservations', body, context))
 
     @app.get('/operations/master-reservations/{reservation_id:int}', response_class=HTMLResponse)
     def detail(reservation_id: int, request: Request):
@@ -58,8 +58,11 @@ def register_reservation_preview_routes(app):
             return HTMLResponse(layout('Reservation not found',
                                         '<div class="error">Reservation not found for this client.</div>',
                                         context), status_code=404)
+        if request.url.path.startswith('/operations/master-reservations/'):
+            return RedirectResponse(f'/operations/reservations/{reservation_id}', status_code=303)
         record = result['reservation']
         body = (f'<p><a href="/operations/master-reservations">Back to reservations</a></p>'
+                '<p class="muted">Read-only summary: this record has no linked booking requirements or financial account. Start a new booking through Booking Requirements rather than inferring the missing details.</p>'
                 f'<h1>Reservation {esc(record["reference"])}</h1>'
                 f'<p><strong>Status:</strong> {esc(_STATES.get(record["state"], record["state"]))}</p>'
                 f'<p><strong>Total:</strong> {float(record["total_amount"] or 0):.2f} {esc(record["currency"])}</p>'
