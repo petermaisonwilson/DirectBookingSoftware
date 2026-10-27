@@ -4,27 +4,9 @@ on:
   push:
     paths-ignore:
       - 'docs/**'
-    branches:
-      - web-v1-foundation
-      - web-v1-client-register-enquiry
-      - web-v1-enquiry-search
-      - web-v1-operations-navigation
-      - web-v1-full-enquiry
-      - web-v1-integrated-enquiry
-      - web-v1-addon-when
-      - web-v1-persistent-data
-      - web-v1-addon-person-pricing
-      - web-v1-addon-picker
-      - web-v1-setup-maintenance
-      - web-v1-availability-foundation
-      - web-v1-availability-calendar
-      - web-v1-booking-status-workflow
-      - web-v1-booking-workflow
-      - web-v1-booking-edit-hold-warning
-      - build-302-payment-rules-fix
+    branches: ['**']
   pull_request:
-    branches:
-      - main
+    branches: ['**']
   workflow_dispatch:
 
 jobs:
@@ -367,3 +349,11 @@ jobs:
         env:
           DBS_TEST_POSTGRES_URL: postgresql+psycopg://postgres:postgres@127.0.0.1:5432/reservations_test
         run: python tests/run_operational_acceptance.py
+
+      - name: Fresh SQLite, native backup restoration and packaged startup
+        run: python tests/database_recovery_test.py
+      - name: Fresh PostgreSQL, pg_dump restoration, connection recovery and packaged startup
+        env:
+          DBS_TEST_POSTGRES_URL: postgresql+psycopg://postgres:postgres@127.0.0.1:5432/reservations_test
+          DBS_TEST_POSTGRES_CONTAINER: ${{ job.services.postgres.id }}
+        run: python tests/database_recovery_test.py

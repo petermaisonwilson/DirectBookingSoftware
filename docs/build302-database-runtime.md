@@ -74,3 +74,52 @@ injected history-failure cases.
 
 These instructions do not authorise a live database conversion, tenant reset,
 new hosting deployment or any change to business rules.
+
+## Fresh acceptance and recovery policy
+
+All current customer, enquiry, booking and finance records are disposable test
+records. Start acceptance with fresh isolated databases; no historical conversion
+project is required. Existing Setup and other tenant configurations are outside
+any reset scope. The tests do not clear an existing installation.
+
+For a **new empty** SQLite file or PostgreSQL database, configure its explicit
+`DIRECTBOOKING_DATABASE_URL`, disable demo seeding, and run
+`python -m alembic upgrade head`. SQLite's established local launcher can also
+initialise a fresh file directly. Never apply these fresh-file instructions as
+permission to stamp or overwrite an old local file. Normal incremental Alembic
+upgrades remain supported and tested, including repeat runs and failed-constraint
+rollback. Existing additive identity compatibility code is retained; no additional
+historical migration tooling is planned.
+
+`python tests/database_recovery_test.py` exercises fresh empty initialisation,
+repeated upgrade, representative records created through the operational HTTP
+workflow, native backup, rejection of damaged backups, restoration, exact table
+contents, restart and subsequent sequence/ledger writes. SQLite uses its online
+backup API with integrity/foreign-key checks. PostgreSQL uses real custom-format
+`pg_dump` and transactional `pg_restore` in a dedicated `_test` database. CI uses
+matching tools inside its PostgreSQL service container; outside CI install
+matching PostgreSQL client tools and set `DBS_TEST_POSTGRES_URL`.
+
+The PostgreSQL drill drops and restores ONLY its newly generated random test
+schema. It verifies a failed restore leaves no partial schema before retrying a
+valid archive. It also terminates a disposable pooled connection and verifies
+pre-ping recovery, rejects missing-schema/unreachable configurations without
+SQLite fallback, and runs migration/startup from staged package sources.
+
+For real deployment backups, use the SQLite online backup API (not a raw copy of
+an active WAL database), or whole-database PostgreSQL `pg_dump -Fc`, store the
+archive outside the working database, verify it, and rehearse restoration into a
+separate target. PostgreSQL roles/server configuration and external files require
+separate backups. Before replacing any existing target, identify its scope,
+retain its backup and obtain owner approval. A database backup restores Setup and
+all tenant records at that snapshot; it is not a selective booking-data reset.
+The automated test-schema drill does not establish site-specific disaster
+recovery times or a production backup policy.
+
+Permanent development requirements are in root `AGENTS.md` and the pull-request
+template. The main build workflow covers pushes to every branch and pull requests
+to every target (documentation-only pushes remain exempt). Both engines' central,
+operational and recovery commands must pass before the dependent Windows build,
+packaging or release can succeed. Repository branch protection is a separate
+GitHub administrative setting; workflow failure alone does not prevent a user
+with write permission from bypassing review or merging manually.

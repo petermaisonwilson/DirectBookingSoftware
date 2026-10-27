@@ -487,17 +487,17 @@ class OperationalJourneyTests(unittest.TestCase):
         self.assertEqual(self.scalar('SELECT state FROM reservations WHERE company_id=:tenant AND id=:reservation', (self.cid, rid)), 'CONFIRMED')
         self.assertEqual(self.scalar('SELECT total_amount FROM reservations WHERE company_id=:tenant AND id=:reservation', (self.cid, rid)), 200)
 
-    def test_actual_launcher_uses_the_configured_database(self):
+    def test_actual_launcher_uses_the_configured_database(self, test_root=None, database_url=None):
         with socket.socket() as sock:
             sock.bind(('127.0.0.1', 0))
             port = sock.getsockname()[1]
-        environment = dict(os.environ, DIRECTBOOKING_DATABASE_URL=self.db.config.database_url,
+        environment = dict(os.environ, DIRECTBOOKING_DATABASE_URL=database_url or self.db.config.database_url,
             DIRECTBOOKING_ENV='test', DIRECTBOOKING_SEED_DEMO='0', DIRECTBOOKING_NO_BROWSER='1',
             DIRECTBOOKING_HOST='127.0.0.1', DIRECTBOOKING_PORT=str(port))
         log_path = Path(self.temp.name) / 'server.log'
         with log_path.open('w') as log:
             process = subprocess.Popen([sys.executable, 'run_online.py'], env=environment,
-                                       stdout=log, stderr=subprocess.STDOUT)
+                                       stdout=log, stderr=subprocess.STDOUT, cwd=test_root)
             try:
                 deadline = time.monotonic() + 25
                 health = None
