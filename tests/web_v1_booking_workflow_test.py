@@ -279,7 +279,7 @@ def main() -> None:
         assert amended['status_name']=='Part Paid' and amended['system_code']=='DEPOSIT_PAID'
         assert original['original_arrival_date']=='2035-06-10' and original['original_departure_date']=='2035-06-13' and float(original['original_total_amount'])==300.0
         amended_page=client.get(f'/operations/bookings/{booking_id}')
-        assert 'Staff discount:</strong> −€20.00' in amended_page.text
+        assert 'Manual discount:</strong> −€20.00' in amended_page.text
         assert 'name="manual_discount" min="0" step="0.01" value="20.00"' in amended_page.text
         shorter=amendment_quote(db,cid,booking_id,beid,'2035-06-10','2035-06-15')
         assert shorter['new_nights']==5 and shorter['duration_discount']==0 and shorter['manual_discount']==20.0
