@@ -149,6 +149,27 @@ def register_calendar_v5_routes(app) -> None:
         {'<a class="button secondary" href="/setup/booking-statuses">Booking Statuses</a>' if staff else ''}</p>
         <form method="get" action="/availability/calendar-v2" class="calendar-date-search">{type_picker}<label>From <input type="date" name="date_from" value="{visible_start.isoformat()}" required></label><label>To <input type="date" name="date_to" value="{(visible_start+timedelta(days=display_days-1)).isoformat()}" required></label><button type="submit">Show dates</button><span>Maximum 60 days</span></form></div></div>'''
 
+        # Changing the start of the visible window defaults the end to the following day.
+        body += """<script>
+        (() => {
+          const form = document.querySelector('.calendar-date-search');
+          if (!form) return;
+          const from = form.querySelector('input[name="date_from"]');
+          const to = form.querySelector('input[name="date_to"]');
+          if (!from || !to) return;
+          from.addEventListener('change', () => {
+            if (!from.value) return;
+            const next = new Date(from.value + 'T12:00:00');
+            next.setDate(next.getDate() + 1);
+            const yyyy = next.getFullYear();
+            const mm = String(next.getMonth() + 1).padStart(2, '0');
+            const dd = String(next.getDate()).padStart(2, '0');
+            to.value = yyyy + '-' + mm + '-' + dd;
+            to.min = to.value;
+          });
+        })();
+        </script>"""
+
         if editing:
             edit_name = str(editing['lead_name'] or '').strip() or str(editing['element_name'])
             current_type = str(editing['element_type'])
