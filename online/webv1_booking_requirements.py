@@ -260,6 +260,24 @@ def register_booking_requirement_routes(app):
             execute_sql(c, 'DELETE FROM booking_requirement_sessions WHERE company_id=:tenant AND session_token=:token', (cid, token))
         return RedirectResponse('/availability/start', 303)
 
+    @app.post('/availability/master-calendar-entry')
+    async def master_calendar_entry(request: Request):
+        context, cid = _session_context(database, request)
+        data = await form_data(request)
+        require_csrf(context, data)
+        token = request.cookies.get(COOKIE_NAME, '')
+        with database.connect() as c:
+            held = execute_sql(c, 'SELECT id FROM element_holds WHERE company_id=:tenant AND session_token=:token', (cid, token)).fetchall()
+            for item in held:
+                hid = int(item['id'])
+                execute_sql(c, 'DELETE FROM hold_requirement_people WHERE hold_id=:hold', (hid,))
+                execute_sql(c, 'DELETE FROM hold_requirement_addons WHERE hold_id=:hold', (hid,))
+            execute_sql(c, 'DELETE FROM element_holds WHERE company_id=:tenant AND session_token=:token', (cid, token))
+            execute_sql(c, 'DELETE FROM booking_requirement_people WHERE company_id=:tenant AND session_token=:token', (cid, token))
+            execute_sql(c, 'DELETE FROM booking_requirement_addons WHERE company_id=:tenant AND session_token=:token', (cid, token))
+            execute_sql(c, 'DELETE FROM booking_requirement_sessions WHERE company_id=:tenant AND session_token=:token', (cid, token))
+        return RedirectResponse('/availability/calendar-v2', 303)
+
     @app.get('/availability/start', response_class=HTMLResponse)
     def requirements_start(request: Request):
         context, cid = _session_context(database, request); token = request.cookies.get(COOKIE_NAME, ''); raw_edit = request.query_params.get('edit_hold', ''); edit_hold = int(raw_edit) if raw_edit.isdigit() and int(raw_edit) > 0 else 0
