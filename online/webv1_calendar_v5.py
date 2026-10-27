@@ -138,13 +138,19 @@ def register_calendar_v5_routes(app) -> None:
         # always goes through Booking Requirements so inherited party data is
         # checked against the new Element Type before anything can be selected.
         add_query = f'?edit_hold={int(edit_hold)}' if edit_hold else ''
+        new_booking_button = ''
+        if staff and not (edit_hold or recovery_enquiry):
+            warning = ("return confirm('Abandon the unfinished basket and start a completely new booking? Saved enquiries and bookings will not be affected.')" if basket else 'return true')
+            new_booking_button = (f'<form method="post" action="/availability/new-booking" style="display:inline" onsubmit="{esc(warning)}">'
+                                  f'<input type="hidden" name="csrf" value="{esc(str(context["csrf_token"]))}">'
+                                  '<button type="submit">New Booking</button></form>')
         body += f'''<div class="card"><div id="availability-form">
         <input type="hidden" id="edit-hold" value="{edit_hold or ''}">
         <input type="hidden" id="element-type" value="{esc(selected_type)}">
         <input type="hidden" id="arrival-date" value="{esc(arrival)}">
         <input type="hidden" id="departure-date" value="{esc(departure)}">
         <p><a class="button" href="/availability/start{add_query}">Add New Element</a>
-        {('<form method="post" action="/availability/new-booking" style="display:inline" onsubmit="return confirm(\'Abandon the unfinished basket and start a completely new booking? Saved enquiries and bookings will not be affected.\')"><input type="hidden" name="csrf" value="' + esc(str(context['csrf_token'])) + '"><button type="submit">New Booking</button></form>') if staff and not (edit_hold or recovery_enquiry) else ''}
+        {new_booking_button}
         <a class="button secondary" href="/availability/calendar-v2?{preserve}&start={(visible_start-timedelta(days=14)).isoformat()}">← Previous 14 days</a>
         <a class="button secondary" href="/availability/calendar-v2?{preserve}&start={(visible_start+timedelta(days=14)).isoformat()}">Next 14 days →</a>
         {'<a class="button secondary" href="/setup/booking-statuses">Booking Statuses</a>' if staff else ''}</p>
