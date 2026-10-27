@@ -32,7 +32,8 @@ def _dates(a: str, d: str):
 
 
 def amendment_quote(database, company_id: int, booking_id: int, booking_element_id: int,
-                    new_arrival: str, new_departure: str, manual_discount: float | None=None) -> dict:
+                    new_arrival: str, new_departure: str, manual_discount: float | None=None,
+                    manual_discount_reason: str | None=None) -> dict:
     be=one(database,'SELECT be.*,se.name AS element_name,se.pricing_method\n        FROM booking_elements be JOIN setup_elements se ON se.id=be.element_id AND se.company_id=be.company_id\n        WHERE be.company_id=:q520_0 AND be.booking_id=:q520_1 AND be.id=:q520_2',(company_id,booking_id,booking_element_id))
     booking=one(database,'SELECT * FROM bookings WHERE company_id=:q521_0 AND id=:q521_1',(company_id,booking_id))
     if be is None or booking is None: raise ValueError('Booking element does not exist.')
@@ -84,9 +85,16 @@ def amendment_quote(database, company_id: int, booking_id: int, booking_element_
     mixed_base=round(retained_historic+added_element+recurring_added,2)
     discount=duration_discount(database,company_id,int(be['element_id']),new_nights,mixed_base)
     prior=one(database,'SELECT calculation_json,manual_discount FROM booking_amendments WHERE company_id=:q524_0 AND booking_id=:q524_1 AND booking_element_id=:q524_2 ORDER BY id DESC LIMIT 1',(company_id,booking_id,booking_element_id))
+    try: prior_calc=json.loads(prior['calculation_json'] or '{}') if prior is not None else {}
+    except (TypeError,json.JSONDecodeError): prior_calc={}
     prior_manual=float(prior['manual_discount'] or 0) if prior is not None else 0.0
     requested_manual=prior_manual if manual_discount is None else finite_amount(manual_discount or 0, 'staff discount')
+    prior_reason = str(prior_calc.get('manual_discount_reason') or '') if prior is not None else ''
+    reason = prior_reason if manual_discount_reason is None else str(manual_discount_reason).strip()
+    if len(reason) > 40:
+        raise ValueError('Manual discount explanation must not exceed 40 characters.')
     manual=max(0.0,min(requested_manual,float(discount['final_amount'])))
+    if not manual: reason = ''
     element_old_final=float(snap.get('total') or (old_package-old_discount))
     if prior is not None:
         try: prior_calc=json.loads(prior['calculation_json'] or '{}')
@@ -102,7 +110,7 @@ def amendment_quote(database, company_id: int, booking_id: int, booking_element_
         'retained_nights':retained_nights,'added_nights':len(added_dates),'retained_historic_base':retained_historic,
         'added_current_element':round(added_element,2),'added_recurring':round(recurring_added,2),
         'base_amount':mixed_base,'duration_discount':float(discount['discount_amount']),'duration_rule':discount['rule'],
-        'manual_discount':round(manual,2),'new_element_total':new_element_total,
+        'manual_discount':round(manual,2),'manual_discount_reason':reason,'new_element_total':new_element_total,
         'old_booking_total':round(float(booking['total_amount']),2),'new_booking_total':new_booking_total,
     }
 
@@ -152,6 +160,8 @@ def apply_amendment(database, context, quote: dict) -> int:
         sync_payment_status(database,cid,booking_id,connection=c,context=context)
         from .setup015_core import audit
         private_detail = dict(quote, amendment_id=amendment_id)
+        # Customer-facing reason is retained in the amendment calculation and audit.
+        # Preserve the numeric discount in the audit for reconciliation.
         private_detail['manual_discount_private'] = private_detail.pop('manual_discount', 0)
         audit(database, context, cid, 'BOOKING_AMENDED', 'booking', booking_id,
               before={'arrival_date': quote['old_arrival'], 'departure_date': quote['old_departure'],
