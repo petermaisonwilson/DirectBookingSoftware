@@ -148,7 +148,9 @@ def main() -> None:
         blank_add = client.get('/availability/calendar-v2', params={'start': '2035-07-06', 'arrival': '2035-07-10', 'departure': '2035-07-13'})
         assert blank_add.status_code == 200
         assert '<select id="element-type"' not in blank_add.text
-        assert 'ADD / CHANGE ELEMENT' in blank_add.text and 'href="/availability/start"' in blank_add.text
+        assert 'Add New Element' in blank_add.text and 'href="/availability/start"' in blank_add.text
+        assert 'action="/availability/new-booking"' in blank_add.text
+        assert 'Abandon the unfinished basket' in blank_add.text
         assert 'Current Pitch 2' in blank_add.text and 'cal-cell own-held' in blank_add.text
 
         duplicate = client.post('/availability/hold', data={'csrf': csrf, 'element_id': str(pitch_two), 'arrival_date': '2035-07-20', 'departure_date': '2035-07-22'})
