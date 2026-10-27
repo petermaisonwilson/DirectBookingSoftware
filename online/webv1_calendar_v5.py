@@ -455,7 +455,7 @@ def register_calendar_v5_routes(app) -> None:
           handle.addEventListener('pointerup',()=>{{drag=null;}});
           handle.addEventListener('pointercancel',()=>{{drag=null;}});
         }}
-        document.querySelectorAll('.cal-bar a[href^="/operations/bookings/"],.cal-bar a[href^="/operations/enquiries/"],.cal-bar a[href^="/operations/master-reservations/"],.inventory-conflict a.conflict-record-link').forEach(link=>link.addEventListener('click',event=>{{event.preventDefault();openBookingWindow(link.href,link.textContent.trim());}}));
+        document.querySelectorAll('.cal-bar a[href^="/operations/bookings/"],.cal-bar a[href^="/operations/enquiries/"],.cal-bar a[href^="/operations/master-reservations/"],.cal-bar a[href^="/operations/reservations/"],.inventory-conflict a.conflict-record-link').forEach(link=>link.addEventListener('click',event=>{{event.preventDefault();openBookingWindow(link.href,link.textContent.trim());}}));
         const csrf={json.dumps(str(context['csrf_token']))}; const editingHold={int(edit_hold or 0)}; const recoveryEnquiry={int(recovery_enquiry or 0)},recoveryElement={int(recovery_element or 0)}; const recoveryCommand={json.dumps(recovery_command_url)},recoveryDetail={json.dumps(recovery_detail_url)}; const anchorArr={json.dumps(anchor_arrival)},anchorDep={json.dumps(anchor_departure)};
         const elementType=document.getElementById('element-type'),arrivalInput=document.getElementById('arrival-date'),departureInput=document.getElementById('departure-date'),scrollBox=document.getElementById('calendar-scroll');
         let selectedElement=0,firstPick='';
