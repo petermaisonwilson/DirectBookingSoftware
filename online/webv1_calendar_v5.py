@@ -143,7 +143,7 @@ def register_calendar_v5_routes(app) -> None:
         <input type="hidden" id="element-type" value="{esc(selected_type)}">
         <input type="hidden" id="arrival-date" value="{esc(arrival)}">
         <input type="hidden" id="departure-date" value="{esc(departure)}">
-        <p>{('<form method="post" action="/availability/new-booking" style="display:inline"><input type="hidden" name="csrf" value="' + esc(str(context['csrf_token'])) + '"><button type="submit">New Booking</button></form>') if staff and not (edit_hold or recovery_enquiry) else ('<a class="button" href="/availability/start' + add_query + '">ADD / CHANGE ELEMENT</a>')}
+        <p><a class="button" href="/availability/start{add_query}">{"New Booking" if staff and not (basket or edit_hold or recovery_enquiry or arrival or departure) else "ADD / CHANGE ELEMENT"}</a>
         <a class="button secondary" href="/availability/calendar-v2?{preserve}&start={(visible_start-timedelta(days=14)).isoformat()}">← Previous 14 days</a>
         <a class="button secondary" href="/availability/calendar-v2?{preserve}&start={(visible_start+timedelta(days=14)).isoformat()}">Next 14 days →</a>
         {'<a class="button secondary" href="/setup/booking-statuses">Booking Statuses</a>' if staff else ''}</p>
