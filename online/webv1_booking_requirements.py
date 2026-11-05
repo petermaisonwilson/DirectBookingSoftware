@@ -238,6 +238,26 @@ def _snapshot_hold_requirements(database, cid, token, hold_id):
         execute_sql(c, 'INSERT INTO hold_requirement_addons(hold_id,company_id,addon_id,quantity)\n                     SELECT :q330_0,company_id,addon_id,quantity FROM booking_requirement_addons\n                     WHERE company_id=:q330_1 AND session_token=:q330_2', (hold_id, cid, token))
 
 
+def _abandon_working_basket(database, company_id, session_token):
+    """Atomically discard only this tenant/session's unsaved working basket."""
+    with database.reservation_write_transaction(company_id) as c:
+        held = execute_sql(c, 'SELECT id FROM element_holds WHERE company_id=:tenant AND session_token=:token',
+                           {'tenant': company_id, 'token': session_token}).fetchall()
+        for item in held:
+            hold_id = int(item['id'])
+            execute_sql(c, 'DELETE FROM hold_requirement_people WHERE hold_id=:hold', {'hold': hold_id})
+            execute_sql(c, 'DELETE FROM hold_requirement_addons WHERE hold_id=:hold', {'hold': hold_id})
+        execute_sql(c, 'DELETE FROM element_holds WHERE company_id=:tenant AND session_token=:token',
+                    {'tenant': company_id, 'token': session_token})
+        for table in ('booking_requirement_people', 'booking_requirement_addons', 'booking_requirement_sessions'):
+            execute_sql(c, f'DELETE FROM {table} WHERE company_id=:tenant AND session_token=:token',
+                        {'tenant': company_id, 'token': session_token})
+        remaining = execute_sql(c, 'SELECT COUNT(*) AS n FROM element_holds WHERE company_id=:tenant AND session_token=:token',
+                                {'tenant': company_id, 'token': session_token}).fetchone()
+        if int(remaining['n']) != 0:
+            raise RuntimeError('Unable to abandon the working basket; changes rolled back.')
+
+
 def register_booking_requirement_routes(app):
     database = app.state.database
     app.router.routes[:] = [r for r in app.router.routes if getattr(r, 'path', None) != '/availability/hold']
@@ -248,16 +268,7 @@ def register_booking_requirement_routes(app):
         data = await form_data(request)
         require_csrf(context, data)
         token = request.cookies.get(COOKIE_NAME, '')
-        with database.connect() as c:
-            held = execute_sql(c, 'SELECT id FROM element_holds WHERE company_id=:tenant AND session_token=:token', (cid, token)).fetchall()
-            for item in held:
-                hid = int(item['id'])
-                execute_sql(c, 'DELETE FROM hold_requirement_people WHERE hold_id=:hold', (hid,))
-                execute_sql(c, 'DELETE FROM hold_requirement_addons WHERE hold_id=:hold', (hid,))
-            execute_sql(c, 'DELETE FROM element_holds WHERE company_id=:tenant AND session_token=:token', (cid, token))
-            execute_sql(c, 'DELETE FROM booking_requirement_people WHERE company_id=:tenant AND session_token=:token', (cid, token))
-            execute_sql(c, 'DELETE FROM booking_requirement_addons WHERE company_id=:tenant AND session_token=:token', (cid, token))
-            execute_sql(c, 'DELETE FROM booking_requirement_sessions WHERE company_id=:tenant AND session_token=:token', (cid, token))
+        _abandon_working_basket(database, cid, token)
         return RedirectResponse('/availability/start', 303)
 
     @app.post('/availability/master-calendar-entry')
@@ -266,16 +277,7 @@ def register_booking_requirement_routes(app):
         data = await form_data(request)
         require_csrf(context, data)
         token = request.cookies.get(COOKIE_NAME, '')
-        with database.connect() as c:
-            held = execute_sql(c, 'SELECT id FROM element_holds WHERE company_id=:tenant AND session_token=:token', (cid, token)).fetchall()
-            for item in held:
-                hid = int(item['id'])
-                execute_sql(c, 'DELETE FROM hold_requirement_people WHERE hold_id=:hold', (hid,))
-                execute_sql(c, 'DELETE FROM hold_requirement_addons WHERE hold_id=:hold', (hid,))
-            execute_sql(c, 'DELETE FROM element_holds WHERE company_id=:tenant AND session_token=:token', (cid, token))
-            execute_sql(c, 'DELETE FROM booking_requirement_people WHERE company_id=:tenant AND session_token=:token', (cid, token))
-            execute_sql(c, 'DELETE FROM booking_requirement_addons WHERE company_id=:tenant AND session_token=:token', (cid, token))
-            execute_sql(c, 'DELETE FROM booking_requirement_sessions WHERE company_id=:tenant AND session_token=:token', (cid, token))
+        _abandon_working_basket(database, cid, token)
         return RedirectResponse('/availability/calendar-v2', 303)
 
     @app.get('/availability/start', response_class=HTMLResponse)
