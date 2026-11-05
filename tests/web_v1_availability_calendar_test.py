@@ -25,6 +25,8 @@ def main() -> None:
     with tempfile.TemporaryDirectory() as temp_dir:
         app = create_app(Path(temp_dir) / 'current-availability.db', seed_demo=True)
         register_web_v1(app)
+        matching_routes = [route for route in app.router.routes if getattr(route, 'path', '') == '/availability/new-booking' and 'POST' in getattr(route, 'methods', set())]
+        assert len(matching_routes) == 1
         db = app.state.database
         client = TestClient(app)
         login(client, 'operator@forestview.test', 'Operator013!')
