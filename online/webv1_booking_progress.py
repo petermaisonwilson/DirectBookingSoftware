@@ -213,13 +213,6 @@ def _customer_stage(database,context,company_id,token,hold_id,values,error='',ma
 def register_booking_progress_routes(app):
     database=app.state.database
 
-    @app.post('/availability/new-booking')
-    async def new_booking_requirements(request:Request):
-        context,company_id=_session_company(database,request);data=await form_data(request);require_csrf(context,data);token=request.cookies.get(COOKIE_NAME,'')
-        with database.connect() as c:
-            execute_sql(c, 'DELETE FROM booking_requirement_people WHERE company_id=:q60_0 AND session_token=:q60_1',(company_id,token));execute_sql(c, 'DELETE FROM booking_requirement_addons WHERE company_id=:q61_0 AND session_token=:q61_1',(company_id,token));execute_sql(c, "INSERT INTO booking_requirement_sessions(session_token,company_id,ready,arrival_date,departure_date,lead_name,updated_at) VALUES (:q62_0,:q62_1,0,'','','',CURRENT_TIMESTAMP) ON CONFLICT(session_token,company_id) DO UPDATE SET ready=0,arrival_date='',departure_date='',lead_name='',updated_at=CURRENT_TIMESTAMP",(token,company_id))
-        return RedirectResponse('/availability/start',303)
-
     @app.get('/availability/basket/edit',response_class=HTMLResponse)
     def edit_basket_item(request:Request,hold_id:int,saved:int=0):
         context,company_id=_session_company(database,request);token=request.cookies.get(COOKIE_NAME,'');item=_load_item_into_working(database,company_id,token,hold_id)
