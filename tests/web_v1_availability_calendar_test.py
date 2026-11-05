@@ -161,6 +161,12 @@ def main() -> None:
         with db.connect() as c:
             assert execute_sql(c, 'SELECT lead_name FROM element_holds WHERE id=:q410_0', (smith_hold,)).fetchone()['lead_name'] == 'Smith'
 
+        # Verify the actual browser-facing New Booking control while the basket is populated.
+        live_calendar = client.get('/availability/calendar-v2')
+        assert 'action="/availability/new-booking"' in live_calendar.text
+        assert 'Abandon the unfinished basket' in live_calendar.text
+        assert 'name="csrf"' in live_calendar.text
+
         # Jones family is independent and holds Pitch 1.
         jones_saved = client.post('/availability/requirements-v3', data={
             'csrf': csrf, 'lead_name': 'Jones', 'arrival': '2035-07-11', 'departure': '2035-07-14',
@@ -301,11 +307,6 @@ def main() -> None:
                 assert original_values == grouped_values, (element_id, original_values, grouped_values)
 
         # Abandon the fully populated working basket only after testing its multi-party lifecycle.
-        # The operator's visible Master Calendar button must submit the actual reset route.
-        live_calendar = client.get('/availability/calendar-v2')
-        assert 'action="/availability/new-booking"' in live_calendar.text
-        assert 'Abandon the unfinished basket' in live_calendar.text
-        assert 'name="csrf"' in live_calendar.text
         fresh_group = client.post('/availability/new-booking', data={'csrf': csrf}, follow_redirects=False)
         assert fresh_group.status_code == 303 and fresh_group.headers['location'] == '/availability/start'
         fresh_page = client.get('/availability/start')
