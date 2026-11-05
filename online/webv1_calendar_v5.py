@@ -451,7 +451,7 @@ def register_calendar_v5_routes(app) -> None:
             )
             selection_style = ''
             selection_hidden = ' hidden'
-            if selected_range_available and arrival_day and departure_day:
+            if selected_range_available and arrival_day and departure_day and not reservation:
                 selection_start = (arrival_day - visible_start).days + 2
                 selection_end = (departure_day - visible_start).days + 2
                 selection_style = f' style="grid-column:{selection_start} / {selection_end};grid-row:1"'
