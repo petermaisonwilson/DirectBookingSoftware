@@ -157,13 +157,15 @@ def main() -> None:
         assert duplicate.status_code == 409
         assert 'already held in your basket' in duplicate.json()['error']
 
-        # NEW BOOKING clears the working group only; Smith remains held with Smith's snapshot.
+        # NEW BOOKING must immediately abandon every temporary Element in this session.
         fresh_group = client.post('/availability/new-booking', data={'csrf': csrf}, follow_redirects=False)
         assert fresh_group.status_code == 303 and fresh_group.headers['location'] == '/availability/start'
         fresh_page = client.get('/availability/start')
         assert 'name="lead_name" placeholder="SURNAME" required value=""' in fresh_page.text
         with db.connect() as c:
-            assert execute_sql(c, 'SELECT lead_name FROM element_holds WHERE id=:q410_0', (smith_hold,)).fetchone()['lead_name'] == 'Smith'
+            assert execute_sql(c, 'SELECT id FROM element_holds WHERE id=:q410_0', (smith_hold,)).fetchone() is None
+        assert client.get('/availability/basket').json()['count'] == 0
+        assert 'Your basket is empty.' in client.get('/availability/basket/review').text
 
         # Jones family is independent and holds Pitch 1.
         jones_saved = client.post('/availability/requirements-v3', data={
