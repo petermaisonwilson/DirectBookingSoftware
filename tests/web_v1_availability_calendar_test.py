@@ -301,6 +301,11 @@ def main() -> None:
                 assert original_values == grouped_values, (element_id, original_values, grouped_values)
 
         # Abandon the fully populated working basket only after testing its multi-party lifecycle.
+        # The operator's visible Master Calendar button must submit the actual reset route.
+        live_calendar = client.get('/availability/calendar-v2')
+        assert 'action="/availability/new-booking"' in live_calendar.text
+        assert 'Abandon the unfinished basket' in live_calendar.text
+        assert 'name="csrf"' in live_calendar.text
         fresh_group = client.post('/availability/new-booking', data={'csrf': csrf}, follow_redirects=False)
         assert fresh_group.status_code == 303 and fresh_group.headers['location'] == '/availability/start'
         fresh_page = client.get('/availability/start')
