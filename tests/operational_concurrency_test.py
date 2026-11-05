@@ -121,16 +121,16 @@ class OperationalJourneyTests(unittest.TestCase):
         rid = int(re.search(r'/reservations/(\d+)', response.headers['location']).group(1))
         return int(self.scalar('SELECT booking_id FROM reservations WHERE company_id=:tenant AND id=:reservation', (self.cid, rid)))
 
-    def editor_payload(self, rid, allocation=None, *, element=None, action='save'):
+    def editor_payload(self, rid, allocation=None, *, element=None, action='save', arrival='2038-06-01', departure='2038-06-03'):
         from html import unescape
         url = f'/operations/reservations/{rid}/edit'
-        query = f'?allocation_id={allocation}' if allocation else '?add=1'
+        query = f'?details=1&allocation_id={allocation}' if allocation else f'?details=1&add=1&chosen_element={element or self.element}&arrival={arrival}&departure={departure}'
         response = self.clients[0].get(url+query)
         self.assertEqual(response.status_code,200,response.text)
         token = re.search(r'name="version" value="([^\"]+)"',response.text).group(1)
         return {'csrf':self.csrf(),'version':unescape(token),'allocation_id':str(allocation or ''),
             'element_type':'Camping','element_id':str(element or self.element),
-            'arrival_date':'2038-06-01','departure_date':'2038-06-03',f'person_{self.person}':'1','action':action}
+            'arrival_date':arrival,'departure_date':departure,f'person_{self.person}':'1','action':action}
 
     def test_shared_multi_element_editor_before_and_after_confirmation(self):
         enquiry = self.enquiry()
@@ -145,7 +145,7 @@ class OperationalJourneyTests(unittest.TestCase):
         self.assertEqual(len(items),2)
         original, added = items
         page = self.clients[0].get(url)
-        self.assertIn('Edit Element',page.text)
+        self.assertIn('Change on calendar',page.text)
         self.assertNotIn('will not open',page.text)
         legacy = self.clients[0].get(f'/operations/enquiries/{enquiry}/edit')
         self.assertIn('Add New Element',legacy.text)
@@ -240,7 +240,7 @@ class OperationalJourneyTests(unittest.TestCase):
         saved = self.clients[0].post(url,data=payload,follow_redirects=False)
         self.assertEqual(saved.status_code,303,saved.text)
         self.assertEqual(self.scalar('SELECT total_amount FROM reservations WHERE id=:id',(rid,)),279)
-        reopened = self.clients[0].get(url)
+        reopened = self.clients[0].get(url+f'?details=1&allocation_id={aid}')
         self.assertIn(f'name="addon_when_{addon}"',reopened.text)
         self.assertIn('"2038-06-02": "1"',reopened.text)
         # Reduce below the duration threshold: discount disappears, day survives.
@@ -252,6 +252,65 @@ class OperationalJourneyTests(unittest.TestCase):
             self.assertEqual(foreign.post('/login',data={'email':'operator@riverside.test','password':'Operator013!'},follow_redirects=False).status_code,303)
             self.assertEqual(foreign.get(url).status_code,404)
             self.assertEqual(foreign.post(url,data=payload).status_code,404)
+
+    def test_calendar_reservation_edit_add_duplicate_and_sibling_safeguards(self):
+        enquiry = self.enquiry()
+        rid = self.scalar('SELECT id FROM reservations WHERE company_id=:tenant AND enquiry_id=:id',(self.cid,enquiry))
+        aid = self.scalar('SELECT id FROM reservation_elements WHERE company_id=:tenant AND reservation_id=:id',(self.cid,rid))
+        base = f'/operations/reservations/{rid}/edit'
+        entry = self.clients[0].get(base,follow_redirects=False)
+        self.assertEqual(entry.status_code,303)
+        self.assertEqual(entry.headers['location'],f'/availability/calendar-v2?edit_reservation={rid}')
+        page = self.clients[0].get(entry.headers['location'])
+        self.assertEqual(page.status_code,200,page.text)
+        self.assertIn('Master Calendar',page.text)
+        self.assertIn('2038-06-01',page.text)
+        self.assertIn('reservation-focus',page.text)
+        self.assertIn(f'edit_allocation={aid}',page.text)
+        self.assertNotIn('EDIT EVERYTHING',page.text)
+        # The exact reported duplicate add must be refused before showing a form
+        # and again for a crafted calculate/save request with a valid review token.
+        other = self.new_element('Available new pitch')
+        good = self.editor_payload(rid,element=other)
+        bad = dict(good,element_id=str(self.element))
+        before = self.scalar('SELECT COUNT(*) FROM enquiry_elements WHERE enquiry_id=:id',(enquiry,))
+        for action in ('calculate','save'):
+            response = self.clients[0].post(base,data=dict(bad,action=action),follow_redirects=False)
+            self.assertEqual(response.status_code,409,response.text)
+            self.assertIn('already allocated',response.text)
+        duplicate = self.clients[0].get(base+f'?details=1&add=1&chosen_element={self.element}&arrival=2038-06-01&departure=2038-06-03')
+        self.assertEqual(duplicate.status_code,409)
+        self.assertEqual(self.scalar('SELECT COUNT(*) FROM enquiry_elements WHERE enquiry_id=:id',(enquiry,)),before)
+        # Adjacent allocations of one physical pitch are valid. Editing the first
+        # must retain the second as blocked, despite excluding this reservation
+        # from the external availability query.
+        adjacent = self.editor_payload(rid,element=self.element,arrival='2038-06-03',departure='2038-06-05')
+        self.assertEqual(self.clients[0].post(base,data=adjacent,follow_redirects=False).status_code,303)
+        editing = self.clients[0].get(f'/availability/calendar-v2?edit_reservation={rid}&edit_allocation={aid}')
+        self.assertEqual(editing.status_code,200,editing.text)
+        class Cells(HTMLParser):
+            def __init__(self): super().__init__(); self.days={}
+            def handle_starttag(self,tag,attrs):
+                attrs=dict(attrs)
+                if 'cal-cell' in attrs.get('class','') and attrs.get('data-date'):
+                    self.days.setdefault(attrs['data-date'],[]).append(attrs.get('class',''))
+        cells=Cells();cells.feed(editing.text)
+        self.assertTrue(any('date-pick' in c for c in cells.days['2038-06-01']))
+        self.assertTrue(any('unavailable' in c for c in cells.days['2038-06-03']))
+        attempted = self.editor_payload(rid,aid)
+        attempted['departure_date']='2038-06-04'
+        self.assertEqual(self.clients[0].post(base,data=attempted).status_code,409)
+        # Selecting another pitch on the calendar pre-fills the full requirements
+        # form; GET does not allocate it or change the original reservation.
+        form = self.clients[0].get(base+f'?details=1&allocation_id={aid}&chosen_element={other}&arrival=2038-06-06&departure=2038-06-08')
+        self.assertEqual(form.status_code,200,form.text)
+        self.assertIn('value="2038-06-06"',form.text)
+        self.assertNotIn('Current held enquiry',form.text)
+        self.assertNotIn('EDIT EVERYTHING',form.text)
+        self.assertEqual(self.scalar('SELECT element_id FROM reservation_elements WHERE id=:id',(aid,)),self.element)
+        with TestClient(self.app) as foreign:
+            foreign.post('/login',data={'email':'operator@riverside.test','password':'Operator013!'})
+            self.assertEqual(foreign.get(entry.headers['location']).status_code,404)
 
     def race(self, functions):
         barrier = Barrier(len(functions))
@@ -439,8 +498,9 @@ class OperationalJourneyTests(unittest.TestCase):
             self.assertEqual(page.status_code, 200, page.text)
             self.assertIn('text/html', page.headers['content-type'])
         edited = self.clients[0].get(url + '/edit')
-        self.assertIn(f'action="{url}/edit"', edited.text)
-        self.assertIn('addon-auto-one', edited.text)
+        self.assertIn('Master Calendar',edited.text)
+        self.assertIn('reservation-calendar-context',edited.text)
+        self.assertIn(f'action="{url}/edit"',edited.text)
         confirmation = self.clients[0].get(url + '/confirm')
         self.assertIn(f'action="{url}/confirm-payment"', confirmation.text)
         for action, state in (('release', 'ENQUIRY_RELEASED'), ('reopen', 'ENQUIRY_HELD')):

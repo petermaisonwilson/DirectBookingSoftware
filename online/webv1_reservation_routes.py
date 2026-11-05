@@ -7,7 +7,7 @@ reservation when the enquiry becomes confirmed.
 import inspect
 
 from fastapi import HTTPException, Request
-from fastapi.responses import HTMLResponse
+from fastapi.responses import HTMLResponse, RedirectResponse
 from starlette.concurrency import run_in_threadpool
 
 from .setup015_core import context_for, working_company
@@ -111,15 +111,31 @@ def register_reservation_routes(app):
             selected = next((r for r in items if r['id'] == selected_id), None)
             if selected_id and selected is None:
                 raise HTTPException(status_code=404, detail='Reservation Element not found')
-            if len(items) == 1 and not adding and not selected_id:
-                selected = items[0]
-            return HTMLResponse(page(database,context,master,items,selected=selected,adding=adding))
+            from .webv1_reservation_editor import calendar_url, form_values, validate_selection
+            if request.query_params.get('details') != '1':
+                return RedirectResponse(calendar_url(master,allocation_id=selected_id,adding=adding),303)
+            values = form_values(database,master,selected)
+            chosen = int(request.query_params.get('chosen_element') or 0)
+            if chosen:
+                element = None
+                with database.connect() as c:
+                    element = execute_sql(c,'SELECT element_type FROM setup_elements WHERE company_id=:tenant AND id=:id AND active=1',(master['company_id'],chosen)).fetchone()
+                    if element is None: raise ValueError('Choose an active Element from the Master Calendar.')
+                    values.update(element_id=str(chosen),element_type=element['element_type'],
+                        arrival_date=request.query_params.get('arrival',''),departure_date=request.query_params.get('departure',''))
+                    validate_selection(database,context,master,items,selected,{'element_id':chosen},values,connection=c)
+                if not selected and items:
+                    inherited = form_values(database,master,items[0])
+                    values.update({k:v for k,v in inherited.items() if k.startswith('person_')})
+            if adding and not chosen:
+                return RedirectResponse(calendar_url(master,adding=True),303)
+            return HTMLResponse(page(database,context,master,items,selected=selected,adding=adding,values=values))
         except ValueError as exc:
             return HTMLResponse(str(exc),409)
 
     @app.post('/operations/reservations/{reservation_id:int}/edit', response_class=HTMLResponse)
     async def save_elements(reservation_id: int, request: Request):
-        from .webv1_reservation_editor import allocations, editable, page, calculate, save
+        from .webv1_reservation_editor import allocations, editable, page, calculate, save, validate_selection
         from .app import form_data
         from .setup015_core import require_csrf
         from fastapi.responses import RedirectResponse
@@ -138,9 +154,11 @@ def register_reservation_routes(app):
                 raise ValueError('Element does not belong to this reservation.')
             if data.get('action') == 'calculate':
                 result = calculate(database,master['company_id'],data)
+                with database.connect() as c:
+                    validate_selection(database,context,master,items,selected,result,data,connection=c)
                 return HTMLResponse(page(database,context,master,items,selected=selected,adding=not selected,values=data,result=result))
             await run_in_threadpool(save,database,context,master,data)
-            return RedirectResponse(f'/operations/reservations/{reservation_id}?saved=1',303)
+            return RedirectResponse(f'/availability/calendar-v2?edit_reservation={reservation_id}&saved=1',303)
         except (ValueError, TypeError) as exc:
             return HTMLResponse(page(database,context,master,items,message=str(exc)),409)
 

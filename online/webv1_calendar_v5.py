@@ -27,11 +27,30 @@ def register_calendar_v5_routes(app) -> None:
     database = app.state.database
 
     @app.get('/availability/calendar-v2', response_class=HTMLResponse)
-    def calendar(request: Request, element_type: str = '', start: str = '', arrival: str = '', departure: str = '', edit_hold: int = 0, recovery_enquiry: int = 0, recovery_element: int = 0, date_from: str = '', date_to: str = ''):
+    def calendar(request: Request, element_type: str = '', start: str = '', arrival: str = '', departure: str = '', edit_hold: int = 0, recovery_enquiry: int = 0, recovery_element: int = 0, date_from: str = '', date_to: str = '', edit_reservation: int = 0, edit_allocation: int = 0, reservation_add: int = 0):
         context, cid = _session_context(database, request)
         staff = str(context['role']) in {'operator', 'supervisor'}
         token = request.cookies.get(COOKIE_NAME, '')
-        basket = _basket_rows(database, cid, token)
+        reservation = None
+        reservation_items = []
+        selected_allocation = None
+        if edit_reservation:
+            from .webv1_reservation_editor import calendar_context, calendar_panel, calendar_url
+            try:
+                reservation,reservation_items,selected_allocation = calendar_context(database,cid,edit_reservation,edit_allocation)
+            except ValueError as exc:
+                return HTMLResponse(layout('Master Calendar',f'<div class="error">{esc(str(exc))}</div>',context),409)
+            if edit_hold or recovery_enquiry:
+                return HTMLResponse('Choose one editing context at a time.',409)
+            if reservation_items:
+                focus = selected_allocation or reservation_items[0]
+                # Focus the saved allocation, even when it is in a previous year.
+                if not start and not date_from: start = focus['arrival_date']
+                if selected_allocation:
+                    arrival = arrival or focus['arrival_date']
+                    departure = departure or focus['departure_date']
+        # Existing reservations never share their editing context with a basket.
+        basket = [] if reservation else _basket_rows(database, cid, token)
         anchor_arrival = arrival or (str(basket[0]['arrival_date']) if basket else '')
         anchor_departure = departure or (str(basket[0]['departure_date']) if basket else '')
 
@@ -74,6 +93,8 @@ def register_calendar_v5_routes(app) -> None:
                 departure_day = _parse(departure)
 
         people, requirements, requirements_ready, _, _ = _saved_requirements(database, cid, token)
+        if reservation:
+            people,requirements,requirements_ready = {},{},False
         working_lead = _saved_lead_name(database, cid, token).strip()
 
         options = '<option value="">ALL Element Types</option>' + ''.join(
@@ -84,10 +105,14 @@ def register_calendar_v5_routes(app) -> None:
         preserve = f'element_type={quote_plus(selected_type)}&arrival={quote_plus(arrival)}&departure={quote_plus(departure)}'
         if staff and explicit_type_selection:
             preserve += '&types_selection=1' + ''.join('&types=' + quote_plus(t) for t in selected_types)
+        if reservation:
+            preserve += f'&edit_reservation={edit_reservation}&edit_allocation={edit_allocation}&reservation_add={reservation_add}'
         if edit_hold:
             preserve += f'&edit_hold={edit_hold}'
 
         body = (('<div class="master-calendar-page"></div><h1>Master Calendar</h1>') if staff and not (basket or arrival or departure or edit_hold or recovery_enquiry) else booking_progress_strip(database, context, cid, token) + '<h1>Availability Calendar</h1>')
+        if reservation:
+            body = '<div class="master-calendar-page"></div><h1>Master Calendar</h1>' + calendar_panel(context,reservation,reservation_items,selected_allocation,bool(reservation_add))
         if date_warning:
             body += '<div class="error" role="alert">' + esc(date_warning) + '</div>'
         recovery_row = one(database, "SELECT ee.*,se.name AS element_name FROM enquiry_elements ee JOIN setup_elements se ON se.id=ee.element_id AND se.company_id=ee.company_id WHERE ee.id=:q249_0 AND ee.enquiry_id=:q249_1 AND ee.company_id=:q249_2 AND COALESCE(ee.recovery_state,'held')='needs_replacement' ", (recovery_element,recovery_enquiry,cid)) if recovery_enquiry and recovery_element else None
@@ -139,22 +164,23 @@ def register_calendar_v5_routes(app) -> None:
         # checked against the new Element Type before anything can be selected.
         add_query = f'?edit_hold={int(edit_hold)}' if edit_hold else ''
         new_booking_button = ''
-        if staff and not (edit_hold or recovery_enquiry):
+        if staff and not (edit_hold or recovery_enquiry or reservation):
             warning = ("return confirm('Abandon the unfinished basket and start a completely new booking? Saved enquiries and bookings will not be affected.')" if basket else 'return true')
             new_booking_button = (f'<form method="post" action="/availability/new-booking" style="display:inline" onsubmit="{esc(warning)}">'
                                   f'<input type="hidden" name="csrf" value="{esc(str(context["csrf_token"]))}">'
                                   '<button type="submit">New Booking</button></form>')
+        reservation_hidden = (f'<input type="hidden" name="edit_reservation" value="{edit_reservation}"><input type="hidden" name="edit_allocation" value="{edit_allocation}"><input type="hidden" name="reservation_add" value="{reservation_add}">' if reservation else '')
         body += f'''<div class="card"><div id="availability-form">
         <input type="hidden" id="edit-hold" value="{edit_hold or ''}">
         <input type="hidden" id="element-type" value="{esc(selected_type)}">
         <input type="hidden" id="arrival-date" value="{esc(arrival)}">
         <input type="hidden" id="departure-date" value="{esc(departure)}">
-        <p><a class="button" href="/availability/start{add_query}">Add New Element</a>
+        <p><a class="button" href="{calendar_url(reservation,adding=True) if reservation else '/availability/start'+add_query}">Add New Element</a>
         {new_booking_button}
         <a class="button secondary" href="/availability/calendar-v2?{preserve}&start={(visible_start-timedelta(days=14)).isoformat()}">← Previous 14 days</a>
         <a class="button secondary" href="/availability/calendar-v2?{preserve}&start={(visible_start+timedelta(days=14)).isoformat()}">Next 14 days →</a>
         {'<a class="button secondary" href="/setup/booking-statuses">Booking Statuses</a>' if staff else ''}</p>
-        <form method="get" action="/availability/calendar-v2" class="calendar-date-search">{type_picker}<label>From <input type="date" name="date_from" value="{visible_start.isoformat()}" required></label><label>To <input type="date" name="date_to" value="{(visible_start+timedelta(days=display_days-1)).isoformat()}" required></label><button type="submit">Show dates</button><span>Maximum 60 days</span></form></div></div>'''
+        <form method="get" action="/availability/calendar-v2" class="calendar-date-search">{reservation_hidden}{type_picker}<label>From <input type="date" name="date_from" value="{visible_start.isoformat()}" required></label><label>To <input type="date" name="date_to" value="{(visible_start+timedelta(days=display_days-1)).isoformat()}" required></label><button type="submit">Show dates</button><span>Maximum 60 days</span></form></div></div>'''
 
         # Changing the start of the visible window defaults the end to the following day.
         body += """<script>
@@ -223,6 +249,13 @@ def register_calendar_v5_routes(app) -> None:
             if not editing or int(r['id']) != int(edit_hold)
         }
 
+        def edit_record_href(record, kind):
+            record = dict(record)
+            if reservation and record.get('reservation_id') == edit_reservation:
+                allocation = next((r for r in reservation_items if int(r['element_id']) == int(record['element_id']) and r['arrival_date'] == record['arrival_date'] and r['departure_date'] == record['departure_date']),None)
+                if allocation: return calendar_url(reservation,allocation_id=allocation['id'])
+            return _record_href(record,kind)
+
         render_started = perf_counter()
         popup_started = perf_counter()
         popup_by_element = popup_addons_for_elements(database, cid, feature_year, elements)
@@ -284,7 +317,7 @@ def register_calendar_v5_routes(app) -> None:
             # authoritative inventory queries above. Avoid repeating expensive
             # pricing/setup and conflict lookups for these cells. Reservation
             # selection still uses availability_state unchanged.
-            fast_staff_view = staff and not (basket or arrival or departure or edit_hold or recovery_enquiry)
+            fast_staff_view = staff and not (basket or arrival or departure or edit_hold or recovery_enquiry or selected_allocation)
             occupied_days = {}
             if fast_staff_view:
                 for kind, inventory in (('BOOKED', bookings), ('ENQUIRY', enquiries), ('CLOSED', closures), ('HELD', holds)):
@@ -321,6 +354,14 @@ def register_calendar_v5_routes(app) -> None:
                         state = availability_state(database, cid, eid, day.isoformat(), next_day.isoformat(), session_token=token, missing_items_cache=setup_missing_cache, operating_window_cache=operating_window_cache, element_active_cache=element_active_cache)
                     availability_seconds += perf_counter() - availability_started
                     availability_calls += 1
+                if selected_allocation:
+                    # Exclude only the selected allocation's original occupancy.
+                    # Every sibling allocation still blocks its own dates.
+                    state = availability_state(database,cid,eid,day.isoformat(),next_day.isoformat(),session_token=token,
+                        exclude_booking_id=reservation['booking_id'],exclude_enquiry_id=reservation['enquiry_id'],
+                        missing_items_cache=setup_missing_cache,operating_window_cache=operating_window_cache,element_active_cache=element_active_cache)
+                    if any(r['id'] != edit_allocation and int(r['element_id']) == eid and r['arrival_date'] < next_day.isoformat() and r['departure_date'] > day.isoformat() for r in reservation_items):
+                        state = {'available':False,'state':'RESERVED','reason':'Another Element in this reservation'}
                 code = str(state['state'])
                 own_editing_day = bool(
                     editing and eid == int(editing['element_id'])
@@ -381,14 +422,14 @@ def register_calendar_v5_routes(app) -> None:
                 if staff:
                     customer = (f"{booking['first_name']} {booking['last_name']}").strip() or 'Customer'
                     status_name = str(booking['workflow_name'] or 'Booked')
-                    add_calendar_bar(f'{customer} · {booking["reference"]} · {status_name}', str(booking['colour'] or '#F3C5C9'), cols, href=_record_href(booking, 'booking'))
+                    add_calendar_bar(f'{customer} · {booking["reference"]} · {status_name}', str(booking['colour'] or '#F3C5C9'), cols, href=edit_record_href(booking,'booking'),css=('reservation-focus reservation-editing' if selected_allocation and selected_allocation['element_id'] == eid and selected_allocation['arrival_date'] == booking['arrival_date'] and booking.get('reservation_id') == edit_reservation else 'reservation-focus' if reservation and booking.get('reservation_id') == edit_reservation else 'status'))
                 else:
                     add_calendar_bar('Unavailable', '#F3C5C9', cols)
             for enquiry in enquiries:
                 cols = _cols(enquiry['arrival_date'], enquiry['departure_date'], visible_start, visible_end)
                 if staff:
                     customer = (f"{enquiry['first_name']} {enquiry['last_name']}").strip() or 'Customer'
-                    add_calendar_bar(f'{customer} · Enquiry #{int(enquiry["enquiry_id"])} · {enquiry["workflow_name"] or held_name}', str(enquiry['colour'] or held_colour), cols, href=_record_href(enquiry, 'enquiry'))
+                    add_calendar_bar(f'{customer} · Enquiry #{int(enquiry["enquiry_id"])} · {enquiry["workflow_name"] or held_name}', str(enquiry['colour'] or held_colour), cols, href=edit_record_href(enquiry,'enquiry'),css=('reservation-focus reservation-editing' if selected_allocation and selected_allocation['element_id'] == eid and selected_allocation['arrival_date'] == enquiry['arrival_date'] and enquiry.get('reservation_id') == edit_reservation else 'reservation-focus' if reservation and enquiry.get('reservation_id') == edit_reservation else 'status'))
                 else:
                     add_calendar_bar('Unavailable', '#FFE39A', cols)
             for closure in closures:
@@ -415,7 +456,7 @@ def register_calendar_v5_routes(app) -> None:
                 selection_end = (departure_day - visible_start).days + 2
                 selection_style = f' style="grid-column:{selection_start} / {selection_end};grid-row:1"'
                 selection_hidden = ''
-            selection = f'<button type="button" class="selection-action" data-element="{eid}" data-name="{esc(element["name"])}"{selection_style}{selection_hidden}>{"USE REPLACEMENT" if recovery_enquiry else ("USE THIS ELEMENT" if edit_hold else "RESERVE")}</button>'
+            selection = f'<button type="button" class="selection-action" data-element="{eid}" data-name="{esc(element["name"])}"{selection_style}{selection_hidden}>{"REVIEW ELEMENT" if reservation else "USE REPLACEMENT" if recovery_enquiry else ("USE THIS ELEMENT" if edit_hold else "RESERVE")}</button>'
             row_height = max(54, lane_count * 36 + 12)
             row_style = f' style="height:{row_height}px;grid-template-rows:repeat({lane_count}, {row_height / lane_count:.2f}px)"' if lane_count > 1 else ''
             row_classes = 'cal-row element-row'
@@ -489,22 +530,26 @@ def register_calendar_v5_routes(app) -> None:
           handle.addEventListener('pointercancel',()=>{{drag=null;}});
         }}
         document.querySelectorAll('.cal-bar a[href^="/operations/bookings/"],.cal-bar a[href^="/operations/enquiries/"],.cal-bar a[href^="/operations/master-reservations/"],.cal-bar a[href^="/operations/reservations/"],.inventory-conflict a.conflict-record-link').forEach(link=>link.addEventListener('click',event=>{{event.preventDefault();openBookingWindow(link.href,link.textContent.trim());}}));
+        const reservationId={int(edit_reservation or 0)}, allocationId={int(edit_allocation or 0)}, reservationAdding={str(bool(reservation_add)).lower()};
         const csrf={json.dumps(str(context['csrf_token']))}; const editingHold={int(edit_hold or 0)}; const recoveryEnquiry={int(recovery_enquiry or 0)},recoveryElement={int(recovery_element or 0)}; const recoveryCommand={json.dumps(recovery_command_url)},recoveryDetail={json.dumps(recovery_detail_url)}; const anchorArr={json.dumps(anchor_arrival)},anchorDep={json.dumps(anchor_departure)};
         const elementType=document.getElementById('element-type'),arrivalInput=document.getElementById('arrival-date'),departureInput=document.getElementById('departure-date'),scrollBox=document.getElementById('calendar-scroll');
         let selectedElement=0,firstPick='';
         const dayAfter=iso=>{{const d=new Date(iso+'T12:00:00');d.setDate(d.getDate()+1);return d.toISOString().slice(0,10)}};
-        function qsFor(a,d){{const q=new URLSearchParams();if(elementType.value)q.set('element_type',elementType.value);if(a)q.set('arrival',a);if(d)q.set('departure',d);if(editingHold)q.set('edit_hold',editingHold);if(recoveryEnquiry){{q.set('recovery_enquiry',recoveryEnquiry);q.set('recovery_element',recoveryElement)}}return q}}
+        function qsFor(a,d){{const q=new URLSearchParams();if(elementType.value)q.set('element_type',elementType.value);if(a)q.set('arrival',a);if(d)q.set('departure',d);if(reservationId){{q.set('edit_reservation',reservationId);q.set('edit_allocation',allocationId);q.set('reservation_add',reservationAdding?'1':'0');}}if(editingHold)q.set('edit_hold',editingHold);if(recoveryEnquiry){{q.set('recovery_enquiry',recoveryEnquiry);q.set('recovery_element',recoveryElement)}}return q}}
         function submitDates(){{const a=arrivalInput.value,d=departureInput.value;if(!a||!d||d<=a)return;window.location='/availability/calendar-v2?'+qsFor(a,d)}}
 
         function clearBars(){{document.querySelectorAll('.selection-action').forEach(x=>x.hidden=true)}}
         function showSelection(eid,a,d){{clearBars();const row=document.querySelector('.element-row[data-element="'+eid+'"]');if(!row||row.classList.contains('party-unsuitable'))return;const ds=[...document.querySelectorAll('#calendar-scroll .cal-date')].map(x=>x.dataset.date),s=ds.indexOf(a),e=ds.indexOf(d);if(s<0||e<=s)return;const permitted=new Set([...row.querySelectorAll('.cal-cell.available.date-pick')].map(c=>c.dataset.date));if(ds.slice(s,e).some(day=>!permitted.has(day))){{alert('This Element is not available for every night selected. Choose another Element or dates.');return;}}const b=row.querySelector('.selection-action');b.style.gridColumn=(s+2)+' / '+(e+2);b.style.gridRow='1';b.hidden=false;selectedElement=Number(eid)}}
         document.querySelectorAll('.date-pick').forEach(cell=>cell.addEventListener('click',()=>{{const chosen=cell.dataset.date,eid=Number(cell.dataset.element);if(!firstPick||selectedElement!==eid){{firstPick=chosen;selectedElement=eid;arrivalInput.value=chosen;departureInput.value='';clearBars();return}}if(chosen<=firstPick){{firstPick=chosen;arrivalInput.value=chosen;departureInput.value='';return}}arrivalInput.value=firstPick;departureInput.value=chosen;showSelection(eid,firstPick,chosen);firstPick=''}}));
         async function post(url,data={{}}){{const body=new URLSearchParams();body.set('csrf',csrf);Object.entries(data).forEach(([k,v])=>body.set(k,v));return fetch(url,{{method:'POST',headers:{{'Content-Type':'application/x-www-form-urlencoded;charset=UTF-8'}},body:body.toString()}})}}
-        document.querySelectorAll('.selection-action').forEach(btn=>btn.addEventListener('click',async()=>{{const a=arrivalInput.value,d=departureInput.value;if(!a||!d)return;const url=recoveryEnquiry?recoveryCommand:(editingHold?'/availability/basket/update':'/availability/hold'),data=editingHold?{{hold_id:editingHold,element_id:btn.dataset.element,arrival_date:a,departure_date:d}}:{{element_id:btn.dataset.element,arrival_date:a,departure_date:d}};const r=await post(url,data);let p={{}};try{{p=await r.json()}}catch(e){{}}if(!r.ok){{alert(p.error||'Unable to save that Element.');return}}if(recoveryEnquiry){{window.location=recoveryDetail+'?saved=1';return}}if(editingHold){{window.location='/availability/basket/review';return}}const q=new URLSearchParams();q.set('element_type',elementType.value);q.set('arrival',a);q.set('departure',d);window.location='/availability/calendar-v2?'+q.toString()}}));
+        document.querySelectorAll('.selection-action').forEach(btn=>btn.addEventListener('click',async()=>{{const a=arrivalInput.value,d=departureInput.value;if(!a||!d)return;if(reservationId){{if(!allocationId&&!reservationAdding){{alert('Choose an existing allocation or Add New Element first.');return;}}const q=new URLSearchParams({{details:'1',chosen_element:btn.dataset.element,arrival:a,departure:d}});if(allocationId)q.set('allocation_id',allocationId);else q.set('add','1');window.location='/operations/reservations/'+reservationId+'/edit?'+q.toString();return;}}const url=recoveryEnquiry?recoveryCommand:(editingHold?'/availability/basket/update':'/availability/hold'),data=editingHold?{{hold_id:editingHold,element_id:btn.dataset.element,arrival_date:a,departure_date:d}}:{{element_id:btn.dataset.element,arrival_date:a,departure_date:d}};const r=await post(url,data);let p={{}};try{{p=await r.json()}}catch(e){{}}if(!r.ok){{alert(p.error||'Unable to save that Element.');return}}if(recoveryEnquiry){{window.location=recoveryDetail+'?saved=1';return}}if(editingHold){{window.location='/availability/basket/review';return}}const q=new URLSearchParams();q.set('element_type',elementType.value);q.set('arrival',a);q.set('departure',d);window.location='/availability/calendar-v2?'+q.toString()}}));
         function featureHtml(features){{return '<ul>'+features.map(f=>'<li>'+(f.available?'✓ ':'✕ ')+f.name+'</li>').join('')+'</ul>'}}
         const info=document.getElementById('info-modal'); function showFullInfo(btn){{document.getElementById('info-title').textContent=btn.dataset.elementName;document.getElementById('info-features').innerHTML=featureHtml(JSON.parse(btn.dataset.features||'[]'));info.hidden=false}}
         document.querySelectorAll('.more-info').forEach(btn=>btn.addEventListener('click',()=>showFullInfo(btn))); document.getElementById('info-close').addEventListener('click',()=>info.hidden=true);
         const quick=document.getElementById('quick-element-info'); document.querySelectorAll('.element-info-title').forEach(btn=>{{btn.addEventListener('mouseenter',e=>{{const features=JSON.parse(btn.dataset.features||'[]');quick.innerHTML='<strong>'+btn.dataset.elementName+'</strong>'+featureHtml(features);quick.hidden=false;quick.style.left=Math.min(innerWidth-340,e.clientX+12)+'px';quick.style.top=Math.min(innerHeight-220,e.clientY+12)+'px'}});btn.addEventListener('mousemove',e=>{{if(!quick.hidden){{quick.style.left=Math.min(innerWidth-340,e.clientX+12)+'px';quick.style.top=Math.min(innerHeight-220,e.clientY+12)+'px'}}}});btn.addEventListener('mouseleave',()=>quick.hidden=true)}});
         document.querySelectorAll('.basket-locked').forEach(cell=>{{const show=e=>{{quick.innerHTML='<strong>'+((cell.dataset.name)||'This Element')+'</strong><div>Already in your basket — use EDIT in Booking in progress to change it. Click the EDIT BOOKING button.</div>';quick.hidden=false;quick.style.left=Math.min(innerWidth-340,e.clientX+12)+'px';quick.style.top=Math.min(innerHeight-160,e.clientY+12)+'px'}};cell.addEventListener('mouseenter',show);cell.addEventListener('mousemove',show);cell.addEventListener('mouseleave',()=>quick.hidden=true);}});
         </script>'''
-        return HTMLResponse(layout('Availability Calendar', body, context, monitor_holds=True))
+        if reservation:
+            body += '<style>.reservation-calendar-item{padding:8px 0;display:flex;align-items:center;flex-wrap:wrap;gap:8px}.cal-bar.reservation-focus{outline:3px solid #17324d;outline-offset:-2px}.cal-bar.reservation-editing{pointer-events:none;opacity:.35}.cal-bar.reservation-editing a{pointer-events:none}.reservation-calendar-context{border:2px solid #17324d}</style>'
+            body += "<script>(()=>{const row=document.querySelector('.reservation-focus');if(row)row.scrollIntoView({block:'center',inline:'center'});})();</script>"
+        return HTMLResponse(layout('Master Calendar' if reservation else 'Availability Calendar', body, context, monitor_holds=True))

@@ -105,6 +105,7 @@ def install_calendar_edit_semantics(app) -> None:
         </style>
         <script id="calendar-edit-semantics">
         (()=>{{
+          const reservationMode={str(bool(request.query_params.get('edit_reservation'))).lower()};
           const editMode={str(editing).lower()};
           const editedHold={int(edit_hold or 0)};
           const nightHolds={json.dumps(night_holds)};
@@ -165,12 +166,17 @@ def install_calendar_edit_semantics(app) -> None:
             paintRange(row,a,lastDay);
             const ds=dates(),s=ds.indexOf(a),last=ds.indexOf(lastDay);
             if(s<0||last<0||last<s)return;
+            const permitted=new Set([...row.querySelectorAll('.cal-cell.available.date-pick,.cal-cell.editable-own.date-pick')].map(c=>c.dataset.date));
+            if(ds.slice(s,last+1).some(day=>!permitted.has(day))){{
+              clearPreview();arrival.value='';departure.value='';
+              alert('This Element is not available for every day selected. Choose another Element or dates.');return;
+            }}
             let e=ds.indexOf(internalEnd);
             if(e<0)e=last+1;
             if(e<=s)e=last+1;
             const b=row.querySelector('.selection-action'); if(!b)return;
             b.style.gridColumn=(s+2)+' / '+(e+2); b.style.gridRow='1';
-            b.textContent=editMode?'USE THIS ELEMENT':'RESERVE'; b.hidden=false;
+            b.textContent=reservationMode?'REVIEW ELEMENT':editMode?'USE THIS ELEMENT':'RESERVE'; b.hidden=false;
             if(!isDay(row))addDeparture(row,internalEnd,true);
           }};
 

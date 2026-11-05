@@ -2,6 +2,8 @@ from __future__ import annotations
 from operational_backend import create_app
 from online.sql import execute_sql, insert_sql
 
+import re
+from html import unescape
 import sys
 import tempfile
 from pathlib import Path
@@ -141,7 +143,10 @@ def main() -> None:
             detail = execute_sql(c, 'SELECT service_date,person_type_id,quantity FROM enquiry_addon_person_days WHERE enquiry_id=:q17_0 AND addon_id=:q17_1 ORDER BY service_date,person_type_id', (enquiry_id, breakfast_id)).fetchall()
             assert len(detail) == 4
 
-        edit = client.get(f'/operations/enquiries/{enquiry_id}/edit')
+        calendar = client.get(f'/operations/enquiries/{enquiry_id}/edit')
+        assert 'Master Calendar' in calendar.text
+        requirements_url = unescape(re.search(r'href="([^"]+details=1[^"]+)"',calendar.text).group(1))
+        edit = client.get(requirements_url)
         assert edit.status_code == 200
         assert f'name="addon_day_person_{breakfast_id}_{adult_id}_'+"'" not in edit.text
         assert 'personDayValues' in edit.text

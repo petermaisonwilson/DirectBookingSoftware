@@ -72,25 +72,14 @@ def form_values(database, master, item):
 
 def page(database, context, master, items, *, selected=None, adding=False, values=None, result=None, message=''):
     base = f'/operations/reservations/{master["id"]}'
-    csrf = f'<input type="hidden" name="csrf" value="{esc(context["csrf_token"])}">'
     stamp = version(master, items)
-    cards = []
-    for item in items:
-        cards.append(f'<div class="card"><strong>{esc(item["element_name"])}</strong> '
-            f'{esc(item["arrival_date"])} → {esc(item["departure_date"])} '
-            f'<a class="button" href="{base}/edit?allocation_id={item["id"]}">Edit Element</a> '
-            f'<form method="post" action="{base}/edit" style="display:inline">{csrf}'
-            f'<input type="hidden" name="allocation_id" value="{item["id"]}">'
-            f'<input type="hidden" name="version" value="{stamp}">'
-            '<button class="secondary" name="action" value="remove">Remove Element</button></form></div>')
-    body = f'<h1>Edit Reservation Elements</h1><p><a href="{base}">← Return to reservation</a></p>'
+    body = f'<p><a class="button secondary" href="{calendar_url(master,allocation_id=selected["id"] if selected else 0,adding=adding)}">Back to Master Calendar</a></p>'
     if message: body += f'<div class="error">{esc(message)}</div>'
-    body += ''.join(cards) + f'<p><a class="button" href="{base}/edit?add=1">Add New Element</a></p>'
     if selected is None and not adding:
-        return layout('Edit Reservation Elements', body, context)
+        return layout('Edit Reservation Elements',body+calendar_panel(context,master,items),context)
     values = dict(form_values(database, master, selected) if values is None else values)
     customer = _customer(database, master['company_id'], master['customer_id'])
-    rendered = _form_page(database, context, customer, values, enquiry_id=master['enquiry_id'], result=result,
+    rendered = _form_page(database, context, customer, values, enquiry_id=None, result=result,
         editor_path=base+'/edit',editor_back=base,
         editor_title='Add Reservation Element' if adding else ('Edit Booking Element' if master['booking_id'] else 'Edit Enquiry Element'))
     # Retain the established form, setup rules, add-on picker and calculation UI.
@@ -155,12 +144,7 @@ def save(database, context, master, values):
             for suffix,key in (('people','person_type_id'),('addons','addon_id')):
                 before[suffix] = {str(r[key]):int(r['quantity']) for r in execute_sql(c,f'SELECT {key},quantity FROM {prefix}_{suffix} WHERE company_id=:tenant AND {field}=:id',(cid,old[field])).fetchall()}
         if result:
-            state = availability_state(database,cid,result['element_id'],values['arrival_date'],values['departure_date'],
-                session_token=str(context['token']),exclude_booking_id=bid,exclude_enquiry_id=eid)
-            if not state['available']: raise ValueError(str(state['reason']))
-            for other in items:
-                if other['id'] != allocation_id and other['element_id'] == result['element_id'] and other['arrival_date'] < values['departure_date'] and other['departure_date'] > values['arrival_date']:
-                    raise ValueError('The selected dates overlap another allocation of this Element in this reservation.')
+            validate_selection(database,context,current,items,old,result,values,connection=c)
         if action == 'remove':
             execute_sql(c,'DELETE FROM reservation_elements WHERE company_id=:tenant AND reservation_id=:reservation AND id=:id',(cid,rid,allocation_id))
         if bid:
@@ -240,3 +224,67 @@ def write_requirements(c,cid,eid,eeid,values,result,now):
         eeid = int(insert_sql(c,'INSERT INTO enquiry_elements(element_type,element_id,arrival_date,departure_date,party_size,provisional_total,pricing_snapshot_json,updated_at,company_id,enquiry_id,created_at,sort_order,lead_name) VALUES (:type,:element,:arrival,:departure,:people,:total,:snapshot,:updated,:tenant,:enquiry,:created,1,\'\')',args+(cid,eid,now)).lastrowid)
     write_element_requirements(c,cid,eeid,result)
     return dict(execute_sql(c,'SELECT ee.*,se.name element_name,se.pricing_method FROM enquiry_elements ee JOIN setup_elements se ON se.company_id=ee.company_id AND se.id=ee.element_id WHERE ee.company_id=:tenant AND ee.enquiry_id=:enquiry AND ee.id=:id',(cid,eid,eeid)).fetchone())
+
+
+def calendar_url(master, *, allocation_id=0, adding=False):
+    query = f'edit_reservation={int(master["id"])}'
+    if allocation_id: query += f'&edit_allocation={int(allocation_id)}'
+    if adding: query += '&reservation_add=1'
+    return '/availability/calendar-v2?' + query
+
+
+def calendar_context(database, cid, reservation_id, allocation_id=0):
+    from fastapi import HTTPException
+    with database.connect() as c:
+        row = execute_sql(c,'SELECT * FROM reservations WHERE company_id=:tenant AND id=:id',(cid,reservation_id)).fetchone()
+        if row is None: raise HTTPException(404,'Reservation not found')
+        master = dict(row)
+        editable(master)
+        items = allocations(c,master)
+    selected = next((r for r in items if r['id'] == allocation_id),None)
+    if allocation_id and selected is None: raise HTTPException(404,'Reservation Element not found')
+    return master, items, selected
+
+
+def calendar_panel(context, master, items, selected=None, adding=False):
+    base = f'/operations/reservations/{master["id"]}'
+    cards = []
+    for item in items:
+        cards.append(f'<div class="reservation-calendar-item"><strong>{esc(item["element_name"])}</strong> '
+            f'{esc(item["arrival_date"])} → {esc(item["departure_date"])} '
+            f'<a class="button secondary" href="{calendar_url(master,allocation_id=item["id"])}">Change on calendar</a> '
+            f'<a class="button secondary" href="{base}/edit?details=1&amp;allocation_id={item["id"]}">People / Add-ons</a> '
+            f'<form method="post" action="{base}/edit" style="display:inline">'
+            f'<input type="hidden" name="csrf" value="{esc(context["csrf_token"])}">'
+            f'<input type="hidden" name="version" value="{version(master,items)}">'
+            f'<input type="hidden" name="allocation_id" value="{item["id"]}">'
+            '<button class="secondary" name="action" value="remove">Remove Element</button></form></div>')
+    instruction = ('Choose free space below for the additional Element.' if adding else
+        f'Choose a replacement range for {esc(selected["element_name"])}. Its current space remains reserved until you save.' if selected else
+        'Click one of this reservation’s highlighted allocations to change it, or choose Add New Element.')
+    return (f'<section class="card reservation-calendar-context" data-reservation="{master["id"]}">'
+        f'<h2>Edit Reservation Elements — {esc(master["reference"])}</h2><p>{instruction}</p>'+''.join(cards)+
+        f'<p><a class="button" href="{calendar_url(master,adding=True)}">Add New Element</a> '
+        f'<a class="button secondary" href="{base}">Return to reservation / confirm</a> '
+        f'<a class="button secondary" href="{calendar_url(master)}">Cancel selection</a></p></section>')
+
+
+def validate_selection(database, context, master, items, old, result, values, *, connection):
+    """One final inventory validator for calendar choices and all direct form posts."""
+    cid = master['company_id']
+    start, end = str(values['arrival_date']), str(values['departure_date'])
+    element = int(result['element_id'])
+    state = availability_state(database,cid,element,start,end,session_token=str(context['token']),
+        exclude_booking_id=master['booking_id'],exclude_enquiry_id=master['enquiry_id'])
+    if not state['available']: raise ValueError(str(state['reason']))
+    if any(r['id'] != (old['id'] if old else 0) and int(r['element_id']) == element
+           and str(r['arrival_date']) < end and str(r['departure_date']) > start for r in items):
+        raise ValueError('This Element is already allocated to overlapping dates in this reservation.')
+    # Source-owned allocations also participate: excluding the whole reservation
+    # from external availability must never exclude its sibling Elements.
+    bid = master['booking_id']
+    table, parent, owner, field = ('booking_elements','booking_id',bid,'booking_element_id') if bid else ('enquiry_elements','enquiry_id',master['enquiry_id'],'enquiry_element_id')
+    conflict = execute_sql(connection,f'SELECT id FROM {table} WHERE company_id=:tenant AND {parent}=:owner '
+        'AND element_id=:element AND arrival_date<:departure AND departure_date>:arrival AND id<>:selected LIMIT 1',
+        (cid,owner,element,end,start,old[field] if old and old[field] else 0)).fetchone()
+    if conflict: raise ValueError('This Element is already allocated to overlapping dates in this reservation.')

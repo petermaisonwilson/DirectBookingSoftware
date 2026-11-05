@@ -108,8 +108,13 @@ def main() -> None:
 
         edit = client.get(f'/operations/enquiries/{enquiry_id}/edit')
         assert edit.status_code == 200
-        assert 'Edit Enquiry' in edit.text and 'Pitch A' in edit.text and 'Needs electric pitch' in edit.text
-        assert 'To close an open change section, click the same change button again.' in edit.text
+        assert 'Master Calendar' in edit.text and 'Pitch A' in edit.text
+        assert 'People / Add-ons' in edit.text
+        with db.connect() as c:
+            allocation_id = execute_sql(c,'SELECT id FROM reservation_elements WHERE company_id=:tenant AND reservation_id=:id',(forest,reservation_id)).fetchone()['id']
+        requirements = client.get(f'/operations/reservations/{reservation_id}/edit?details=1&allocation_id={allocation_id}')
+        assert 'Needs electric pitch' in requirements.text
+        assert 'CHANGE DATES' not in requirements.text
 
         # TEST DATA ONLY: checking a proposed change recalculates but never mutates
         # the existing held Enquiry.

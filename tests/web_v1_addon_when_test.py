@@ -2,6 +2,8 @@ from __future__ import annotations
 from operational_backend import create_app
 from online.sql import execute_sql, insert_sql
 
+import re
+from html import unescape
 import sys
 import tempfile
 from pathlib import Path
@@ -102,7 +104,10 @@ def main() -> None:
             daily = execute_sql(c, 'SELECT service_date,quantity FROM enquiry_addon_days WHERE enquiry_id=:q375_0 AND addon_id=:q375_1 ORDER BY service_date', (enquiry_id, breakfast_id)).fetchall()
             assert [(str(x['service_date']), int(x['quantity'])) for x in daily] == [('2026-09-10', 2), ('2026-09-12', 4)]
 
-        edit = client.get(f'/operations/enquiries/{enquiry_id}/edit')
+        calendar = client.get(f'/operations/enquiries/{enquiry_id}/edit')
+        assert 'Master Calendar' in calendar.text
+        requirements_url = unescape(re.search(r'href="([^"]+details=1[^"]+)"',calendar.text).group(1))
+        edit = client.get(requirements_url)
         assert edit.status_code == 200
         assert 'Selected days' in edit.text
         assert 'addon-day-check' not in edit.text

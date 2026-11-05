@@ -145,7 +145,7 @@ def main() -> None:
         # Multi-Element enquiries now open the shared selector, retaining each
         # allocation. The per-Element form is reached only after selecting it.
         assert 'Edit Reservation Elements' in edit_page.text
-        assert edit_page.text.count('>Edit Element</a>') == 2
+        assert edit_page.text.count('>Change on calendar</a>') == 2
         assert 'Add New Element' in edit_page.text
         assert 'could accidentally overwrite' not in edit_page.text
         with db.connect() as c:
