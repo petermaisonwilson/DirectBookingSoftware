@@ -257,27 +257,8 @@ def write_confirmation_details(c,database,context,cid,enquiry,elements,workflow_
     arrival=min(str(e['arrival_date']) for e in elements);departure=max(str(e['departure_date']) for e in elements)
     booking_id=int(insert_sql(c, 'INSERT INTO bookings (company_id,reference,customer_id,enquiry_id,status,arrival_date,departure_date,currency,total_amount,pricing_snapshot_json,notes,created_at,updated_at,workflow_status_id) VALUES (:q210_0,:q210_1,:q210_2,:q210_3,:q210_4,:q210_5,:q210_6,:q210_7,:q210_8,:q210_9,:q210_10,:q210_11,:q210_12,:q210_13)',(cid,reference,enquiry['customer_id'],enquiry['id'],'confirmed',arrival,departure,currency,total,json.dumps({'multi_element':len(elements)>1,'element_count':len(elements),'total':total},separators=(',',':')),enquiry['notes'] or '',now,now,workflow_status_id)).lastrowid)
     for ee in elements:
-        try:snapshot=json.loads(ee['pricing_snapshot_json'] or '{}')
-        except (TypeError,json.JSONDecodeError):snapshot={}
-        element_amount=_snapshot_line_amount(snapshot,str(ee['element_name'] or ''))
-        beid=int(insert_sql(c, 'INSERT INTO booking_elements(company_id,booking_id,element_id,arrival_date,departure_date,pricing_method_snapshot,unit_price_snapshot,total_amount,pricing_snapshot_json,lead_name) VALUES (:q214_0,:q214_1,:q214_2,:q214_3,:q214_4,:q214_5,:q214_6,:q214_7,:q214_8,:q214_9)',(cid,booking_id,ee['element_id'],ee['arrival_date'],ee['departure_date'],ee['pricing_method'] or '',0,element_amount,ee['pricing_snapshot_json'],ee['lead_name'] or '')).lastrowid)
+        beid = write_booking_element(c, database, cid, booking_id, enquiry, ee)
         element_pairs.append((ee['id'] if 'id' in ee.keys() else None, beid))
-        execute_sql(c, 'UPDATE booking_elements SET original_arrival_date=arrival_date,original_departure_date=departure_date,original_total_amount=total_amount WHERE id=:q195_0',(beid,))
-        year=int(snapshot.get('year') or str(ee['arrival_date'])[:4])
-        if 'id' in ee.keys():
-            people_rows=execute_sql(c, 'SELECT ep.person_type_id,ep.quantity,pt.name FROM enquiry_element_people ep JOIN setup_person_types pt ON pt.id=ep.person_type_id AND pt.company_id=ep.company_id WHERE ep.enquiry_element_id=:q223_0 AND ep.company_id=:q223_1',(ee['id'],cid)).fetchall()
-        else:
-            people_rows=execute_sql(c, 'SELECT ep.person_type_id,ep.quantity,pt.name FROM enquiry_people ep JOIN setup_person_types pt ON pt.id=ep.person_type_id AND pt.company_id=ep.company_id WHERE ep.enquiry_id=:q224_0 AND ep.company_id=:q224_1',(enquiry['id'],cid)).fetchall()
-        for p in people_rows:
-            pr=execute_sql(c, 'SELECT rate FROM setup_person_prices WHERE company_id=:q225_0 AND year=:q225_1 AND element_id=:q225_2 AND person_type_id=:q225_3',(cid,year,ee['element_id'],p['person_type_id'])).fetchone();unit=float(pr['rate']) if pr else 0.0
-            execute_sql(c, 'INSERT INTO booking_people(company_id,booking_element_id,person_type_id,quantity,unit_price_snapshot,total_amount) VALUES (:q211_0,:q211_1,:q211_2,:q211_3,:q211_4,:q211_5)',(cid,beid,p['person_type_id'],p['quantity'],unit,_snapshot_line_amount(snapshot,str(p['name']))))
-        element=execute_sql(c, 'SELECT * FROM setup_elements WHERE company_id=:q215_0 AND id=:q215_1',(cid,ee['element_id'])).fetchone()
-        for aid in [int(x) for x in (snapshot.get('selected_addons') or [])]:
-            addon=execute_sql(c, 'SELECT * FROM setup_addons WHERE company_id=:q226_0 AND id=:q226_1',(cid,aid)).fetchone()
-            if addon is None:continue
-            qr=(execute_sql(c, 'SELECT quantity FROM enquiry_element_addons WHERE enquiry_element_id=:q229_0 AND company_id=:q229_1 AND addon_id=:q229_2',(ee['id'],cid,aid)).fetchone() if 'id' in ee.keys() else execute_sql(c, 'SELECT quantity FROM enquiry_addons WHERE enquiry_id=:q230_0 AND company_id=:q230_1 AND addon_id=:q230_2',(enquiry['id'],cid,aid)).fetchone());qty=int(qr['quantity']) if qr else 0;rule=_addon_rule(database,cid,year,element,aid);amount=_snapshot_line_amount(snapshot,str(addon['name']))
-            detail={'rule':dict(rule),'when':(snapshot.get('addon_when') or {}).get(str(aid),(snapshot.get('addon_when') or {}).get(aid)),'days':(snapshot.get('addon_days') or {}).get(str(aid),(snapshot.get('addon_days') or {}).get(aid,{})),'people':(snapshot.get('addon_people') or {}).get(str(aid),(snapshot.get('addon_people') or {}).get(aid,{})),'person_days':(snapshot.get('addon_person_days') or {}).get(str(aid),(snapshot.get('addon_person_days') or {}).get(aid,{})),'frozen_amount':amount}
-            execute_sql(c, 'INSERT INTO booking_addons(company_id,booking_element_id,addon_id,quantity,pricing_method_snapshot,unit_price_snapshot,total_amount,rule_snapshot_json) VALUES (:q212_0,:q212_1,:q212_2,:q212_3,:q212_4,:q212_5,:q212_6,:q212_7)',(cid,beid,aid,qty,addon['pricing_method'],float(rule.get('rate') or 0),amount,json.dumps(detail,separators=(',',':'))))
     execute_sql(c, "UPDATE enquiries SET status='converted',availability_expires_at=NULL,updated_at=:q190_0 WHERE id=:q190_1 AND company_id=:q190_2",(now,enquiry['id'],cid))
     # Availability->Enquiry normally releases basket holds when the Enquiry is
     # saved. Conversion defensively enforces the same lifecycle invariant for
@@ -304,3 +285,34 @@ def require_staff_company(context, company_id):
     active = working_company(context)
     if active is None or int(active) != int(company_id):
         raise ValueError('Select the authorised company before changing this reservation.')
+
+
+def write_booking_element(c, database, cid, booking_id, enquiry, ee, *, beid=None):
+    """Freeze one Element using the same pricing and requirement rules as confirmation."""
+    try:snapshot=json.loads(ee['pricing_snapshot_json'] or '{}')
+    except (TypeError,json.JSONDecodeError):snapshot={}
+    element_amount=_snapshot_line_amount(snapshot,str(ee['element_name'] or ''))
+    if beid is None:
+        beid=int(insert_sql(c, 'INSERT INTO booking_elements(company_id,booking_id,element_id,arrival_date,departure_date,pricing_method_snapshot,unit_price_snapshot,total_amount,pricing_snapshot_json,lead_name) VALUES (:q214_0,:q214_1,:q214_2,:q214_3,:q214_4,:q214_5,:q214_6,:q214_7,:q214_8,:q214_9)',(cid,booking_id,ee['element_id'],ee['arrival_date'],ee['departure_date'],ee['pricing_method'] or '',0,element_amount,ee['pricing_snapshot_json'],ee['lead_name'] or '')).lastrowid)
+        execute_sql(c, 'UPDATE booking_elements SET original_arrival_date=arrival_date,original_departure_date=departure_date,original_total_amount=total_amount WHERE id=:q195_0',(beid,))
+    else:
+        execute_sql(c, 'UPDATE booking_elements SET element_id=:element,arrival_date=:arrival,departure_date=:departure,pricing_method_snapshot=:method,unit_price_snapshot=0,total_amount=:total,pricing_snapshot_json=:snapshot WHERE company_id=:tenant AND booking_id=:booking AND id=:id',
+            (ee['element_id'],ee['arrival_date'],ee['departure_date'],ee['pricing_method'],element_amount,ee['pricing_snapshot_json'],cid,booking_id,beid))
+        for table in ('booking_people','booking_addons'):
+            execute_sql(c, f'DELETE FROM {table} WHERE company_id=:tenant AND booking_element_id=:element', (cid,beid))
+    year=int(snapshot.get('year') or str(ee['arrival_date'])[:4])
+    if 'id' in ee.keys():
+        people_rows=execute_sql(c, 'SELECT ep.person_type_id,ep.quantity,pt.name FROM enquiry_element_people ep JOIN setup_person_types pt ON pt.id=ep.person_type_id AND pt.company_id=ep.company_id WHERE ep.enquiry_element_id=:q223_0 AND ep.company_id=:q223_1',(ee['id'],cid)).fetchall()
+    else:
+        people_rows=execute_sql(c, 'SELECT ep.person_type_id,ep.quantity,pt.name FROM enquiry_people ep JOIN setup_person_types pt ON pt.id=ep.person_type_id AND pt.company_id=ep.company_id WHERE ep.enquiry_id=:q224_0 AND ep.company_id=:q224_1',(enquiry['id'],cid)).fetchall()
+    for p in people_rows:
+        pr=execute_sql(c, 'SELECT rate FROM setup_person_prices WHERE company_id=:q225_0 AND year=:q225_1 AND element_id=:q225_2 AND person_type_id=:q225_3',(cid,year,ee['element_id'],p['person_type_id'])).fetchone();unit=float(pr['rate']) if pr else 0.0
+        execute_sql(c, 'INSERT INTO booking_people(company_id,booking_element_id,person_type_id,quantity,unit_price_snapshot,total_amount) VALUES (:q211_0,:q211_1,:q211_2,:q211_3,:q211_4,:q211_5)',(cid,beid,p['person_type_id'],p['quantity'],unit,_snapshot_line_amount(snapshot,str(p['name']))))
+    element=execute_sql(c, 'SELECT * FROM setup_elements WHERE company_id=:q215_0 AND id=:q215_1',(cid,ee['element_id'])).fetchone()
+    for aid in [int(x) for x in (snapshot.get('selected_addons') or [])]:
+        addon=execute_sql(c, 'SELECT * FROM setup_addons WHERE company_id=:q226_0 AND id=:q226_1',(cid,aid)).fetchone()
+        if addon is None:continue
+        qr=(execute_sql(c, 'SELECT quantity FROM enquiry_element_addons WHERE enquiry_element_id=:q229_0 AND company_id=:q229_1 AND addon_id=:q229_2',(ee['id'],cid,aid)).fetchone() if 'id' in ee.keys() else execute_sql(c, 'SELECT quantity FROM enquiry_addons WHERE enquiry_id=:q230_0 AND company_id=:q230_1 AND addon_id=:q230_2',(enquiry['id'],cid,aid)).fetchone());qty=int(qr['quantity']) if qr else 0;rule=_addon_rule(database,cid,year,element,aid);amount=_snapshot_line_amount(snapshot,str(addon['name']))
+        detail={'rule':dict(rule),'when':(snapshot.get('addon_when') or {}).get(str(aid),(snapshot.get('addon_when') or {}).get(aid)),'days':(snapshot.get('addon_days') or {}).get(str(aid),(snapshot.get('addon_days') or {}).get(aid,{})),'people':(snapshot.get('addon_people') or {}).get(str(aid),(snapshot.get('addon_people') or {}).get(aid,{})),'person_days':(snapshot.get('addon_person_days') or {}).get(str(aid),(snapshot.get('addon_person_days') or {}).get(aid,{})),'frozen_amount':amount}
+        execute_sql(c, 'INSERT INTO booking_addons(company_id,booking_element_id,addon_id,quantity,pricing_method_snapshot,unit_price_snapshot,total_amount,rule_snapshot_json) VALUES (:q212_0,:q212_1,:q212_2,:q212_3,:q212_4,:q212_5,:q212_6,:q212_7)',(cid,beid,aid,qty,addon['pricing_method'],float(rule.get('rate') or 0),amount,json.dumps(detail,separators=(',',':'))))
+    return beid

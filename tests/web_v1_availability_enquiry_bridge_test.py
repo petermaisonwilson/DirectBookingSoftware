@@ -142,10 +142,12 @@ def main() -> None:
         # element-specific requirements, not zeroed legacy enquiry-wide values.
         edit_page = client.get(f'/operations/enquiries/{enquiry_id}/edit')
         assert edit_page.status_code == 200
-        # TEST DATA ONLY: this enquiry has two Elements, so the one-Element editor
-        # must refuse to flatten or overwrite either Element.
-        assert 'This Enquiry contains 2 Elements.' in edit_page.text
-        assert 'could accidentally overwrite part of a multi-Element Enquiry' in edit_page.text
+        # Multi-Element enquiries now open the shared selector, retaining each
+        # allocation. The per-Element form is reached only after selecting it.
+        assert 'Edit Reservation Elements' in edit_page.text
+        assert edit_page.text.count('>Edit Element</a>') == 2
+        assert 'Add New Element' in edit_page.text
+        assert 'could accidentally overwrite' not in edit_page.text
         with db.connect() as c:
             protected = execute_sql(c, 'SELECT element_id,lead_name,party_size,provisional_total FROM enquiry_elements WHERE enquiry_id=:q450_0 AND company_id=:q450_1 ORDER BY sort_order,id',(enquiry_id,cid)).fetchall()
             assert [int(r['element_id']) for r in protected] == [element_id,element2_id]
@@ -154,7 +156,7 @@ def main() -> None:
         assert 'SAVE CHANGES' not in edit_page.text
         assert 'CHECK CHANGES &amp; PRICE' not in edit_page.text
         # TEST DATA ONLY: the protection is enforced server-side too; a direct
-        # POST cannot bypass the guarded multi-Element editor.
+        # POST cannot replace a collection without selecting an allocation.
         blocked_post = client.post(f'/operations/enquiries/{enquiry_id}/edit', data={
             'csrf': csrf, 'action': 'save', 'arrival_date': '2036-09-01',
             'departure_date': '2036-09-03', 'party_size': '1', 'source': 'Availability',

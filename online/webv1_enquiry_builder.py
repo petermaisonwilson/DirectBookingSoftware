@@ -243,20 +243,29 @@ def _calculate(database, company_id: int, values: dict[str, str]):
     return {'element_id':element_id,'element_type':selected_type,'element_name':str(element['name']),'year':year,'nights':nights,'people_total':people_total,'people_counts':people_counts,'addon_counts':addon_counts,'addon_days':addon_days,'addon_people':addon_people,'addon_person_days':addon_person_days,'addon_when':addon_when,'selected_addons':selected_ids,'lines':lines,'base_amount':discount['base_amount'],'discount_amount':discount['discount_amount'],'discount_rule':discount['rule'],'total':discount['final_amount']},set(),''
 
 
-def _form_page(database, context, customer, values: dict[str,str], *, enquiry_id: int|None=None, errors=None, message='', result=None):
+def _form_page(database, context, customer, values: dict[str,str], *, enquiry_id: int|None=None, errors=None, message='', result=None, editor_path='', editor_back='', editor_title=''):
     company_id=working_company(context); errors=errors or set(); types,elements,people,addons,element_json,people_json,addon_json,rule_map,person_rate_map,when_map,addon_modes,addon_person_rates_map=_setup_payload(database,company_id)
     type_names=[str(r['name']) for r in types]; selected_type=values.get('element_type','').strip(); selected_element_id=_int_or_zero(values.get('element_id'))
     if selected_type not in type_names: selected_type=''; selected_element_id=0
     type_options='<option value="">-- not decided yet --</option>'+''.join(f'<option value="{esc(n)}" {"selected" if n==selected_type else ""}>{esc(n)}</option>' for n in type_names)
     element_options='<option value="">-- no specific Element yet --</option>'+''.join(f'<option value="{int(e["id"])}" data-type="{esc(e["element_type"])}" {"selected" if int(e["id"])==selected_element_id else ""}>{esc(e["name"])}</option>' for e in elements)
     error_html=f'<div class="error">{esc(message)}</div>' if message else ''; title=f'Edit Enquiry #{enquiry_id}' if enquiry_id else 'New Enquiry'; back=f'{enquiry_path(database,working_company(context),enquiry_id)}' if enquiry_id else f'/operations/customers/{int(customer["id"])}'; action=f'{enquiry_path(database,working_company(context),enquiry_id)}/edit' if enquiry_id else f'/operations/customers/{int(customer["id"])}/enquiries/new'
+    if editor_path:
+        action = editor_path
+        back = editor_back
+        title = editor_title or 'Edit Reservation Element'
     def style(key): return 'border:2px solid #c62828;' if key in errors else ''
     edit_notice = '<div class="ok"><strong>Current space remains held while you edit.</strong> Nothing changes until you save. If the proposed Element or dates are unavailable, the existing hold is kept.</div>' if enquiry_id else ''
     current_summary = ''
     if enquiry_id:
         enquiry_element_count = int(one(database, 'SELECT COUNT(*) AS n FROM enquiry_elements WHERE enquiry_id=:q128_0 AND company_id=:q128_1', (enquiry_id, company_id))['n'])
-        if enquiry_element_count > 1:
-            return layout(title, f'''<h1>{esc(title)}</h1><p><a href="{back}">← Back</a></p><div class="error"><strong>This Enquiry contains {enquiry_element_count} Elements.</strong><br>This editor changes one held Element at a time, so DBS will not open a single-Element editor that could accidentally overwrite part of a multi-Element Enquiry. Return to the Enquiry and choose the Element you want to change.</div>''', context)
+        if enquiry_element_count > 1 and not editor_path:
+            from .webv1_operational_reservations import identity
+            from .webv1_reservation_editor import allocations, page
+            with database.connect() as c:
+                master = identity(c,company_id,enquiry_id=enquiry_id)
+                items = allocations(c,master)
+            return page(database,context,master,items)
         element_name = next((str(e['name']) for e in elements if int(e['id']) == selected_element_id), 'Element not yet selected')
         people_bits = []
         for p in people:
@@ -378,24 +387,7 @@ def _save(database, context, company_id:int, customer_id:int, values:dict[str,st
                 if 'enquiry_element_id' in cols:execute_sql(c, f'UPDATE {table} SET enquiry_element_id=:q153_0 WHERE enquiry_id=:q153_1 AND company_id=:q153_2 AND enquiry_element_id IS NULL',(eeid,enquiry_id,company_id))
             # Keep the authoritative per-element requirement tables in sync.
             # The legacy enquiry-wide rows remain compatibility data only.
-            for table in ('enquiry_element_people','enquiry_element_addons','enquiry_element_addon_days','enquiry_element_addon_people','enquiry_element_addon_person_days','enquiry_element_selected_addons'):
-                execute_sql(c, f'DELETE FROM {table} WHERE enquiry_element_id=:q152_0 AND company_id=:q152_1',(eeid,company_id))
-            for pid,qty in calculation['people_counts'].items():
-                if qty:execute_sql(c, 'INSERT INTO enquiry_element_people(enquiry_element_id,company_id,person_type_id,quantity) VALUES (:q138_0,:q138_1,:q138_2,:q138_3)',(eeid,company_id,pid,qty))
-            for order,aid in enumerate(calculation['selected_addons'],1):
-                execute_sql(c, 'INSERT INTO enquiry_element_selected_addons(enquiry_element_id,company_id,addon_id,sort_order) VALUES (:q131_0,:q131_1,:q131_2,:q131_3)',(eeid,company_id,aid,order))
-            for aid,qty in calculation['addon_counts'].items():
-                if qty:execute_sql(c, 'INSERT INTO enquiry_element_addons(enquiry_element_id,company_id,addon_id,quantity) VALUES (:q139_0,:q139_1,:q139_2,:q139_3)',(eeid,company_id,aid,qty))
-            for aid,daily in calculation['addon_days'].items():
-                for d,qty in daily.items():
-                    if qty:execute_sql(c, 'INSERT INTO enquiry_element_addon_days(enquiry_element_id,company_id,addon_id,service_date,quantity) VALUES (:q143_0,:q143_1,:q143_2,:q143_3,:q143_4)',(eeid,company_id,aid,d,qty))
-            for aid,pp in calculation['addon_people'].items():
-                for pid,qty in pp.items():
-                    if qty:execute_sql(c, 'INSERT INTO enquiry_element_addon_people(enquiry_element_id,company_id,addon_id,person_type_id,quantity) VALUES (:q144_0,:q144_1,:q144_2,:q144_3,:q144_4)',(eeid,company_id,aid,pid,qty))
-            for aid,bydate in calculation['addon_person_days'].items():
-                for d,pp in bydate.items():
-                    for pid,qty in pp.items():
-                        if qty:execute_sql(c, 'INSERT INTO enquiry_element_addon_person_days(enquiry_element_id,company_id,addon_id,person_type_id,service_date,quantity) VALUES (:q148_0,:q148_1,:q148_2,:q148_3,:q148_4,:q148_5)',(eeid,company_id,aid,pid,d,qty))
+            write_element_requirements(c, company_id, eeid, calculation)
         from .webv1_operational_reservations import save_enquiry
         save_enquiry(c, company_id, enquiry_id)
         if created:
@@ -459,6 +451,9 @@ def register_enquiry_builder_routes(app)->None:
             booking=one(database,'SELECT id,reference FROM bookings WHERE company_id=:q125_0 AND enquiry_id=:q125_1 ORDER BY id DESC LIMIT 1',(cid,enquiry_id))
             destination=f'{booking_path(database,working_company(context),int(booking["id"]))}' if booking is not None else f'{enquiry_path(database,working_company(context),enquiry_id)}'
             return RedirectResponse(destination,303)
+        destination = enquiry_path(database,cid,enquiry_id)
+        if destination.startswith('/operations/reservations/'):
+            return RedirectResponse(destination+'/edit',303)
         return _form_page(database,context,_customer(database,cid,int(enquiry['customer_id'])),_saved_values(database,cid,enquiry),enquiry_id=enquiry_id)
     @app.post('/operations/enquiries/{enquiry_id}/edit',response_class=HTMLResponse)
     async def update(enquiry_id:int,request:Request):
@@ -470,7 +465,9 @@ def register_enquiry_builder_routes(app)->None:
             return RedirectResponse(destination,303)
         element_count=int(one(database,'SELECT COUNT(*) AS n FROM enquiry_elements WHERE enquiry_id=:q133_0 AND company_id=:q133_1',(enquiry_id,cid))['n'])
         if element_count > 1:
-            return HTMLResponse(layout(f'Edit Enquiry #{enquiry_id}',f'<h1>Edit Enquiry #{enquiry_id}</h1><p><a href="{enquiry_path(database,working_company(context),enquiry_id)}">← Back</a></p><div class="error"><strong>This Enquiry contains {element_count} Elements.</strong><br>DBS has not changed anything. Return to the Enquiry and choose the Element you want to change.</div>',context),409)
+            # Multi-Element writes require an explicitly selected allocation and
+            # the review token supplied by the shared reservation editor.
+            return HTMLResponse('Choose an Element through the reservation editor before saving. DBS has not changed anything.',409)
         customer=_customer(database,cid,int(enquiry['customer_id'])); data=await form_data(request); require_csrf(context,data); values=dict(data); basic=_basic_values(data); _,_,date_error=_validate_dates(basic)
         if date_error:return HTMLResponse(_form_page(database,context,customer,values,enquiry_id=enquiry_id,errors={'arrival_date','departure_date'},message=date_error),400)
         calculation=None; action=data.get('action','save')
@@ -506,6 +503,9 @@ def register_enquiry_builder_routes(app)->None:
                 if not final_state.get('available'):
                     msg='Changes not saved. Your existing held space is unchanged. '+str(final_state.get('reason') or 'The proposed Element or dates are not available.')
                     return HTMLResponse(_form_page(database,context,customer,values,enquiry_id=enquiry_id,message=msg),409)
+            count = execute_sql(locked,'SELECT COUNT(*) n FROM enquiry_elements WHERE company_id=:tenant AND enquiry_id=:enquiry',(cid,enquiry_id)).fetchone()['n']
+            if int(count) > 1:
+                return HTMLResponse('Choose an Element through the reservation editor before saving.',409)
             _save(database,context,cid,int(enquiry['customer_id']),save_values,calculation,enquiry_id=enquiry_id,locked_connection=locked)
         return RedirectResponse(f'{enquiry_path(database,working_company(context),enquiry_id)}?saved=1',303)
     @app.get('/operations/enquiries/{enquiry_id}/build',response_class=HTMLResponse)
@@ -513,3 +513,25 @@ def register_enquiry_builder_routes(app)->None:
         context=context_for(database,request); cid=working_company(context)
         if _enquiry(database,cid,enquiry_id) is None:return HTMLResponse(layout('Enquiry not found','<div class="error">Enquiry not found.</div>',context),404)
         return RedirectResponse(f'{enquiry_path(database,working_company(context),enquiry_id)}/edit',303)
+
+
+def write_element_requirements(c, company_id, eeid, calculation):
+    """Shared authoritative requirements writer; caller owns the inventory transaction."""
+    for table in ('enquiry_element_people','enquiry_element_addons','enquiry_element_addon_days','enquiry_element_addon_people','enquiry_element_addon_person_days','enquiry_element_selected_addons'):
+        execute_sql(c, f'DELETE FROM {table} WHERE enquiry_element_id=:element AND company_id=:tenant', (eeid, company_id))
+    for pid,qty in calculation['people_counts'].items():
+        if qty:execute_sql(c, 'INSERT INTO enquiry_element_people(enquiry_element_id,company_id,person_type_id,quantity) VALUES (:q138_0,:q138_1,:q138_2,:q138_3)',(eeid,company_id,pid,qty))
+    for order,aid in enumerate(calculation['selected_addons'],1):
+        execute_sql(c, 'INSERT INTO enquiry_element_selected_addons(enquiry_element_id,company_id,addon_id,sort_order) VALUES (:q131_0,:q131_1,:q131_2,:q131_3)',(eeid,company_id,aid,order))
+    for aid,qty in calculation['addon_counts'].items():
+        if qty:execute_sql(c, 'INSERT INTO enquiry_element_addons(enquiry_element_id,company_id,addon_id,quantity) VALUES (:q139_0,:q139_1,:q139_2,:q139_3)',(eeid,company_id,aid,qty))
+    for aid,daily in calculation['addon_days'].items():
+        for d,qty in daily.items():
+            if qty:execute_sql(c, 'INSERT INTO enquiry_element_addon_days(enquiry_element_id,company_id,addon_id,service_date,quantity) VALUES (:q143_0,:q143_1,:q143_2,:q143_3,:q143_4)',(eeid,company_id,aid,d,qty))
+    for aid,pp in calculation['addon_people'].items():
+        for pid,qty in pp.items():
+            if qty:execute_sql(c, 'INSERT INTO enquiry_element_addon_people(enquiry_element_id,company_id,addon_id,person_type_id,quantity) VALUES (:q144_0,:q144_1,:q144_2,:q144_3,:q144_4)',(eeid,company_id,aid,pid,qty))
+    for aid,bydate in calculation['addon_person_days'].items():
+        for d,pp in bydate.items():
+            for pid,qty in pp.items():
+                if qty:execute_sql(c, 'INSERT INTO enquiry_element_addon_person_days(enquiry_element_id,company_id,addon_id,person_type_id,service_date,quantity) VALUES (:q148_0,:q148_1,:q148_2,:q148_3,:q148_4,:q148_5)',(eeid,company_id,aid,pid,d,qty))

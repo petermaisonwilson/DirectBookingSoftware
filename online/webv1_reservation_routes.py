@@ -95,9 +95,55 @@ def register_reservation_routes(app):
     register_command('bookings', 'link-customer', 'POST')
     for suffix in ('convert', 'confirm-payment', 'confirm-without-payment', 'release', 'reopen'):
         register_command('enquiries', suffix, 'POST')
-    for suffix in ('confirm', 'edit', 'build'):
+    for suffix in ('confirm', 'build'):
         register_command('enquiries', suffix, 'GET')
-    register_command('enquiries', 'edit', 'POST')
+    @app.get('/operations/reservations/{reservation_id:int}/edit', response_class=HTMLResponse)
+    async def edit_elements(reservation_id: int, request: Request):
+        from .webv1_reservation_editor import allocations, editable, page
+        master = master_for(request, reservation_id)
+        context = context_for(database, request)
+        try:
+            editable(master)
+            with database.connect() as c:
+                items = allocations(c, master)
+            adding = request.query_params.get('add') == '1'
+            selected_id = int(request.query_params.get('allocation_id') or 0)
+            selected = next((r for r in items if r['id'] == selected_id), None)
+            if selected_id and selected is None:
+                raise HTTPException(status_code=404, detail='Reservation Element not found')
+            if len(items) == 1 and not adding and not selected_id:
+                selected = items[0]
+            return HTMLResponse(page(database,context,master,items,selected=selected,adding=adding))
+        except ValueError as exc:
+            return HTMLResponse(str(exc),409)
+
+    @app.post('/operations/reservations/{reservation_id:int}/edit', response_class=HTMLResponse)
+    async def save_elements(reservation_id: int, request: Request):
+        from .webv1_reservation_editor import allocations, editable, page, calculate, save
+        from .app import form_data
+        from .setup015_core import require_csrf
+        from fastapi.responses import RedirectResponse
+        master = master_for(request, reservation_id)
+        context = context_for(database, request)
+        data = dict(await form_data(request))
+        require_csrf(context, data)
+        items = []
+        try:
+            editable(master)
+            with database.connect() as c:
+                items = allocations(c, master)
+            selected_id = int(data.get('allocation_id') or 0)
+            selected = next((r for r in items if r['id'] == selected_id), None)
+            if selected_id and selected is None:
+                raise ValueError('Element does not belong to this reservation.')
+            if data.get('action') == 'calculate':
+                result = calculate(database,master['company_id'],data)
+                return HTMLResponse(page(database,context,master,items,selected=selected,adding=not selected,values=data,result=result))
+            await run_in_threadpool(save,database,context,master,data)
+            return RedirectResponse(f'/operations/reservations/{reservation_id}?saved=1',303)
+        except (ValueError, TypeError) as exc:
+            return HTMLResponse(page(database,context,master,items,message=str(exc)),409)
+
 
     @app.post('/operations/reservations/{reservation_id:int}/elements/{allocation_id:int}/replace', response_class=HTMLResponse)
     async def replace_element(reservation_id: int, allocation_id: int, request: Request):

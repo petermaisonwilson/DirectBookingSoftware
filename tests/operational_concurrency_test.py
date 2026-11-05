@@ -121,6 +121,138 @@ class OperationalJourneyTests(unittest.TestCase):
         rid = int(re.search(r'/reservations/(\d+)', response.headers['location']).group(1))
         return int(self.scalar('SELECT booking_id FROM reservations WHERE company_id=:tenant AND id=:reservation', (self.cid, rid)))
 
+    def editor_payload(self, rid, allocation=None, *, element=None, action='save'):
+        from html import unescape
+        url = f'/operations/reservations/{rid}/edit'
+        query = f'?allocation_id={allocation}' if allocation else '?add=1'
+        response = self.clients[0].get(url+query)
+        self.assertEqual(response.status_code,200,response.text)
+        token = re.search(r'name="version" value="([^\"]+)"',response.text).group(1)
+        return {'csrf':self.csrf(),'version':unescape(token),'allocation_id':str(allocation or ''),
+            'element_type':'Camping','element_id':str(element or self.element),
+            'arrival_date':'2038-06-01','departure_date':'2038-06-03',f'person_{self.person}':'1','action':action}
+
+    def test_shared_multi_element_editor_before_and_after_confirmation(self):
+        enquiry = self.enquiry()
+        rid = int(self.scalar('SELECT id FROM reservations WHERE company_id=:tenant AND enquiry_id=:id',(self.cid,enquiry)))
+        url = f'/operations/reservations/{rid}/edit'
+        second = self.new_element('Second pitch')
+        third = self.new_element('Replacement pitch')
+        response = self.clients[0].post(url,data=self.editor_payload(rid,element=second),follow_redirects=False)
+        self.assertEqual(response.status_code,303,response.text)
+        with self.db.connect() as c:
+            items = [dict(r) for r in execute_sql(c,'SELECT * FROM reservation_elements WHERE company_id=:tenant AND reservation_id=:id ORDER BY id',(self.cid,rid)).fetchall()]
+        self.assertEqual(len(items),2)
+        original, added = items
+        page = self.clients[0].get(url)
+        self.assertIn('Edit Element',page.text)
+        self.assertNotIn('will not open',page.text)
+        legacy = self.clients[0].get(f'/operations/enquiries/{enquiry}/edit')
+        self.assertIn('Add New Element',legacy.text)
+        payload = self.editor_payload(rid,added['id'],element=third)
+        payload.update(departure_date='2038-06-04', **{f'person_{self.person}':'2'})
+        preview = self.clients[0].post(url,data=dict(payload,action='calculate'))
+        self.assertEqual(preview.status_code,200,preview.text)
+        self.assertEqual(self.scalar('SELECT total_amount FROM reservations WHERE id=:id',(rid,)),400)
+        saved = self.clients[0].post(url,data=payload,follow_redirects=False)
+        self.assertEqual(saved.status_code,303,saved.text)
+        with self.db.connect() as c:
+            unchanged = dict(execute_sql(c,'SELECT * FROM reservation_elements WHERE id=:id',(original['id'],)).fetchone())
+        self.assertEqual(unchanged,original)
+        self.assertEqual(self.scalar('SELECT total_amount FROM reservations WHERE id=:id',(rid,)),500)
+        stale = self.clients[0].post(url,data=payload,follow_redirects=False)
+        self.assertEqual(stale.status_code,409,stale.text)
+        conflict = self.editor_payload(rid,added['id'],element=self.element)
+        self.assertEqual(self.clients[0].post(url,data=conflict).status_code,409)
+        # Confirm with a deposit, then use the SAME editor with both allocations.
+        payment = dict(self.payment_payload(),amount='500')
+        converted = self.clients[0].post(f'/operations/reservations/{rid}/confirm-payment',data=payment,follow_redirects=False)
+        self.assertEqual(converted.status_code,303,converted.text)
+        bid = self.scalar('SELECT booking_id FROM reservations WHERE id=:id',(rid,))
+        with self.db.connect() as c:
+            payments = [dict(r) for r in execute_sql(c,'SELECT * FROM booking_payments WHERE booking_id=:id',(bid,)).fetchall()]
+        self.assertIn('Edit / Recalculate Elements',self.clients[0].get(f'/operations/reservations/{rid}').text)
+        payload = self.editor_payload(rid,added['id'],element=third)
+        payload.update(departure_date='2038-06-05',manual_discount='25',manual_discount_reason='Staff special')
+        changed = self.clients[0].post(url,data=payload,follow_redirects=False)
+        self.assertEqual(changed.status_code,303,changed.text)
+        self.assertEqual(self.scalar('SELECT total_amount FROM reservations WHERE id=:id',(rid,)),575)
+        with self.db.connect() as c:
+            self.assertEqual([dict(r) for r in execute_sql(c,'SELECT * FROM booking_payments WHERE booking_id=:id',(bid,)).fetchall()],payments)
+        from online.webv1_booking_finance import booking_financials
+        self.assertEqual(booking_financials(self.db,self.cid,bid)['outstanding'],75)
+        self.assertIn('Staff special',self.clients[0].get(f'/operations/reservations/{rid}').text)
+        # Add and remove after confirmation; retained amendments and payments survive.
+        new = self.clients[0].post(url,data=self.editor_payload(rid,element=second),follow_redirects=False)
+        self.assertEqual(new.status_code,303,new.text)
+        remove = self.editor_payload(rid,added['id'],action='remove')
+        self.clients[0]._transport.raise_server_exceptions = True
+        response = self.clients[0].post(url,data=remove,follow_redirects=False)
+        self.assertEqual(response.status_code,303,response.text)
+        self.assertEqual(self.scalar('SELECT total_amount FROM reservations WHERE id=:id',(rid,)),400)
+        self.assertGreater(self.scalar('SELECT COUNT(*) FROM booking_amendments WHERE booking_id=:id',(bid,)),0)
+        with self.db.connect() as c:
+            self.assertEqual([dict(r) for r in execute_sql(c,'SELECT * FROM booking_payments WHERE booking_id=:id',(bid,)).fetchall()],payments)
+        # Cancellation remains terminal for GET and crafted POST alike.
+        with self.db.reservation_write_transaction(self.cid) as c:
+            execute_sql(c,"UPDATE bookings SET status='cancelled' WHERE company_id=:tenant AND id=:id",(self.cid,bid))
+            from online.webv1_operational_reservations import save_booking
+            save_booking(c,self.cid,bid)
+        self.assertEqual(self.clients[0].get(url).status_code,409)
+        self.assertEqual(self.clients[0].post(url,data=payload).status_code,409)
+
+    def test_shared_editor_inventory_ownership_removal_and_audit_rollback(self):
+        enquiry = self.enquiry()
+        rid = self.scalar('SELECT id FROM reservations WHERE company_id=:tenant AND enquiry_id=:id',(self.cid,enquiry))
+        aid = self.scalar('SELECT id FROM reservation_elements WHERE reservation_id=:id',(rid,))
+        url = f'/operations/reservations/{rid}/edit'
+        remove = self.editor_payload(rid,aid,action='remove')
+        self.assertEqual(self.clients[0].post(url,data=remove).status_code,409)
+        spoof = self.editor_payload(rid,aid)
+        spoof['allocation_id'] = '999999'
+        self.assertEqual(self.clients[0].post(url,data=spoof).status_code,409)
+        second = self.new_element('Rollback pitch')
+        payload = self.editor_payload(rid,element=second)
+        with patch('online.webv1_reservation_editor.audit',side_effect=RuntimeError('audit unavailable')):
+            self.assertEqual(self.clients[0].post(url,data=payload).status_code,500)
+        self.assertEqual(self.scalar('SELECT COUNT(*) FROM enquiry_elements WHERE enquiry_id=:id',(enquiry,)),1)
+        self.assertEqual(self.scalar('SELECT COUNT(*) FROM reservation_elements WHERE reservation_id=:id',(rid,)),1)
+        saved = self.clients[0].post(url,data=payload,follow_redirects=False)
+        self.assertEqual(saved.status_code,303,saved.text)
+        aid2 = self.scalar('SELECT MAX(id) FROM reservation_elements WHERE reservation_id=:id',(rid,))
+        self.clients[0]._transport.raise_server_exceptions = True
+        removed = self.clients[0].post(url,data=self.editor_payload(rid,aid2,action='remove'),follow_redirects=False)
+        self.assertEqual(removed.status_code,303,removed.text)
+        self.assertEqual(self.scalar('SELECT COUNT(*) FROM enquiry_elements WHERE enquiry_id=:id',(enquiry,)),1)
+
+    def test_shared_editor_addon_days_duration_discounts_and_tenant_boundaries(self):
+        enquiry = self.enquiry()
+        rid = self.scalar('SELECT id FROM reservations WHERE company_id=:tenant AND enquiry_id=:id',(self.cid,enquiry))
+        aid = self.scalar('SELECT id FROM reservation_elements WHERE reservation_id=:id',(rid,))
+        url = f'/operations/reservations/{rid}/edit'
+        with self.db.connect() as c:
+            addon = int(insert_sql(c,"INSERT INTO setup_addons(company_id,name,pricing_method,active) VALUES (:tenant,'Daily electric','Per quantity per night',1)",(self.cid,)).lastrowid)
+            execute_sql(c,"INSERT INTO setup_type_addons(company_id,year,element_type,addon_id,allowed,min_qty,max_qty,rate) VALUES (:tenant,2038,'Camping',:addon,1,0,2,10)",(self.cid,addon))
+            execute_sql(c,"INSERT INTO setup_addon_when_options(company_id,addon_id,option_code,label,active,sort_order) VALUES (:tenant,:addon,'selected_days','Selected days',1,1)",(self.cid,addon))
+            execute_sql(c,"INSERT INTO setup_duration_discounts(company_id,name,min_nights,discount_type,discount_value,scope_type,element_id,active,created_at) VALUES (:tenant,'Three nights',3,'Percentage',10,'Element',:element,1,:created)",(self.cid,self.element,iso_now()))
+        payload = self.editor_payload(rid,aid)
+        payload.update(departure_date='2038-06-04',**{f'addon_selected_{addon}':'1',f'addon_when_{addon}':'selected_days',f'addon_day_{addon}_2038-06-02':'1'})
+        saved = self.clients[0].post(url,data=payload,follow_redirects=False)
+        self.assertEqual(saved.status_code,303,saved.text)
+        self.assertEqual(self.scalar('SELECT total_amount FROM reservations WHERE id=:id',(rid,)),279)
+        reopened = self.clients[0].get(url)
+        self.assertIn(f'name="addon_when_{addon}"',reopened.text)
+        self.assertIn('"2038-06-02": "1"',reopened.text)
+        # Reduce below the duration threshold: discount disappears, day survives.
+        payload = self.editor_payload(rid,aid)
+        payload.update(**{f'addon_selected_{addon}':'1',f'addon_when_{addon}':'selected_days',f'addon_day_{addon}_2038-06-02':'1'})
+        self.assertEqual(self.clients[0].post(url,data=payload,follow_redirects=False).status_code,303)
+        self.assertEqual(self.scalar('SELECT total_amount FROM reservations WHERE id=:id',(rid,)),210)
+        with TestClient(self.app) as foreign:
+            self.assertEqual(foreign.post('/login',data={'email':'operator@riverside.test','password':'Operator013!'},follow_redirects=False).status_code,303)
+            self.assertEqual(foreign.get(url).status_code,404)
+            self.assertEqual(foreign.post(url,data=payload).status_code,404)
+
     def race(self, functions):
         barrier = Barrier(len(functions))
         def run(fn):
