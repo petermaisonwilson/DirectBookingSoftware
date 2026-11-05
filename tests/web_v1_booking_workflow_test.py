@@ -3,6 +3,7 @@ from operational_backend import create_app, reservation_id_for, source_id_from_l
 from online.sql import execute_sql, insert_sql
 
 import json
+import re
 import sys
 import tempfile
 from datetime import datetime, timedelta, timezone
@@ -230,7 +231,9 @@ def main() -> None:
         assert '€150.00' in page.text and '€230.00' in page.text and 'Recorded payment €150.00' in page.text
         assert 'value="230.00"' in page.text
         assert 'Change Status' not in page.text and 'controlled automatically by DBS' in page.text
-        assert 'Amend Booking' in page.text and 'Preview Amendment' in page.text
+        assert 'Amend Booking' not in page.text and 'Preview Amendment' not in page.text
+        assert 'Edit / Recalculate Elements' in page.text
+        assert '/amend-preview' not in page.text
 
         # TEST DATA ONLY: pay the remaining balance using the normal route. Renaming
         # the visible statuses above must not stop DBS selecting the correct state.
@@ -280,7 +283,13 @@ def main() -> None:
         assert original['original_arrival_date']=='2035-06-10' and original['original_departure_date']=='2035-06-13' and float(original['original_total_amount'])==300.0
         amended_page=client.get(f'/operations/bookings/{booking_id}')
         assert 'Manual discount:</strong> −€20.00' in amended_page.text
-        assert 'name="manual_discount" min="0" step="0.01" value="20.00"' in amended_page.text
+        rid = reservation_id_for(db,cid,booking_id=booking_id)
+        with db.connect() as c:
+            allocation_id = execute_sql(c,'SELECT id FROM reservation_elements WHERE company_id=:tenant AND reservation_id=:reservation AND booking_element_id=:element',(cid,rid,beid)).fetchone()['id']
+        edit_page = client.get(f'/operations/reservations/{rid}/edit?details=1&allocation_id={allocation_id}')
+        assert edit_page.status_code == 200
+        retained_discount = re.search(r'name="manual_discount"[^>]*value="([^"]+)"',edit_page.text)
+        assert retained_discount and float(retained_discount.group(1)) == 20.0
         shorter=amendment_quote(db,cid,booking_id,beid,'2035-06-10','2035-06-15')
         assert shorter['new_nights']==5 and shorter['duration_discount']==0 and shorter['manual_discount']==20.0
 

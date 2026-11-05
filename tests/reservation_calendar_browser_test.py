@@ -86,6 +86,23 @@ def main():
             row.locator('.date-pick[data-date="2038-06-03"]').click()
             assert dialogs and 'not available for every day' in dialogs[-1]
             assert row.locator('.selection-action').is_hidden()
+            # Review dates show the final service day for fishing, retaining the
+            # exclusive boundary used by pricing and inventory after preview/save.
+            from online.sql import execute_sql
+            with fixture.db.connect() as c:
+                execute_sql(c,"UPDATE setup_elements SET pricing_method='Per day' WHERE company_id=:tenant AND id=:id",(fixture.cid,fixture.element))
+            page.goto(base+f'/operations/reservations/{rid}/edit?details=1&allocation_id={aid}&chosen_element={fixture.element}&arrival=2038-06-14&departure=2038-06-18')
+            assert page.locator('[name="display_departure_date"]').input_value() == '2038-06-17'
+            assert page.locator('[name="departure_date"]').input_value() == '2038-06-18'
+            page.locator('[name="display_departure_date"]').fill('2038-06-16')
+            page.get_by_role('button',name='Calculate provisional price',exact=True).click()
+            assert page.locator('[name="display_departure_date"]').input_value() == '2038-06-16'
+            assert page.locator('[name="departure_date"]').input_value() == '2038-06-17'
+            page.get_by_role('button',name='Save Element',exact=True).click()
+            page.wait_for_url(re.compile(f'edit_reservation={rid}'))
+            assert fixture.scalar('SELECT departure_date FROM reservation_elements WHERE id=:id',(aid,)) == '2038-06-17'
+            page.goto(base+f'/operations/reservations/{rid}/edit?details=1&allocation_id={aid}')
+            assert page.locator('[name="display_departure_date"]').input_value() == '2038-06-16'
             assert not errors, errors
             print('Chrome calendar reservation edit, add, occupied dates and range-gap safeguards passed.')
             browser.close()

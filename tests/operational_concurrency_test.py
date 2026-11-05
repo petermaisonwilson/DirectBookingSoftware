@@ -312,6 +312,46 @@ class OperationalJourneyTests(unittest.TestCase):
             foreign.post('/login',data={'email':'operator@riverside.test','password':'Operator013!'})
             self.assertEqual(foreign.get(entry.headers['location']).status_code,404)
 
+    def test_review_day_end_dates_roundtrip_without_shortening_the_allocation(self):
+        enquiry = self.enquiry()
+        rid = self.scalar('SELECT id FROM reservations WHERE company_id=:tenant AND enquiry_id=:id',(self.cid,enquiry))
+        aid = self.scalar('SELECT id FROM reservation_elements WHERE reservation_id=:id',(rid,))
+        url = f'/operations/reservations/{rid}/edit'
+        with self.db.connect() as c:
+            execute_sql(c,"UPDATE setup_elements SET pricing_method='Per day' WHERE company_id=:tenant AND id=:id",(self.cid,self.element))
+        form = self.clients[0].get(url+f'?details=1&allocation_id={aid}&chosen_element={self.element}&arrival=2038-06-14&departure=2038-06-18')
+        self.assertEqual(form.status_code,200,form.text)
+        self.assertIn('End date (last day)',form.text)
+        self.assertIn('name="display_departure_date" value="2038-06-17"',form.text)
+        self.assertIn('name="departure_date" value="2038-06-18"',form.text)
+        payload = self.editor_payload(rid,aid)
+        payload.update(arrival_date='2038-06-14',departure_date='2099-01-01',display_departure_date='2038-06-17')
+        preview = self.clients[0].post(url,data=dict(payload,action='calculate'))
+        self.assertEqual(preview.status_code,200,preview.text)
+        self.assertIn('name="display_departure_date" value="2038-06-17"',preview.text)
+        self.assertEqual(self.scalar('SELECT departure_date FROM reservation_elements WHERE id=:id',(aid,)),'2038-06-03')
+        saved = self.clients[0].post(url,data=payload,follow_redirects=False)
+        self.assertEqual(saved.status_code,303,saved.text)
+        self.assertEqual(self.scalar('SELECT departure_date FROM reservation_elements WHERE id=:id',(aid,)),'2038-06-18')
+        self.assertEqual(self.scalar('SELECT total_amount FROM reservations WHERE id=:id',(rid,)),400)
+        reopened = self.clients[0].get(url+f'?details=1&allocation_id={aid}')
+        self.assertIn('name="display_departure_date" value="2038-06-17"',reopened.text)
+        # A single day remains valid when arrival and displayed end are equal.
+        payload = self.editor_payload(rid,aid)
+        payload.update(arrival_date='2038-06-14',display_departure_date='2038-06-14')
+        saved = self.clients[0].post(url,data=payload,follow_redirects=False)
+        self.assertEqual(saved.status_code,303,saved.text)
+        self.assertEqual(self.scalar('SELECT departure_date FROM reservation_elements WHERE id=:id',(aid,)),'2038-06-15')
+        self.assertEqual(self.scalar('SELECT total_amount FROM reservations WHERE id=:id',(rid,)),100)
+        # Night-priced checkout remains the following day and saves unchanged.
+        with self.db.connect() as c:
+            execute_sql(c,"UPDATE setup_elements SET pricing_method='Per night' WHERE company_id=:tenant AND id=:id",(self.cid,self.element))
+        payload = self.editor_payload(rid,aid)
+        payload.update(arrival_date='2038-06-14',display_departure_date='2038-06-18')
+        self.assertEqual(self.clients[0].post(url,data=payload,follow_redirects=False).status_code,303)
+        self.assertEqual(self.scalar('SELECT departure_date FROM reservation_elements WHERE id=:id',(aid,)),'2038-06-18')
+        self.assertEqual(self.scalar('SELECT total_amount FROM reservations WHERE id=:id',(rid,)),400)
+
     def race(self, functions):
         barrier = Barrier(len(functions))
         def run(fn):

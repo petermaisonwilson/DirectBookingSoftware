@@ -243,7 +243,15 @@ def _calculate(database, company_id: int, values: dict[str, str]):
     return {'element_id':element_id,'element_type':selected_type,'element_name':str(element['name']),'year':year,'nights':nights,'people_total':people_total,'people_counts':people_counts,'addon_counts':addon_counts,'addon_days':addon_days,'addon_people':addon_people,'addon_person_days':addon_person_days,'addon_when':addon_when,'selected_addons':selected_ids,'lines':lines,'base_amount':discount['base_amount'],'discount_amount':discount['discount_amount'],'discount_rule':discount['rule'],'total':discount['final_amount']},set(),''
 
 
-def _form_page(database, context, customer, values: dict[str,str], *, enquiry_id: int|None=None, errors=None, message='', result=None, editor_path='', editor_back='', editor_title=''):
+def displayed_end_date(value, pricing_method):
+    """Show the final service day for day-priced Elements; retain checkout for nights."""
+    if str(pricing_method or '').strip().lower() not in {'per day'}:
+        return str(value or '')
+    try: return (date.fromisoformat(str(value))-timedelta(days=1)).isoformat()
+    except (TypeError,ValueError): return str(value or '')
+
+
+def _form_page(database, context, customer, values: dict[str,str], *, enquiry_id: int|None=None, errors=None, message='', result=None, editor_path='', editor_back='', editor_title='', display_service_end=False):
     company_id=working_company(context); errors=errors or set(); types,elements,people,addons,element_json,people_json,addon_json,rule_map,person_rate_map,when_map,addon_modes,addon_person_rates_map=_setup_payload(database,company_id)
     type_names=[str(r['name']) for r in types]; selected_type=values.get('element_type','').strip(); selected_element_id=_int_or_zero(values.get('element_id'))
     if selected_type not in type_names: selected_type=''; selected_element_id=0
@@ -279,8 +287,15 @@ def _form_page(database, context, customer, values: dict[str,str], *, enquiry_id
                 addon_bits.append(str(a['name']) + (f' ×{qty}' if qty else ''))
         stay = f'{values.get("arrival_date","")} → {values.get("departure_date","")}'
         current_summary = f'''<div class="card" style="border-left:4px solid #267326"><h2 style="margin-top:0">Current held enquiry</h2><p style="font-size:17px"><strong>{esc(element_name)}</strong> &nbsp;|&nbsp; {esc(stay)}</p><p><strong>People:</strong> {esc(", ".join(people_bits) or "Not specified")}</p><p><strong>Add-ons:</strong> {esc(", ".join(addon_bits) or "None")}</p><p class="muted">Choose only the section you need to change. The other details stay as they are. <strong>To close an open change section, click the same change button again.</strong></p><p><button type="button" class="secondary edit-choice" data-target="stay-edit">CHANGE DATES</button> <button type="button" class="secondary edit-choice" data-target="element-edit">CHANGE ELEMENT</button> <button type="button" class="secondary edit-choice" data-target="requirements-edit">CHANGE PEOPLE / ADD-ONS</button> <button type="button" class="secondary edit-choice" data-target="all-edit">EDIT EVERYTHING</button></p></div>'''
+    departure_control = f'<label>Departure date</label><input id="departure_date" style="{style("departure_date")}" type="date" name="departure_date" value="{esc(values.get("departure_date",""))}">'
+    if display_service_end:
+        method = next((str(e['pricing_method']) for e in elements if int(e['id']) == selected_element_id),'')
+        end_label = 'End date (last day)' if method.strip().lower() in {'per day'} else 'Departure date'
+        departure_control = (f'<label id="display-end-label" for="display-departure-date">{end_label}</label>'
+            f'<input id="display-departure-date" type="date" name="display_departure_date" value="{esc(displayed_end_date(values.get("departure_date",""),method))}" required>'
+            f'<input id="departure_date" type="hidden" name="departure_date" value="{esc(values.get("departure_date",""))}">')
     body=f'''<h1>{esc(title)}</h1><p><a href="{back}">← Back</a></p>{edit_notice}{current_summary}{error_html}<form method="post" action="{action}" id="integrated-enquiry-form"><input type="hidden" name="csrf" value="{esc(context['csrf_token'])}">
-<div class="card enquiry-edit-section" data-edit-section="stay"><h2>Customer &amp; stay</h2><p><strong>Customer:</strong> {esc(_customer_name(customer))}</p><div class="grid"><div><label>Arrival date</label><input id="arrival_date" style="{style('arrival_date')}" type="date" name="arrival_date" value="{esc(values.get('arrival_date',''))}"></div><div><label>Departure date</label><input id="departure_date" style="{style('departure_date')}" type="date" name="departure_date" value="{esc(values.get('departure_date',''))}"></div><div><label>Party size (if breakdown not known yet)</label><input style="{style('party_size')}" type="number" min="1" name="party_size" value="{esc(values.get('party_size',''))}"></div><div><label>Source</label><input name="source" placeholder="Phone, website, walk-in..." value="{esc(values.get('source',''))}"></div></div></div>
+<div class="card enquiry-edit-section" data-edit-section="stay"><h2>Customer &amp; stay</h2><p><strong>Customer:</strong> {esc(_customer_name(customer))}</p><div class="grid"><div><label>Arrival date</label><input id="arrival_date" style="{style('arrival_date')}" type="date" name="arrival_date" value="{esc(values.get('arrival_date',''))}"></div><div>{departure_control}</div><div><label>Party size (if breakdown not known yet)</label><input style="{style('party_size')}" type="number" min="1" name="party_size" value="{esc(values.get('party_size',''))}"></div><div><label>Source</label><input name="source" placeholder="Phone, website, walk-in..." value="{esc(values.get('source',''))}"></div></div></div>
 <div class="card enquiry-edit-section" data-edit-section="element"><h2>Element</h2><div class="grid"><div><label>Element Type</label><select id="element_type" name="element_type">{type_options}</select></div><div><label>Specific Element (optional)</label><select id="element_id" name="element_id">{element_options}</select></div></div></div>
 <div class="card enquiry-edit-section" data-edit-section="requirements"><h2>People</h2><div class="grid">'''
     for person in people:
@@ -327,6 +342,20 @@ document.querySelectorAll('.addon-remove').forEach(b=>b.addEventListener('click'
 }})();</script>'''
     if enquiry_id:
         body+='''<script>(function(){const sections=[...document.querySelectorAll('.enquiry-edit-section')];let openChoice='';function show(which){sections.forEach(function(section){const key=section.dataset.editSection;section.style.display=(which==='all'||key===which)?'block':'none';});}function closeAll(){sections.forEach(function(section){section.style.display='none';});openChoice='';}document.querySelectorAll('.edit-choice').forEach(function(button){button.addEventListener('click',function(){const target=button.dataset.target;if(openChoice===target){closeAll();return;}openChoice=target;show(target==='all-edit'?'all':target.replace('-edit',''));document.getElementById('integrated-enquiry-form').scrollIntoView({behavior:'smooth',block:'start'});});});closeAll();})();</script>'''
+    if display_service_end:
+        methods = {str(e['id']):str(e['pricing_method']).strip().lower() for e in elements}
+        body += f"""<script id="review-service-end-date">
+        (()=>{{
+          const methods={json.dumps(methods)}, choice=document.getElementById('element_id');
+          const start=document.getElementById('arrival_date'), boundary=document.getElementById('departure_date');
+          const shown=document.getElementById('display-departure-date'), label=document.getElementById('display-end-label');
+          const perDay=()=>['per day'].includes(methods[choice.value]);
+          const shift=(value,days)=>{{if(!value)return '';const d=new Date(value+'T00:00:00Z');if(Number.isNaN(d.getTime()))return '';d.setUTCDate(d.getUTCDate()+days);return d.toISOString().slice(0,10);}};
+          const refresh=()=>{{label.textContent=perDay()?'End date (last day)':'Departure date';shown.value=perDay()?shift(boundary.value,-1):boundary.value;shown.min=perDay()?start.value:shift(start.value,1);}};
+          shown.addEventListener('change',()=>{{boundary.value=perDay()?shift(shown.value,1):shown.value;boundary.dispatchEvent(new Event('change',{{bubbles:true}}));}});
+          boundary.addEventListener('change',refresh);start.addEventListener('change',refresh);choice.addEventListener('change',()=>{{refresh();boundary.dispatchEvent(new Event('change',{{bubbles:true}}));}});
+          refresh();
+        }})();</script>"""
     return layout(title,body,context)
 
 

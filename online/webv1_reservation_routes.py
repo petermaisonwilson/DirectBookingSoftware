@@ -135,7 +135,7 @@ def register_reservation_routes(app):
 
     @app.post('/operations/reservations/{reservation_id:int}/edit', response_class=HTMLResponse)
     async def save_elements(reservation_id: int, request: Request):
-        from .webv1_reservation_editor import allocations, editable, page, calculate, save, validate_selection
+        from .webv1_reservation_editor import allocations, editable, page, calculate, save, validate_selection, normalise_review_dates
         from .app import form_data
         from .setup015_core import require_csrf
         from fastapi.responses import RedirectResponse
@@ -145,6 +145,7 @@ def register_reservation_routes(app):
         require_csrf(context, data)
         items = []
         try:
+            data = normalise_review_dates(database,master['company_id'],data)
             editable(master)
             with database.connect() as c:
                 items = allocations(c, master)

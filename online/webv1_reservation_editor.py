@@ -11,7 +11,7 @@ from .app import esc, layout
 from .database import iso_now
 from .sql import execute_sql, insert_sql
 from .setup015_core import audit
-from .webv1_enquiry_builder import _calculate, _customer, _form_page, write_element_requirements
+from .webv1_enquiry_builder import _calculate, _customer, _form_page, write_element_requirements, displayed_end_date
 from .webv1_operational_reservations import save_enquiry, save_booking, write_booking_element, insert_financial
 from .webv1_booking_finance import sync_payment_status
 from .webv1_status_availability import availability_state
@@ -19,7 +19,7 @@ from .webv1_status_availability import availability_state
 
 def allocations(c, master):
     return [dict(r) for r in execute_sql(c,
-        'SELECT re.*,se.name AS element_name,se.element_type FROM reservation_elements re '
+        'SELECT re.*,se.name AS element_name,se.element_type,se.pricing_method FROM reservation_elements re '
         'JOIN setup_elements se ON se.company_id=re.company_id AND se.id=re.element_id '
         'WHERE re.company_id=:tenant AND re.reservation_id=:reservation ORDER BY re.id',
         (master['company_id'], master['id'])).fetchall()]
@@ -79,7 +79,7 @@ def page(database, context, master, items, *, selected=None, adding=False, value
         return layout('Edit Reservation Elements',body+calendar_panel(context,master,items),context)
     values = dict(form_values(database, master, selected) if values is None else values)
     customer = _customer(database, master['company_id'], master['customer_id'])
-    rendered = _form_page(database, context, customer, values, enquiry_id=None, result=result,
+    rendered = _form_page(database, context, customer, values, enquiry_id=None, result=result, display_service_end=True,
         editor_path=base+'/edit',editor_back=base,
         editor_title='Add Reservation Element' if adding else ('Edit Booking Element' if master['booking_id'] else 'Edit Enquiry Element'))
     # Retain the established form, setup rules, add-on picker and calculation UI.
@@ -251,7 +251,7 @@ def calendar_panel(context, master, items, selected=None, adding=False):
     cards = []
     for item in items:
         cards.append(f'<div class="reservation-calendar-item"><strong>{esc(item["element_name"])}</strong> '
-            f'{esc(item["arrival_date"])} → {esc(item["departure_date"])} '
+            f'{esc(item["arrival_date"])} → {esc(displayed_end_date(item["departure_date"],item["pricing_method"]))} '
             f'<a class="button secondary" href="{calendar_url(master,allocation_id=item["id"])}">Change on calendar</a> '
             f'<a class="button secondary" href="{base}/edit?details=1&amp;allocation_id={item["id"]}">People / Add-ons</a> '
             f'<form method="post" action="{base}/edit" style="display:inline">'
@@ -288,3 +288,23 @@ def validate_selection(database, context, master, items, old, result, values, *,
         'AND element_id=:element AND arrival_date<:departure AND departure_date>:arrival AND id<>:selected LIMIT 1',
         (cid,owner,element,end,start,old[field] if old and old[field] else 0)).fetchone()
     if conflict: raise ValueError('This Element is already allocated to overlapping dates in this reservation.')
+
+
+def normalise_review_dates(database, cid, values):
+    """Convert the submitted service end once, using the tenant-owned Element method.
+
+    Internal callers and old forms already supply an exclusive boundary. The
+    explicit display field distinguishes the human date from that boundary.
+    """
+    if 'display_departure_date' not in values: return values
+    from datetime import date, timedelta
+    values = dict(values)
+    with database.connect() as c:
+        element = execute_sql(c,'SELECT pricing_method FROM setup_elements WHERE company_id=:tenant AND id=:id',(cid,int(values.get('element_id') or 0))).fetchone()
+    if element is None: raise ValueError('Choose an active Element for this company.')
+    try: end = date.fromisoformat(str(values['display_departure_date']))
+    except (TypeError,ValueError): raise ValueError('Enter a valid end date.')
+    if str(element['pricing_method']).strip().lower() in {'per day'}:
+        end += timedelta(days=1)
+    values['departure_date'] = end.isoformat()
+    return values
