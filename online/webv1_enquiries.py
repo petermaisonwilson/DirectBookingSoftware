@@ -12,7 +12,8 @@ from .app import esc, layout
 from .setup015_core import context_for, one, rows, working_company
 from .webv1_bookings import enquiry_conversion_panel
 from .webv1_status_availability import availability_state
-from .webv1_enquiry_builder import _calculate
+from .webv1_enquiry_builder import _calculate, displayed_end_date
+from .webv1_duration_display import _progress_label
 from .database import iso_now
 from .app import form_data
 from .setup015_core import audit, require_csrf
@@ -58,8 +59,14 @@ def _edit_history(database, company_id: int, enquiry_id: int) -> str:
         'SELECT id,name FROM setup_person_types WHERE company_id=:q567_0',(company_id,))}
     addon_names={str(r['id']):str(r['name']) for r in rows(database,
         'SELECT id,name FROM setup_addons WHERE company_id=:q568_0',(company_id,))}
-    element_names={str(r['id']):str(r['name']) for r in rows(database,
-        'SELECT id,name FROM setup_elements WHERE company_id=:q569_0',(company_id,))}
+    element_details = rows(database,'SELECT id,name,pricing_method FROM setup_elements WHERE company_id=:tenant',(company_id,))
+    element_names = {str(r['id']):str(r['name']) for r in element_details}
+    element_methods = {str(r['id']):str(r['pricing_method']) for r in element_details}
+    def historic_method(data):
+        if data.get('pricing_method'): return str(data['pricing_method'])
+        try: snapshot = json.loads(data.get('pricing_snapshot_json') or '{}')
+        except (TypeError,ValueError): snapshot = {}
+        return snapshot.get('pricing_method') or element_methods.get(str(data.get('element_id')),'')
     def date_text(value): return esc(_fmt_day(value))
     def money(value): return f'€{float(value):.2f}'
     def count_changes(label, before, after, names):
@@ -78,9 +85,15 @@ def _edit_history(database, company_id: int, enquiry_id: int) -> str:
         except (ValueError,TypeError): continue
         action=str(event['action'] or '')
         changes=[]
-        for key,label in [('arrival_date','Arrival'),('departure_date','Departure')]:
-            if before.get(key)!=after.get(key):
-                changes.append(f'{label} changed from {date_text(before.get(key))} to {date_text(after.get(key))}')
+        before_method = historic_method(before)
+        after_method = historic_method(after) or before_method
+        for key,label in [('arrival_date','Arrival'),('departure_date','End date' if after_method.lower() == 'per day' else 'Departure')]:
+            old_date, new_date = before.get(key),after.get(key)
+            if key == 'departure_date':
+                old_date = displayed_end_date(old_date,before_method)
+                new_date = displayed_end_date(new_date,after_method)
+            if old_date != new_date:
+                changes.append(f'{label} changed from {date_text(old_date)} to {date_text(new_date)}')
         if str(before.get('element_id'))!=str(after.get('element_id')):
             old=esc(element_names.get(str(before.get('element_id')),'Previous Element'))
             new=esc(element_names.get(str(after.get('element_id')),'New Element'))
@@ -90,7 +103,11 @@ def _edit_history(database, company_id: int, enquiry_id: int) -> str:
             if isinstance(old,dict) and isinstance(new,dict):
                 changes.extend(count_changes(key,old,new,names))
         if before.get('provisional_total')!=after.get('provisional_total'):
-            changes.append(f'Enquiry value changed from {money(before.get("provisional_total") or 0)} to {money(after.get("provisional_total") or 0)}')
+            value_label = 'Element value' if after.get('operation') else 'Enquiry value'
+            changes.append(f'{value_label} changed from {money(before.get("provisional_total") or 0)} to {money(after.get("provisional_total") or 0)}')
+        if changes and action == 'ENQUIRY_UPDATED' and before.get('element_id') == after.get('element_id'):
+            name = after.get('element_name') or before.get('element_name') or element_names.get(str(after.get('element_id')))
+            if name: changes.insert(0,'Element: '+esc(name))
         labels={'ENQUIRY_UPDATED':'Enquiry amended','ENQUIRY_RELEASED':'Enquiry released — space freed','ENQUIRY_REOPENED':'Enquiry reopened — availability checked','ENQUIRY_CREATED':'Enquiry created','ENQUIRY_CONVERTED':'Enquiry converted to booking'}
         label=labels.get(action,action.replace('_',' ').title())
         if action=='ENQUIRY_UPDATED' and not changes: continue
@@ -222,7 +239,7 @@ def register_enquiry_routes(app) -> None:
                             (company_id, str(enquiry_id)))
                         hold_label = 'AVAILABLE — HELD AGAIN' if reopened else 'HOLDING SPACE'
                         recovery_html = f'<p><strong style="color:#267326">{hold_label}</strong></p>'
-                element_cards.append(f'<h3>{esc(erow["element_name"] or "Element")}</h3>{recovery_html}<p><strong>Element Type:</strong> {esc(erow["element_type"] or "—")}<br><strong>Guest surname:</strong> {esc(erow["lead_name"] or "—")}<br><strong>Arrival:</strong> {_fmt_day(erow["arrival_date"])}<br><strong>Departure:</strong> {_fmt_day(erow["departure_date"])}<br><strong>People:</strong> {people_text}<br><strong>Add-ons:</strong> {addons_text}<br><strong>Element total:</strong> €{subtotal:.2f}</p>')
+                element_cards.append(f'<h3>{esc(erow["element_name"] or "Element")}</h3>{recovery_html}<p><strong>Element Type:</strong> {esc(erow["element_type"] or "—")}<br><strong>Guest surname:</strong> {esc(erow["lead_name"] or "—")}<br><strong>Arrival:</strong> {_fmt_day(erow["arrival_date"])}<br><strong>Departure:</strong> {_fmt_day(displayed_end_date(erow["departure_date"],erow["pricing_method"]))}<br><strong>Duration:</strong> {_progress_label(erow["arrival_date"],erow["departure_date"],erow["pricing_method"])}<br><strong>People:</strong> {people_text}<br><strong>Add-ons:</strong> {addons_text}<br><strong>Element total:</strong> €{subtotal:.2f}</p>')
             request_html=f'<div class="card"><h2>Requested stay</h2>{"".join(element_cards)}<p><strong>Provisional total: €{grand_total:.2f}</strong></p><p><a class="button" href="{enquiry_path(database,working_company(context),enquiry_id)}/edit">Edit / Recalculate Enquiry</a></p></div>'
         elif request_row is None:
             request_html = f'<div class="card"><h2>Requested stay</h2><p>No Element Type or Element has been attached yet.</p><p><a class="button" href="{enquiry_path(database,working_company(context),enquiry_id)}/edit">Edit Enquiry</a></p></div>'
@@ -237,14 +254,18 @@ def register_enquiry_routes(app) -> None:
                 line_rows = ''.join(f'<tr><td>{esc(line.get("item", ""))}</td><td>{esc(line.get("rule", ""))}</td><td>€{float(line.get("amount", 0)):.2f}</td></tr>' for line in snapshot['lines'])
                 breakdown = f'<h3>Provisional price breakdown</h3><table><thead><tr><th>Item</th><th>Rule used</th><th>Amount</th></tr></thead><tbody>{line_rows}</tbody></table>'
             request_html = f'''<div class="card"><h2>Requested stay</h2><p><strong>Element Type:</strong> {esc(request_row['element_type'] or '—')}<br><strong>Specific Element:</strong> {esc(request_row['element_name'] or 'Not selected')}<br><strong>People:</strong> {people_text}<br><strong>Add-ons:</strong> {addons_text}<br><strong>Provisional total:</strong> {total_text}</p>{breakdown}<p><a class="button" href="{enquiry_path(database,working_company(context),enquiry_id)}/edit">Edit / Recalculate Enquiry</a></p></div>'''
-        conversion = enquiry_conversion_panel(database, context, enquiry_id)
+        shown_end = max((displayed_end_date(r['departure_date'],r['pricing_method']) for r in element_rows if r['departure_date']),default=str(enquiry['departure_date'] or ''))
+        if not element_rows and request_row is not None:
+            shown_end = displayed_end_date(enquiry['departure_date'],request_row['pricing_method'])
+        conversion = enquiry_conversion_panel(database, context, enquiry_id, compact=True)
         # Enquiry detail is also opened from the calendar conflict inspector.
         # Expose the existing edit and release controls without forcing a
         # detour through the enquiry search results.
         edit_actions = f'<a class="button" href="{enquiry_path(database,working_company(context),enquiry_id)}/edit">Edit / Recalculate Enquiry</a>'
+        release_action = ''
         if str(enquiry['status']) not in ('closed', 'converted'):
-            edit_actions += f''' <form method="post" action="{enquiry_path(database,working_company(context),enquiry_id)}/release" style="display:inline" onsubmit="return confirm('Release this enquiry and free its reserved space? The record and history will be retained.')"><input type="hidden" name="csrf" value="{esc(context['csrf_token'])}"><button type="submit" class="secondary">Release Enquiry</button></form>'''
-        body = f'''<h1>Enquiry #{int(enquiry['id'])}</h1><p><a href="/availability/calendar-v2">← Return to Master Calendar</a> &nbsp; <a href="/operations/enquiries">Enquiry Search</a></p><div class="card"><strong>Enquiry actions:</strong> {edit_actions}</div>{notice}<div class="grid"><div class="card"><h2>Customer</h2><p><strong>{customer_link}</strong></p><p>Email: {esc(enquiry['email'] or '—')}<br>Telephone: {esc(enquiry['phone'] or '—')}</p></div><div class="card"><h2>Enquiry</h2><p><strong>Status:</strong> {esc(_status_label(enquiry['status']))}<br><strong>Arrival:</strong> {_fmt_day(enquiry['arrival_date'])}<br><strong>Departure:</strong> {_fmt_day(enquiry['departure_date'])}<br><strong>Party size:</strong> {esc(enquiry['party_size'] if enquiry['party_size'] is not None else '—')}<br><strong>Source:</strong> {esc(enquiry['source'] or '—')}</p></div></div><div class="card"><h2>Notes</h2><p>{esc(enquiry['notes'] or '—')}</p></div>{request_html}{conversion}{_edit_history(database,company_id,enquiry_id)}'''
+            release_action = f''' <form method="post" action="{enquiry_path(database,working_company(context),enquiry_id)}/release" style="display:inline" onsubmit="return confirm('Release this enquiry and free its reserved space? The record and history will be retained.')"><input type="hidden" name="csrf" value="{esc(context['csrf_token'])}"><button type="submit" class="secondary">Release Enquiry</button></form>'''
+        body = f'''<h1>Enquiry #{int(enquiry['id'])}</h1><p><a href="/availability/calendar-v2">← Return to Master Calendar</a> &nbsp; <a href="/operations/enquiries">Enquiry Search</a></p><div class="card enquiry-actions" style="display:flex;align-items:center;gap:12px;flex-wrap:wrap"><strong>Enquiry actions:</strong><div class="enquiry-primary-actions" style="display:flex;align-items:center;gap:10px;flex-wrap:wrap">{edit_actions}{conversion}</div><div class="enquiry-release-action" style="margin-left:auto">{release_action}</div></div>{notice}<div class="grid"><div class="card"><h2>Customer</h2><p><strong>{customer_link}</strong></p><p>Email: {esc(enquiry['email'] or '—')}<br>Telephone: {esc(enquiry['phone'] or '—')}</p></div><div class="card"><h2>Enquiry</h2><p><strong>Status:</strong> {esc(_status_label(enquiry['status']))}<br><strong>Arrival:</strong> {_fmt_day(enquiry['arrival_date'])}<br><strong>Departure:</strong> {_fmt_day(shown_end)}<br><strong>Party size:</strong> {esc(enquiry['party_size'] if enquiry['party_size'] is not None else '—')}<br><strong>Source:</strong> {esc(enquiry['source'] or '—')}</p></div></div><div class="card"><h2>Notes</h2><p>{esc(enquiry['notes'] or '—')}</p></div>{request_html}{_edit_history(database,company_id,enquiry_id)}'''
         return layout(f'Enquiry #{int(enquiry["id"])}', body, context)
 
     @app.post('/operations/enquiries/{enquiry_id}/release')

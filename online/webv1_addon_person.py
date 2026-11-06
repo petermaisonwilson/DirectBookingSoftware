@@ -79,16 +79,10 @@ def addon_person_rates(database, company_id: int, addon_id: int, year: int) -> d
 
 
 def addon_person_payload(database, company_id: int, addons, years) -> tuple[dict[str, str], dict[str, dict[str, dict[str, float]]]]:
-    modes: dict[str, str] = {}
-    rates: dict[str, dict[str, dict[str, float]]] = {}
-    for addon in addons:
-        aid = int(addon['id'])
-        akey = str(aid)
-        modes[akey] = addon_person_mode(database, company_id, aid)
-        rates[akey] = {}
-        for year_row in years:
-            year = int(year_row['year'])
-            rates[akey][str(year)] = {
-                str(pid): rate for pid, rate in addon_person_rates(database, company_id, aid, year).items()
-            }
+    mode_rows = {int(r['addon_id']):str(r['pricing_mode']) for r in rows(database,'SELECT addon_id,pricing_mode FROM setup_addon_person_pricing WHERE company_id=:tenant',(company_id,))}
+    rate_rows = {}
+    for row in rows(database,'SELECT addon_id,year,person_type_id,rate FROM setup_addon_person_rates WHERE company_id=:tenant',(company_id,)):
+        rate_rows.setdefault((int(row['addon_id']),int(row['year'])),{})[str(row['person_type_id'])] = float(row['rate'])
+    modes = {str(a['id']):mode_rows.get(int(a['id']),'single') for a in addons}
+    rates = {str(a['id']):{str(y['year']):dict(rate_rows.get((int(a['id']),int(y['year'])),{})) for y in years} for a in addons}
     return modes, rates

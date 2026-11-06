@@ -75,7 +75,7 @@ def _enquiry_conflict(connection, company_id: int, element_id: int, start: str, 
 
 
 def availability_setup_state(database, company_id: int, element_id: int, arrival: str, departure: str,
-                             *, missing_items_cache=None, operating_window_cache=None, element_active_cache=None):
+                             *, missing_items_cache=None, operating_window_cache=None, element_active_cache=None, season_rate_cache=None):
     """The unchanged Setup/season gate, shared by validation and calendar reads."""
     try:
         start, end = date.fromisoformat(arrival), date.fromisoformat(departure)
@@ -114,7 +114,7 @@ def availability_setup_state(database, company_id: int, element_id: int, arrival
     # off sale until pricing is completed.
     setup_ready, setup_reason = element_available_setup_ready(
         database, company_id, element_id, start, end,
-        missing_items_cache=missing_items_cache,
+        missing_items_cache=missing_items_cache, season_rate_cache=season_rate_cache,
     )
     if not setup_ready:
         return {'available': False, 'state': 'SETUP_INCOMPLETE', 'reason': setup_reason}

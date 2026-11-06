@@ -70,10 +70,15 @@ def form_values(database, master, item):
     return values
 
 
+def return_to_summary(master):
+    label = 'Return to Booking' if master['booking_id'] else 'Return to Enquiry'
+    return f'<a class="button return-reservation-summary" href="/operations/reservations/{int(master["id"])}">{label}</a>'
+
+
 def page(database, context, master, items, *, selected=None, adding=False, values=None, result=None, message=''):
     base = f'/operations/reservations/{master["id"]}'
     stamp = version(master, items)
-    body = f'<p><a class="button secondary" href="{calendar_url(master,allocation_id=selected["id"] if selected else 0,adding=adding)}">Back to Master Calendar</a></p>'
+    body = f'<p>{return_to_summary(master)} <a class="button secondary" href="{calendar_url(master,allocation_id=selected["id"] if selected else 0,adding=adding)}">Back to Master Calendar</a></p>'
     if message: body += f'<div class="error">{esc(message)}</div>'
     if selected is None and not adding:
         return layout('Edit Reservation Elements',body+calendar_panel(context,master,items),context)
@@ -137,6 +142,9 @@ def save(database, context, master, values):
             else:
                 execute_sql(c,'UPDATE enquiries SET notes=:notes,source=:source WHERE company_id=:tenant AND id=:id',(notes,values.get('source',''),cid,eid))
         before = dict(old) if old else {}
+        if old:
+            try: before['pricing_method'] = json.loads(old.get('pricing_snapshot_json') or '{}').get('pricing_method') or old['pricing_method']
+            except (TypeError,ValueError): before['pricing_method'] = old['pricing_method']
         before['provisional_total'] = old['total_amount'] if old else 0
         if old:
             prefix = 'booking' if bid else 'enquiry_element'
@@ -263,9 +271,8 @@ def calendar_panel(context, master, items, selected=None, adding=False):
         f'Choose a replacement range for {esc(selected["element_name"])}. Its current space remains reserved until you save.' if selected else
         'Click one of this reservation’s highlighted allocations to change it, or choose Add New Element.')
     return (f'<section class="card reservation-calendar-context" data-reservation="{master["id"]}">'
-        f'<h2>Edit Reservation Elements — {esc(master["reference"])}</h2><p>{instruction}</p>'+''.join(cards)+
+        f'<h2>Edit Reservation Elements — {esc(master["reference"])}</h2><p>{return_to_summary(master)}</p><p>{instruction}</p>'+''.join(cards)+
         f'<p><a class="button" href="{calendar_url(master,adding=True)}">Add New Element</a> '
-        f'<a class="button secondary" href="{base}">Return to reservation / confirm</a> '
         f'<a class="button secondary" href="{calendar_url(master)}">Cancel selection</a></p></section>')
 
 

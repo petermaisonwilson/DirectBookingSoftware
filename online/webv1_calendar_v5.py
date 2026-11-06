@@ -268,6 +268,7 @@ def register_calendar_v5_routes(app) -> None:
         availability_seconds = 0.0
         availability_calls = 0
         setup_missing_cache = {}
+        season_rate_cache = {}
         operating_window_cache = {}
         element_active_cache = {}
         for element in elements:
@@ -317,12 +318,21 @@ def register_calendar_v5_routes(app) -> None:
             # authoritative inventory queries above. Avoid repeating expensive
             # pricing/setup and conflict lookups for these cells. Reservation
             # selection still uses availability_state unchanged.
-            fast_staff_view = staff and not (basket or arrival or departure or edit_hold or recovery_enquiry or selected_allocation)
+            fast_staff_view = staff and (reservation is not None or not (basket or arrival or departure or edit_hold or recovery_enquiry))
             occupied_days = {}
             if fast_staff_view:
                 for kind, inventory in (('BOOKED', bookings), ('ENQUIRY', enquiries), ('CLOSED', closures), ('HELD', holds)):
                     for record in inventory:
-                        if kind == 'BOOKED' and (str(record['status']) == 'cancelled' or (record['blocks_availability'] is not None and not int(record['blocks_availability']))):
+                        if selected_allocation and kind in ('BOOKED','ENQUIRY') and record.get('reservation_id') == edit_reservation:
+                            source = 'booking_element_id' if kind == 'BOOKED' else 'enquiry_element_id'
+                            selected_source = selected_allocation.get(source)
+                            exact_source = selected_source is not None and record.get(source) == selected_source
+                            exact_canonical = record.get('allocation_id') == edit_allocation
+                            legacy_single = (kind == 'ENQUIRY' and selected_source is None and record.get(source) is None
+                                and selected_allocation['element_id'] == eid and record['arrival_date'] == selected_allocation['arrival_date'] and record['departure_date'] == selected_allocation['departure_date'])
+                            if exact_source or exact_canonical or legacy_single:
+                                continue
+                        if kind == 'BOOKED'  and (str(record['status']) == 'cancelled' or (record['blocks_availability'] is not None and not int(record['blocks_availability']))):
                             continue
                         first = _parse(str(record['start_date'] if kind == 'CLOSED' else record['arrival_date']))
                         last = _parse(str(record['end_date'] if kind == 'CLOSED' else record['departure_date']))
@@ -347,14 +357,14 @@ def register_calendar_v5_routes(app) -> None:
                         # Selection and every write retain the full validator.
                         state = availability_setup_state(database, cid, eid, day.isoformat(), next_day.isoformat(),
                             missing_items_cache=setup_missing_cache, operating_window_cache=operating_window_cache,
-                            element_active_cache=element_active_cache)
+                            element_active_cache=element_active_cache,season_rate_cache=season_rate_cache)
                         if state is None:
                             state = {'available': True, 'state': 'AVAILABLE', 'reason': ''}
                     else:
                         state = availability_state(database, cid, eid, day.isoformat(), next_day.isoformat(), session_token=token, missing_items_cache=setup_missing_cache, operating_window_cache=operating_window_cache, element_active_cache=element_active_cache)
                     availability_seconds += perf_counter() - availability_started
                     availability_calls += 1
-                if selected_allocation:
+                if selected_allocation and not fast_staff_view:
                     # Exclude only the selected allocation's original occupancy.
                     # Every sibling allocation still blocks its own dates.
                     state = availability_state(database,cid,eid,day.isoformat(),next_day.isoformat(),session_token=token,

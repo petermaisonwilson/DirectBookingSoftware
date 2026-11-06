@@ -352,6 +352,83 @@ class OperationalJourneyTests(unittest.TestCase):
         self.assertEqual(self.scalar('SELECT departure_date FROM reservation_elements WHERE id=:id',(aid,)),'2038-06-18')
         self.assertEqual(self.scalar('SELECT total_amount FROM reservations WHERE id=:id',(rid,)),400)
 
+    def test_return_summary_actions_and_mixed_day_night_dates_and_history(self):
+        enquiry = self.enquiry()
+        rid = self.scalar('SELECT id FROM reservations WHERE company_id=:tenant AND enquiry_id=:id',(self.cid,enquiry))
+        first = self.scalar('SELECT id FROM reservation_elements WHERE reservation_id=:id',(rid,))
+        url = f'/operations/reservations/{rid}/edit'
+        pitch = self.editor_payload(rid,first)
+        pitch.update(arrival_date='2038-01-14',departure_date='2038-01-18')
+        self.assertEqual(self.clients[0].post(url,data=pitch,follow_redirects=False).status_code,303)
+        peg = self.new_element('Peg B')
+        with self.db.connect() as c:
+            execute_sql(c,"UPDATE setup_elements SET element_type='Camping',pricing_method='Per day' WHERE company_id=:tenant AND id=:id",(self.cid,peg))
+            execute_sql(c,'UPDATE setup_element_rates SET rate=10 WHERE company_id=:tenant AND element_id=:id',(self.cid,peg))
+        payload = self.editor_payload(rid,element=peg,arrival='2038-01-14',departure='2038-01-21')
+        self.assertEqual(self.clients[0].post(url,data=payload,follow_redirects=False).status_code,303)
+        aid = self.scalar('SELECT id FROM reservation_elements WHERE reservation_id=:id AND element_id=:element',(rid,peg))
+        payload = self.editor_payload(rid,aid,element=peg)
+        payload.update(arrival_date='2038-01-14',display_departure_date='2038-01-17')
+        self.assertEqual(self.clients[0].post(url,data=payload,follow_redirects=False).status_code,303)
+        for path in (f'/availability/calendar-v2?edit_reservation={rid}',url+f'?details=1&allocation_id={aid}'):
+            page=self.clients[0].get(path)
+            self.assertEqual(page.status_code,200,page.text)
+            self.assertIn(f'href="/operations/reservations/{rid}">Return to Enquiry</a>',page.text)
+        summary=self.clients[0].get(f'/operations/reservations/{rid}')
+        self.assertEqual(summary.status_code,200,summary.text)
+        fish = summary.text.split('<h3>Peg B</h3>',1)[1].split('Element total:',1)[0]
+        self.assertIn('Departure:</strong> 17/01/2038',fish)
+        self.assertNotIn('Departure:</strong> 18/01/2038',fish)
+        self.assertIn('4 days',fish)
+        camp = summary.text.split('<h3>Pitch A</h3>',1)[1].split('Element total:',1)[0]
+        self.assertIn('Departure:</strong> 18/01/2038',camp)
+        self.assertIn('4 nights',camp)
+        self.assertIn('End date changed from 20/01/2038 to 17/01/2038',summary.text)
+        self.assertIn('Element: Peg B',summary.text)
+        self.assertEqual(summary.text.count('>CONFIRM BOOKING</button>'),1)
+        self.assertLess(summary.text.index('>CONFIRM BOOKING</button>'),summary.text.index('<h2>Customer</h2>'))
+        self.assertLess(summary.text.index('enquiry-primary-actions'),summary.text.index('enquiry-release-action'))
+        self.assertIn('class="enquiry-release-action" style="margin-left:auto"',summary.text)
+        # Read older history without changing immutable records or requiring a
+        # conversion: the original Element method supplies the display rule.
+        from online.setup015_core import audit
+        audit(self.db,self.contexts[0],self.cid,'ENQUIRY_UPDATED','enquiry',enquiry,
+            before={'element_id':peg,'departure_date':'2038-01-21'},
+            after={'element_id':peg,'departure_date':'2038-01-18'})
+        self.assertIn('End date changed from 20/01/2038 to 17/01/2038',self.clients[0].get(f'/operations/reservations/{rid}').text)
+        confirmation=self.clients[0].post(f'/operations/reservations/{rid}/convert',data={'csrf':self.csrf()})
+        self.assertEqual(confirmation.status_code,200,confirmation.text)
+        fish=confirmation.text.split('<h3>Peg B</h3>',1)[1].split('</div>',1)[0]
+        self.assertIn('14/01/2038 to 17/01/2038',fish)
+        self.assertEqual(self.scalar('SELECT COUNT(*) FROM bookings WHERE enquiry_id=:id',(enquiry,)),0)
+        converted=self.clients[0].post(f'/operations/reservations/{rid}/confirm-payment',data=dict(self.payment_payload(),amount='440'),follow_redirects=False)
+        self.assertEqual(converted.status_code,303,converted.text)
+        bid=self.scalar('SELECT booking_id FROM reservations WHERE id=:id',(rid,))
+        booked=self.clients[0].get(f'/operations/reservations/{rid}')
+        self.assertIn('Departure:</strong> 17/01/2038',booked.text)
+        self.assertIn('Return to Booking',self.clients[0].get(f'/availability/calendar-v2?edit_reservation={rid}').text)
+        self.assertIn(f'href="/operations/reservations/{rid}">Return to Booking</a>',self.clients[0].get(url+f'?details=1&allocation_id={aid}').text)
+        pitch=self.editor_payload(rid,first)
+        pitch.update(arrival_date='2038-01-14',departure_date='2038-01-20')
+        self.assertEqual(self.clients[0].post(url,data=pitch,follow_redirects=False).status_code,303)
+        booked=self.clients[0].get(f'/operations/reservations/{rid}')
+        camp=booked.text.split('<h3>Pitch A</h3>',1)[1].split('</div>',1)[0]
+        fish=booked.text.split('<h3>Peg B</h3>',1)[1].split('</div>',1)[0]
+        self.assertIn('Duration:</strong> 6 nights',camp)
+        self.assertIn('Duration:</strong> 4 days',fish)
+        self.assertNotIn('8 night(s)',booked.text)
+        self.assertEqual(self.scalar('SELECT departure_date FROM bookings WHERE id=:id',(bid,)),'2038-01-20')
+        self.assertEqual(self.scalar('SELECT total_amount FROM bookings WHERE id=:id',(bid,)),640)
+        from online.webv1_booking_finance import booking_financials
+        self.assertEqual(booking_financials(self.db,self.cid,bid)['outstanding'],200)
+        payload=self.editor_payload(rid,aid,element=peg)
+        payload.update(arrival_date='2038-01-14',display_departure_date='2038-01-18')
+        self.assertEqual(self.clients[0].post(url,data=payload,follow_redirects=False).status_code,303)
+        booked=self.clients[0].get(f'/operations/reservations/{rid}')
+        self.assertIn('Changed Element Peg B to 14/01/2038–18/01/2038',booked.text)
+        self.assertEqual(self.scalar('SELECT SUM(amount) FROM booking_payments WHERE booking_id=:id',(bid,)),440)
+        self.assertEqual(self.scalar('SELECT departure_date FROM reservation_elements WHERE id=:id',(aid,)),'2038-01-19')
+
     def race(self, functions):
         barrier = Barrier(len(functions))
         def run(fn):

@@ -104,7 +104,7 @@ def amendment_quote(database, company_id: int, booking_id: int, booking_element_
     new_element_total=round(float(discount['final_amount'])-manual,2)
     new_booking_total=round(other_total+new_element_total,2)
     return {
-        'booking_id':booking_id,'booking_element_id':booking_element_id,'element_id':int(be['element_id']),
+        'pricing_method':str(be['pricing_method_snapshot']),'booking_id':booking_id,'booking_element_id':booking_element_id,'element_id':int(be['element_id']),
         'old_arrival':str(be['arrival_date']),'old_departure':str(be['departure_date']),
         'new_arrival':new_arrival,'new_departure':new_departure,'old_nights':old_nights,'new_nights':new_nights,
         'retained_nights':retained_nights,'added_nights':len(added_dates),'retained_historic_base':retained_historic,

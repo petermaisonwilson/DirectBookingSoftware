@@ -45,6 +45,10 @@ def _setup_payload(database, company_id: int):
     element_json = [{'id': int(e['id']), 'name': str(e['name']), 'type': str(e['element_type'])} for e in elements]
     people_json = [{'id': int(p['id']), 'name': str(p['name']), 'short': str(p['short_name'] or p['name'])[:8]} for p in people]
     addon_json = [{'id': int(a['id']), 'name': str(a['name'])} for a in addons]
+    from .setup015_calculator import _resolved_addon_rule
+    overrides = {(int(r['year']),int(r['element_id']),int(r['addon_id'])):r for r in rows(database,'SELECT * FROM setup_element_addons WHERE company_id=:tenant',(company_id,))}
+    type_rules = {(int(r['year']),str(r['element_type']),int(r['addon_id'])):r for r in rows(database,'SELECT * FROM setup_type_addons WHERE company_id=:tenant',(company_id,))}
+    person_prices = {(int(r['year']),int(r['element_id']),int(r['person_type_id'])):float(r['rate']) for r in rows(database,'SELECT year,element_id,person_type_id,rate FROM setup_person_prices WHERE company_id=:tenant',(company_id,))}
     rule_map: dict[str, dict[str, dict[str, object]]] = {}
     person_rate_map: dict[str, dict[str, dict[str, float]]] = {}
     for yr_row in years:
@@ -52,11 +56,11 @@ def _setup_payload(database, company_id: int):
         for element in elements:
             ekey = str(int(element['id'])); rule_map[ykey][ekey] = {}; person_rate_map[ykey][ekey] = {}
             for addon in addons:
-                rule = _addon_rule(database, company_id, year, element, int(addon['id']))
+                rule = _resolved_addon_rule(overrides.get((year,int(element['id']),int(addon['id']))),type_rules.get((year,str(element['element_type']),int(addon['id']))))
                 rule_map[ykey][ekey][str(int(addon['id']))] = {'allowed': bool(rule['allowed']), 'source': str(rule['source']), 'min': rule['min'], 'max': rule['max'], 'rate': rule['rate']}
             for person in people:
-                price = one(database, 'SELECT rate FROM setup_person_prices WHERE company_id=:q127_0 AND year=:q127_1 AND element_id=:q127_2 AND person_type_id=:q127_3', (company_id, year, element['id'], person['id']))
-                if price is not None: person_rate_map[ykey][ekey][str(int(person['id']))] = float(price['rate'])
+                price = person_prices.get((year,int(element['id']),int(person['id'])))
+                if price is not None: person_rate_map[ykey][ekey][str(int(person['id']))] = price
     addon_modes, addon_person_rate_map = addon_person_payload(database, company_id, addons, years)
     return types, elements, people, addons, element_json, people_json, addon_json, rule_map, person_rate_map, when_payload(database, company_id, addons), addon_modes, addon_person_rate_map
 
@@ -240,15 +244,13 @@ def _calculate(database, company_id: int, values: dict[str, str]):
     if discount['discount_amount']>0:
         rule=discount['rule'] or {}
         lines.append({'item':'Duration discount','rule':f"{rule.get('name','Discount')} — {int(rule.get('min_nights',nights))}+ nights",'amount':-float(discount['discount_amount'])})
-    return {'element_id':element_id,'element_type':selected_type,'element_name':str(element['name']),'year':year,'nights':nights,'people_total':people_total,'people_counts':people_counts,'addon_counts':addon_counts,'addon_days':addon_days,'addon_people':addon_people,'addon_person_days':addon_person_days,'addon_when':addon_when,'selected_addons':selected_ids,'lines':lines,'base_amount':discount['base_amount'],'discount_amount':discount['discount_amount'],'discount_rule':discount['rule'],'total':discount['final_amount']},set(),''
+    return {'pricing_method':str(element['pricing_method']),'element_id':element_id,'element_type':selected_type,'element_name':str(element['name']),'year':year,'nights':nights,'people_total':people_total,'people_counts':people_counts,'addon_counts':addon_counts,'addon_days':addon_days,'addon_people':addon_people,'addon_person_days':addon_person_days,'addon_when':addon_when,'selected_addons':selected_ids,'lines':lines,'base_amount':discount['base_amount'],'discount_amount':discount['discount_amount'],'discount_rule':discount['rule'],'total':discount['final_amount']},set(),''
 
 
 def displayed_end_date(value, pricing_method):
     """Show the final service day for day-priced Elements; retain checkout for nights."""
-    if str(pricing_method or '').strip().lower() not in {'per day'}:
-        return str(value or '')
-    try: return (date.fromisoformat(str(value))-timedelta(days=1)).isoformat()
-    except (TypeError,ValueError): return str(value or '')
+    from .webv1_duration_display import visible_end_date
+    return visible_end_date(value,pricing_method)
 
 
 def _form_page(database, context, customer, values: dict[str,str], *, enquiry_id: int|None=None, errors=None, message='', result=None, editor_path='', editor_back='', editor_title='', display_service_end=False):
@@ -365,7 +367,7 @@ def _basic_values(data: dict[str,str]) -> dict[str,str]: return {k:data.get(k,''
 def _save(database, context, company_id:int, customer_id:int, values:dict[str,str], calculation, enquiry_id:int|None=None, *, locked_connection=None)->int:
     now=iso_now(); selected_type=values.get('element_type','').strip(); element_id=_int_or_zero(values.get('element_id')) or None
     if calculation:
-        party_size=int(calculation['people_total']); provisional_total=float(calculation['total']); snapshot_json=json.dumps({'element_type':calculation['element_type'],'element_id':calculation['element_id'],'element_name':calculation['element_name'],'year':calculation['year'],'nights':calculation['nights'],'people_total':calculation['people_total'],'addon_when':calculation['addon_when'],'addon_days':calculation['addon_days'],'addon_people':calculation['addon_people'],'addon_person_days':calculation['addon_person_days'],'selected_addons':calculation['selected_addons'],'lines':calculation['lines'],'base_amount':calculation.get('base_amount',calculation['total']),'discount_amount':calculation.get('discount_amount',0),'discount_rule':calculation.get('discount_rule'),'total':calculation['total']},separators=(',',':'))
+        party_size=int(calculation['people_total']); provisional_total=float(calculation['total']); snapshot_json=json.dumps({'pricing_method':calculation.get('pricing_method',''),'element_type':calculation['element_type'],'element_id':calculation['element_id'],'element_name':calculation['element_name'],'year':calculation['year'],'nights':calculation['nights'],'people_total':calculation['people_total'],'addon_when':calculation['addon_when'],'addon_days':calculation['addon_days'],'addon_people':calculation['addon_people'],'addon_person_days':calculation['addon_person_days'],'selected_addons':calculation['selected_addons'],'lines':calculation['lines'],'base_amount':calculation.get('base_amount',calculation['total']),'discount_amount':calculation.get('discount_amount',0),'discount_rule':calculation.get('discount_rule'),'total':calculation['total']},separators=(',',':'))
     else: party_size=_int_or_zero(values.get('party_size')) or None; provisional_total=None; snapshot_json='{}'
     created=enquiry_id is None
     with (nullcontext(locked_connection) if locked_connection is not None else database.connect()) as c:

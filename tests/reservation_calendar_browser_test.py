@@ -74,6 +74,17 @@ def main():
             page.wait_for_url(re.compile(f'edit_reservation={rid}'))
             assert fixture.scalar('SELECT COUNT(*) FROM enquiry_elements WHERE enquiry_id=:id',(enquiry,)) == 2
             assert fixture.scalar('SELECT element_id FROM reservation_elements WHERE id=:id',(aid,)) == fixture.element
+            page.get_by_role('link',name='Return to Enquiry',exact=True).click()
+            page.wait_for_url(re.compile(f'/operations/reservations/{rid}$'))
+            actions=page.locator('.enquiry-actions')
+            confirm=actions.get_by_role('button',name='CONFIRM BOOKING',exact=True)
+            release=actions.get_by_role('button',name='Release Enquiry',exact=True)
+            assert confirm.bounding_box()['x'] < release.bounding_box()['x']
+            assert actions.bounding_box()['y'] < page.get_by_role('heading',name='Customer',exact=True).bounding_box()['y']
+            confirm.click()
+            assert page.get_by_role('heading',name='Confirm Booking',exact=True).count() == 1
+            assert fixture.scalar('SELECT COUNT(*) FROM bookings WHERE enquiry_id=:id',(enquiry,)) == 0
+            page.goto(base+f'/availability/calendar-v2?edit_reservation={rid}')
             # Selecting endpoints around an occupied day must never offer a save.
             page.get_by_role('link',name='Add New Element',exact=True).first.click()
             dialogs = []
@@ -103,6 +114,10 @@ def main():
             assert fixture.scalar('SELECT departure_date FROM reservation_elements WHERE id=:id',(aid,)) == '2038-06-17'
             page.goto(base+f'/operations/reservations/{rid}/edit?details=1&allocation_id={aid}')
             assert page.locator('[name="display_departure_date"]').input_value() == '2038-06-16'
+            page.get_by_role('link',name='Return to Enquiry',exact=True).click()
+            summary=page.locator('main').inner_text()
+            assert re.search(r'End date changed from \d{2}/\d{2}/2038 to 16/06/2038',summary)
+            assert 'Departure: 16/06/2038' in summary
             assert not errors, errors
             print('Chrome calendar reservation edit, add, occupied dates and range-gap safeguards passed.')
             browser.close()

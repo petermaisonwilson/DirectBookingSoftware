@@ -194,25 +194,6 @@ const root=document.getElementById('integrated-enquiry-form');if(!root)return;ne
 })();</script>'''
 
 
-def _booking_duration_html(database, company_id: int, request_path: str, *, booking_id=None) -> str:
-    try:
-        booking_id = int(booking_id) if booking_id is not None else int(request_path.rstrip('/').split('/')[-1])
-    except ValueError:
-        return ''
-    with database.connect() as c:
-        row = execute_sql(c,
-            'SELECT arrival_date,departure_date FROM bookings WHERE company_id=:q5_0 AND id=:q5_1',
-            (company_id, booking_id),
-        ).fetchone()
-    if not row or not row['arrival_date'] or not row['departure_date']:
-        return ''
-    try:
-        nights = (date.fromisoformat(str(row['departure_date'])) - date.fromisoformat(str(row['arrival_date']))).days
-    except ValueError:
-        return ''
-    return f'<p><strong>Duration:</strong> {nights} night(s)</p>'
-
-
 def _move_season_maintenance(text: str) -> str:
     marker = '<div class="card"><h2>Season maintenance</h2>'
     start = text.find(marker)
@@ -330,11 +311,6 @@ def register_pricing_usability_routes(app) -> None:
 
             if 'integrated-enquiry-form' in text and 'addon-auto-one' not in text:
                 text = text.replace('</body>', _addon_auto_one_script() + '</body>', 1)
-
-            if (request.url.path.startswith('/operations/bookings/') or getattr(request.state, 'reservation_booking_id', None) is not None) and request.method == 'GET':
-                duration = _booking_duration_html(database, cid, request.url.path, booking_id=getattr(request.state, 'reservation_booking_id', None))
-                if duration and '<div class="card"><h2>Frozen Booking</h2>' in text:
-                    text = text.replace('<div class="card"><h2>Frozen Booking</h2>', '<div class="card"><h2>Frozen Booking</h2>' + duration, 1)
 
         headers = {k: v for k, v in response.headers.items() if k.lower() not in {'content-length', 'content-type'}}
         return Response(content=text, status_code=response.status_code, headers=headers, media_type='text/html')

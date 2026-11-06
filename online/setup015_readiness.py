@@ -13,6 +13,10 @@ def _season_for_date(connection, company_id: int, year: int, day: date):
         'SELECT * FROM setup_seasons\n           WHERE company_id=:q629_0 AND year=:q629_1 AND start_date<=:q629_2 AND end_date>=:q629_3',
         (company_id, year, day.isoformat(), day.isoformat()),
     ).fetchall()
+    return _best_season(rows)
+
+
+def _best_season(rows):
     if not rows:
         return None
     return min(
@@ -177,6 +181,7 @@ def element_available_setup_ready(
     departure: date,
     *,
     missing_items_cache: dict | None = None,
+    season_rate_cache: dict | None = None,
 ) -> tuple[bool, str]:
     """Return whether an Element is safe to offer for these dates.
 
@@ -203,6 +208,26 @@ def element_available_setup_ready(
     ]
     if year_wide:
         return False, f"Setup incomplete for this Element in {year}."
+
+    if season_rate_cache is not None:
+        seasons_key = ('seasons',company_id,year)
+        rates_key = ('rates',company_id,year,element_id)
+        if seasons_key not in season_rate_cache or rates_key not in season_rate_cache:
+            with database.connect() as c:
+                if seasons_key not in season_rate_cache:
+                    season_rate_cache[seasons_key] = execute_sql(c,'SELECT * FROM setup_seasons WHERE company_id=:tenant AND year=:year',(company_id,year)).fetchall()
+                if rates_key not in season_rate_cache:
+                    season_rate_cache[rates_key] = {int(r['season_id']):r['rate'] for r in execute_sql(c,'SELECT season_id,rate FROM setup_element_rates WHERE company_id=:tenant AND year=:year AND element_id=:element',(company_id,year,element_id)).fetchall()}
+        seasons = season_rate_cache[seasons_key]
+        rates = season_rate_cache[rates_key]
+        day = arrival
+        while day < departure:
+            iso = day.isoformat()
+            season = _best_season([r for r in seasons if str(r['start_date']) <= iso <= str(r['end_date'])])
+            if season is None: return False, f'No Season covers {iso}.'
+            if int(season['id']) not in rates: return False, f"Pricing is not complete for {season['name']}."
+            day += timedelta(days=1)
+        return True, ''
 
     with database.connect() as c:
         day = arrival

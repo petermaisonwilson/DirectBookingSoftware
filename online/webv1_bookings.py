@@ -1,6 +1,7 @@
 from __future__ import annotations
 from .webv1_operational_reservations import insert_financial, save_booking, write_confirmation_details, require_staff_company
 from .reservation_money import finite_amount
+from .webv1_duration_display import visible_end_date, _progress_label
 from .webv1_reservation_routes import booking_path, enquiry_path
 from .sql import lock_inventory, execute_sql, insert_sql, local_schema, column_rows
 
@@ -303,7 +304,7 @@ def register_booking_routes(app) -> None:
                     amount=float(line.get("amount",0) or 0)
                     addons.append(esc(item) + (f' ({_money(amount)})' if abs(amount) >= 0.005 else ''))
             lead=str(e['lead_name'] or '').strip() or customer
-            element_cards.append(f'<div class="frozen-element"><h3>{esc(e["element_name"])}</h3><p><strong>Stay:</strong> {_fmt_day(e["arrival_date"])} to {_fmt_day(e["departure_date"])}<br><strong>Lead Passenger:</strong> {esc(lead)}<br><strong>People:</strong> {", ".join(people_bits) or "—"}<br><strong>Add-ons:</strong> {", ".join(addons) or "—"}<br><strong>Element total:</strong> {_money(e["provisional_total"])}</p></div>')
+            element_cards.append(f'<div class="frozen-element"><h3>{esc(e["element_name"])}</h3><p><strong>Stay:</strong> {_fmt_day(e["arrival_date"])} to {_fmt_day(visible_end_date(e["departure_date"],e["pricing_method"]))}<br><strong>Lead Passenger:</strong> {esc(lead)}<br><strong>People:</strong> {", ".join(people_bits) or "—"}<br><strong>Add-ons:</strong> {", ".join(addons) or "—"}<br><strong>Element total:</strong> {_money(e["provisional_total"])}</p></div>')
         element_summary=''.join(element_cards)
         method_block=f'<div><label>Payment Method</label><select name="payment_method_id" required>{options}</select></div>' if methods else '<div class="error">No active Payment Methods. Add one in Setup before taking payment.</div>'
         body=f'''<h1>Confirm Booking</h1><p><a href="{enquiry_path(database,cid,enquiry_id)}">Back to Enquiry</a></p><div class="card"><h2>{esc(customer)}</h2><p><strong>Stay:</strong> {_fmt_day(enquiry['arrival_date'])} to {_fmt_day(enquiry['departure_date'])}<br><strong>Party:</strong> {party}<br><strong>Booking total:</strong> {_money(total)}<br><strong>Payment Required Now:</strong> {_money(required)}<br><strong>Reason:</strong> {esc(reason)}<br><strong>Payment status:</strong> {pending}</p></div><div class="card"><h2>Booking Elements</h2>{element_summary}</div><div class="card"><h2>Take Payment</h2><p>Minimum required now: <strong>{_money(required)}</strong>. You may take any amount from this minimum up to the full booking total.</p><form method="post" action="{enquiry_path(database,cid,enquiry_id)}/confirm-payment"><input type="hidden" name="csrf" value="{esc(context['csrf_token'])}"><div class="grid"><div><label>Amount</label><input name="amount" type="number" step="0.01" min="{required:.2f}" max="{total:.2f}" value="{required:.2f}" required></div><div><label>Payment Date</label><input type="date" name="payment_date" value="{_local_today().isoformat()}" required></div>{method_block}<div><label>Reference</label><input name="reference"></div></div><label>Notes</label><input name="notes"><p><button {'disabled' if not methods else ''}>CONFIRM BOOKING</button></p></form></div><div class="card"><h2>Exception: confirm without payment</h2><p>A reason is compulsory and is written to the audit trail.</p><form method="post" action="{enquiry_path(database,cid,enquiry_id)}/confirm-without-payment"><input type="hidden" name="csrf" value="{esc(context['csrf_token'])}"><label>Reason</label><input name="reason" required><p><button class="warning">CONFIRM WITHOUT PAYMENT</button></p></form></div>'''
@@ -341,6 +342,8 @@ def register_booking_routes(app) -> None:
         if b is None:
             return HTMLResponse(layout('Booking not found', '<div class="error">Booking not found.</div>', context), 404)
         elements = rows(database, 'SELECT be.*,se.name AS element_name,se.element_type FROM booking_elements be JOIN setup_elements se ON se.id=be.element_id AND se.company_id=be.company_id WHERE be.booking_id=:q200_0 AND be.company_id=:q200_1 ORDER BY be.id', (booking_id, cid))
+        shown_booking_arrival = min((str(e['arrival_date']) for e in elements),default=str(b['arrival_date']))
+        shown_booking_end = max((visible_end_date(e['departure_date'],e['pricing_method_snapshot']) for e in elements),default=str(b['departure_date']))
         people = rows(database, 'SELECT bp.*,pt.name FROM booking_people bp JOIN booking_elements be ON be.id=bp.booking_element_id JOIN setup_person_types pt ON pt.id=bp.person_type_id AND pt.company_id=bp.company_id WHERE be.booking_id=:q201_0 AND bp.company_id=:q201_1 ORDER BY pt.name', (booking_id, cid))
         addons = rows(database, 'SELECT ba.*,a.name FROM booking_addons ba JOIN booking_elements be ON be.id=ba.booking_element_id JOIN setup_addons a ON a.id=ba.addon_id AND a.company_id=ba.company_id WHERE be.booking_id=:q202_0 AND ba.company_id=:q202_1 ORDER BY a.name', (booking_id, cid))
         payments = rows(database, 'SELECT * FROM booking_payments WHERE company_id=:q203_0 AND booking_id=:q203_1 ORDER BY payment_date,id', (cid, booking_id))
@@ -382,7 +385,8 @@ def register_booking_routes(app) -> None:
                 f'<div class="frozen-element"><h3>{esc(element["element_name"])}</h3>'
                 f'<p><strong>Type:</strong> {esc(element["element_type"])}<br>'
                 f'<strong>Arrival:</strong> {_fmt_day(element["arrival_date"])}<br>'
-                f'<strong>Departure:</strong> {_fmt_day(element["departure_date"])}<br>'
+                f'<strong>Departure:</strong> {_fmt_day(visible_end_date(element["departure_date"],element["pricing_method_snapshot"]))}<br>'
+                f'<strong>Duration:</strong> {_progress_label(element["arrival_date"],element["departure_date"],element["pricing_method_snapshot"])}<br>'
                 f'<strong>Lead Passenger:</strong> {esc(lead)}<br>'
                 f'<strong>Frozen total:</strong> {_money(frozen_total)}{staff_adjustment}</p>'
                 f'<p><strong>People:</strong> {person_text}</p>'
@@ -399,7 +403,18 @@ def register_booking_routes(app) -> None:
                 return f"Recorded payment {_money(after.get('amount',0))}" + (f" by {after.get('method')}" if after.get('method') else '')
             if action=='BOOKING_AMENDED':
                 old=after.get('old_booking_total'); new=after.get('new_booking_total')
-                text=(f"{after['operation'].title()} Element; " if after.get('operation') else "")+f"Amended booking to {_fmt_day(after.get('new_arrival'))}–{_fmt_day(after.get('new_departure'))}"
+                if after.get('operation'):
+                    try: before = json.loads(h['before_json'] or '{}')
+                    except (TypeError,ValueError): before = {}
+                    name = after.get('element_name') or before.get('element_name') or 'Element'
+                    verb = {'add':'Added','change':'Changed','remove':'Removed'}.get(after['operation'],after['operation'].title())
+                    text = f"{verb} Element {name}"
+                    if after['operation'] != 'remove':
+                        end = visible_end_date(after.get('departure_date'),after.get('pricing_method') or before.get('pricing_method'))
+                        text += f" to {_fmt_day(after.get('arrival_date'))}–{_fmt_day(end)}"
+                else:
+                    method = after.get('pricing_method') or next((e['pricing_method_snapshot'] for e in elements if int(e['element_id']) == int(after.get('element_id') or 0)),'')
+                    text=f"Amended booking to {_fmt_day(after.get('new_arrival'))}–{_fmt_day(visible_end_date(after.get('new_departure'),method))}"
                 if old is not None and new is not None: text+=f"; total {_money(old)} → {_money(new)}"
                 manual=float(after.get('manual_discount_private') or 0)
                 if manual: text+=f"; staff discount {_money(manual)}"
@@ -442,7 +457,7 @@ def register_booking_routes(app) -> None:
                f'<p><button>Record Completed Refund</button></p></form>' if refundable>0 else '<p>No further approved refund remains to record.</p>')+'</div>') if cancellation else ''
         body = f'''<h1>Booking {esc(b['reference'])}</h1><p><a href="/operations/bookings">← Bookings</a> &nbsp; <a href="/availability/calendar-v2?start={esc(b['arrival_date'])}">Return to Master Calendar</a></p>{notice}
         <div class="grid"><div class="card"><h2>Customer</h2><p><strong>{esc((str(b['first_name'] or '')+' '+str(b['last_name'] or '')).strip() or 'Customer')}</strong><br>{esc(b['email'] or '—')}<br>{esc(b['phone'] or '—')}</p></div>
-        <div class="card"><h2>Stay</h2><p><strong>Arrival:</strong> {_fmt_day(b['arrival_date'])}<br><strong>Departure:</strong> {_fmt_day(b['departure_date'])}<br><strong>Total:</strong> {_money(b['total_amount'])}<br><strong>Paid:</strong> {_money(paid)}<br><strong>Outstanding:</strong> {_money(balance)}</p></div></div>
+        <div class="card"><h2>Stay</h2><p><strong>Arrival:</strong> {_fmt_day(shown_booking_arrival)}<br><strong>Departure:</strong> {_fmt_day(shown_booking_end)}<br><strong>Total:</strong> {_money(b['total_amount'])}<br><strong>Paid:</strong> {_money(paid)}<br><strong>Outstanding:</strong> {_money(balance)}</p></div></div>
         <div class="card"><h2>Booking Status</h2><p><strong>{esc(b['workflow_name'] or b['status'])}</strong></p><p class="muted">Status is controlled automatically by DBS from the booking lifecycle and account balance.</p></div>
         {cancellation_panel}
         {refund_panel}
@@ -618,13 +633,19 @@ def _unresolved_recovery_count(database,cid:int,enquiry_id:int)->int:
         return 0
 
 
-def enquiry_conversion_panel(database, context, enquiry_id: int) -> str:
+def enquiry_conversion_panel(database, context, enquiry_id: int, *, compact=False) -> str:
     cid = int(working_company(context))
     existing = one(database, 'SELECT id,reference FROM bookings WHERE company_id=:q193_0 AND enquiry_id=:q193_1 ORDER BY id DESC LIMIT 1', (cid, enquiry_id))
     if existing:
         return f'<div class="card"><h2>Booking</h2><p>This Enquiry has been converted to <a href="{booking_path(database,cid,int(existing["id"]))}"><strong>{esc(existing["reference"])}</strong></a>.</p></div>'
     unresolved=_unresolved_recovery_count(database,cid,enquiry_id)
     if unresolved:
+        if compact:
+            return f'<span class="error"><strong>{unresolved} Element(s) require replacement.</strong> <button disabled title="Confirm Booking: resolve unavailable Elements first">CONFIRM BOOKING</button></span>'
         return f'<div class="card" style="border:2px solid #b42318"><h2>Confirm Booking</h2><p><strong>{unresolved} Element(s) require replacement.</strong> Resolve the red unavailable Element(s) above before this Enquiry can be confirmed.</p><button disabled>CONFIRM BOOKING</button></div>'
+    if compact:
+        return (f'<form class="enquiry-confirm-action" method="post" action="{enquiry_path(database,cid,enquiry_id)}/convert" style="margin:0">'
+            f'<input type="hidden" name="csrf" value="{esc(context["csrf_token"])}">'
+            '<button type="submit" title="Confirm Booking: continue to Take Payment">CONFIRM BOOKING</button></form>')
     booking_html = f'''<div class="card"><h2>Confirm Booking</h2><p>Continue to Take Payment. The Booking is not created until payment is recorded or deliberately confirmed without payment.</p><form method="post" action="{enquiry_path(database,cid,enquiry_id)}/convert"><input type="hidden" name="csrf" value="{esc(context['csrf_token'])}"><p><button>CONFIRM BOOKING</button></p></form></div>'''
     return booking_html

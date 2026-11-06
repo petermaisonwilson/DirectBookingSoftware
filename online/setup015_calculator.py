@@ -26,10 +26,15 @@ def _element_rate_for_date(database, company_id: int, element_id: int, day: date
 
 def _addon_rule(database, company_id: int, year: int, element, addon_id: int):
     override = one(database, 'SELECT * FROM setup_element_addons WHERE company_id=:q420_0 AND year=:q420_1 AND element_id=:q420_2 AND addon_id=:q420_3', (company_id, year, element['id'], addon_id))
+    type_rule = None if override else one(database, 'SELECT * FROM setup_type_addons WHERE company_id=:tenant AND year=:year AND element_type=:type AND addon_id=:addon', (company_id,year,element['element_type'],addon_id))
+    return _resolved_addon_rule(override,type_rule)
+
+
+def _resolved_addon_rule(override, type_rule):
+    """One rule interpretation for live pricing and request-scoped form lookups."""
     if override:
         if override['state'] == 'N': return {'allowed': False, 'source': 'Element override N', 'min': None, 'max': None, 'rate': None}
         return {'allowed': True, 'source': 'Element override Y', 'min': int(override['min_qty']), 'max': int(override['max_qty']), 'rate': float(override['rate'])}
-    type_rule = one(database, 'SELECT * FROM setup_type_addons WHERE company_id=:q421_0 AND year=:q421_1 AND element_type=:q421_2 AND addon_id=:q421_3', (company_id, year, element['element_type'], addon_id))
     if not type_rule or not type_rule['allowed']: return {'allowed': False, 'source': 'Element Type default N', 'min': None, 'max': None, 'rate': None}
     return {'allowed': True, 'source': 'Element Type default Y', 'min': int(type_rule['min_qty']), 'max': int(type_rule['max_qty']), 'rate': float(type_rule['rate'])}
 

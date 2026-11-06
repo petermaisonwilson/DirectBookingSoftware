@@ -25,6 +25,7 @@ SCENARIOS = (
     'web_v1_availability_enquiry_bridge_test.py',
     'web_v1_booking_workflow_test.py',
     'operational_concurrency_test.py',
+    'reservation_edit_performance_test.py',
 )
 
 
