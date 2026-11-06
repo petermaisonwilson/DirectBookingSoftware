@@ -286,6 +286,9 @@ class OperationalJourneyTests(unittest.TestCase):
         # from the external availability query.
         adjacent = self.editor_payload(rid,element=self.element,arrival='2038-06-03',departure='2038-06-05')
         self.assertEqual(self.clients[0].post(base,data=adjacent,follow_redirects=False).status_code,303)
+        from online.webv1_reservation_service import create_enquiry
+        central = self.new_element('Central inventory')
+        create_enquiry(self.db,self.cid,'CENTRAL-INVENTORY',self.customer,[{'element_id':central,'arrival_date':'2038-06-01','departure_date':'2038-06-03','total_amount':200}],iso_now())
         editing = self.clients[0].get(f'/availability/calendar-v2?edit_reservation={rid}&edit_allocation={aid}')
         self.assertEqual(editing.status_code,200,editing.text)
         class Cells(HTMLParser):

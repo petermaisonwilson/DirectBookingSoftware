@@ -124,7 +124,7 @@ def _records_bulk(database, cid: int, element_ids: list[int], start: date, end: 
                 'AND re.arrival_date<:departure AND re.departure_date>:arrival '
                 'ORDER BY re.arrival_date,r.id', (cid, *ids, *bounds)).fetchall()
             for record in canonical:
-                (bookings if record['canonical_state'] == 'CONFIRMED' else enquiries).append(record)
+                (bookings if record['canonical_state'] == 'CONFIRMED' else enquiries).append(dict(record))
     for index, collection in enumerate((bookings, enquiries, closures, holds)):
         for record in collection:
             result[int(record['element_id'])][index].append(record)
