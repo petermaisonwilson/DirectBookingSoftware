@@ -13,7 +13,7 @@ from fastapi.testclient import TestClient
 
 from online.app import COOKIE_NAME
 from online.webv1 import register_web_v1
-from online.webv1_booking_requirements import _relevant_addon_ids_for_type, _relevant_person_ids_for_type
+from online.webv1_booking_requirements import _relevant_addon_ids_for_type, _relevant_person_ids_for_type, _person_default_map
 
 
 def login(client: TestClient) -> None:
@@ -77,6 +77,10 @@ def main() -> None:
                 execute_sql(c, 'INSERT INTO hold_requirement_addons(hold_id,company_id,addon_id,quantity) VALUES (:q301_0,:q301_1,:q301_2,:q301_3)', (hold_id, cid, motorhome, 1))
                 execute_sql(c, 'INSERT INTO hold_requirement_addons(hold_id,company_id,addon_id,quantity) VALUES (:q302_0,:q302_1,:q302_2,:q302_3)', (hold_id, cid, caravan, 0))
 
+        defaults = _person_default_map(db, cid)
+        assert defaults['Edit Test Fishing']['2035'][str(adult)] == 1
+        assert defaults['Edit Test Fishing']['2035'][str(child)] == 0
+        assert _person_default_map(db, cid + 100000) == {}
         assert _relevant_person_ids_for_type(db, cid, 'Edit Test Fishing', 2035) == {adult}
         assert _relevant_addon_ids_for_type(db, cid, 'Edit Test Fishing', 2035) == set()
         assert {adult, child}.issubset(_relevant_person_ids_for_type(db, cid, 'Edit Test Camping', 2035))

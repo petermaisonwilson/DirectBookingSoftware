@@ -23,8 +23,13 @@ def main():
         second = fixture.new_element('Browser additional pitch')
         third = fixture.new_element('Browser blocked pitch')
         unsuitable = fixture.new_element('Browser unsuitable pitch')
+        fishing = fixture.new_element('Browser fishing peg')
         from online.sql import execute_sql
         with fixture.db.connect() as c:
+            execute_sql(c,"INSERT INTO setup_element_types(company_id,name) VALUES (:tenant,'Fishing')",(fixture.cid,))
+            execute_sql(c,"UPDATE setup_elements SET element_type='Fishing',pricing_method='Per day' WHERE company_id=:tenant AND id=:id",(fixture.cid,fishing))
+            execute_sql(c,'UPDATE setup_person_limits SET min_count=1,max_count=1 WHERE company_id=:tenant AND element_id=:id',(fixture.cid,fishing))
+            execute_sql(c,'UPDATE setup_occupancy SET max_total=1 WHERE company_id=:tenant AND element_id=:id',(fixture.cid,fishing))
             execute_sql(c,'UPDATE setup_occupancy SET max_total=0 WHERE company_id=:tenant AND element_id=:id',(fixture.cid,unsuitable))
         closure = fixture.clients[0].post('/setup/elements/availability/save',data={
             'csrf':fixture.csrf(),'element_id':third,'start_date':'2038-06-02',
@@ -60,7 +65,7 @@ def main():
             page.locator('[name="lead_name"]').fill('Calendar Guest')
             page.locator('[name="arrival"]').fill('2038-06-14')
             page.locator('[name="departure"]').fill('2038-06-16')
-            page.locator(f'[name="person_{fixture.person}"]').fill('1')
+            page.locator(f'[name="person_{fixture.person}"]').fill('2')
             page.get_by_role('button',name='SEARCH AVAILABILITY',exact=True).click()
             page.wait_for_url(re.compile('/availability/calendar-v2'))
             assert 'party-unsuitable' in page.locator(f'.element-row[data-element="{unsuitable}"]').get_attribute('class')
@@ -75,6 +80,19 @@ def main():
             assert fixture.scalar('SELECT lead_name FROM element_holds WHERE company_id=:tenant',(fixture.cid,)) == 'Calendar Guest'
             page.get_by_role('link',name='Add New Element',exact=True).first.click()
             assert page.locator('[name="lead_name"]').input_value() == 'Calendar Guest'
+            page.locator('[name="element_type"]').select_option('Fishing')
+            quantity = page.locator(f'[name="person_{fixture.person}"]')
+            assert quantity.input_value() == '1'
+            assert quantity.get_attribute('max') == '1'
+            assert quantity.evaluate('(input)=>input.checkValidity()')
+            assert page.locator('[name="arrival"]').input_value() == '2038-06-14'
+            assert page.locator('[name="departure"]').input_value() == '2038-06-16'
+            page.get_by_role('button',name='SEARCH AVAILABILITY',exact=True).click()
+            page.wait_for_url(re.compile('/availability/calendar-v2'))
+            page.locator(f'.element-row[data-element="{fishing}"] .selection-action').click()
+            page.wait_for_load_state('networkidle')
+            assert fixture.scalar('SELECT p.quantity FROM hold_requirement_people p JOIN element_holds h ON h.id=p.hold_id AND h.company_id=p.company_id WHERE h.company_id=:tenant AND h.element_id=:element AND p.person_type_id=:person',(fixture.cid,second,fixture.person)) == 2
+            assert fixture.scalar('SELECT p.quantity FROM hold_requirement_people p JOIN element_holds h ON h.id=p.hold_id AND h.company_id=p.company_id WHERE h.company_id=:tenant AND h.element_id=:element AND p.person_type_id=:person',(fixture.cid,fishing,fixture.person)) == 1
             fixture.clients[0].post('/availability/new-booking',data={'csrf':fixture.csrf()},follow_redirects=False)
             page.goto(base+f'/operations/reservations/{rid}/edit')
             assert f'edit_reservation={rid}' in page.url
