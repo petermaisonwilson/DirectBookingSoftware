@@ -65,8 +65,11 @@ def main():
             page.wait_for_url(re.compile('/availability/calendar-v2'))
             assert 'party-unsuitable' in page.locator(f'.element-row[data-element="{unsuitable}"]').get_attribute('class')
             row = page.locator(f'.element-row[data-element="{second}"]')
-            row.locator('.date-pick[data-date="2038-06-14"]').click()
-            row.locator('.date-pick[data-date="2038-06-15"]').click()
+            # Requirements already supplied the dates, so use the offered range.
+            # The RESERVE button intentionally covers those selected calendar cells.
+            assert page.locator('#arrival-date').input_value() == '2038-06-14'
+            assert page.locator('#departure-date').input_value() == '2038-06-16'
+            assert row.locator('.selection-action').is_visible()
             row.locator('.selection-action').click()
             page.wait_for_load_state('networkidle')
             assert fixture.scalar('SELECT lead_name FROM element_holds WHERE company_id=:tenant',(fixture.cid,)) == 'Calendar Guest'
