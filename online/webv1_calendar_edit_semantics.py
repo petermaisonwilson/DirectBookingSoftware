@@ -200,6 +200,8 @@ def install_calendar_edit_semantics(app) -> None:
           document.addEventListener('click',(ev)=>{{
             const cell=ev.target.closest('.date-pick');
             if(!cell||!calendar.contains(cell))return;
+            // Let the requirements entry handler run before selecting any dates.
+            if(calendar.dataset.needsRequirements==='1')return;
             ev.preventDefault(); ev.stopImmediatePropagation();
             const pop=document.getElementById('quick-popover'); if(pop)pop.hidden=true;
             const row=cell.closest('.element-row'); if(!row||row.classList.contains('party-unsuitable'))return;

@@ -489,7 +489,7 @@ def register_calendar_v5_routes(app) -> None:
             )
 
         body += f'''<div class="card availability-card"><div class="availability-head"><div class="legend-row compact"><strong>Key:</strong>{legend}</div></div>
-        <div id="calendar-scroll" class="calendar-scroll"><div class="calendar-grid" style="--days:{display_days}">{cal_header}{cal_rows}</div></div>
+        <div id="calendar-scroll" class="calendar-scroll" data-needs-requirements="{1 if needs_requirements else 0}"><div class="calendar-grid" style="--days:{display_days}">{cal_header}{cal_rows}</div></div>
         <p class="muted">Every Element of the selected type is shown. Pale green days are available. Elements that do not meet the booking requirements remain visible with the reason why, so you can change the requirements if you want a particular Element. A yellow Element remains protected while held; if revised requirements make it unsuitable it is clearly marked and must be replaced before proceeding.</p></div>'''
 
         body += f'''<div id="booking-detail-modal" class="booking-detail-overlay" hidden></div><div id="quick-element-info" class="quick-element-info" hidden></div>

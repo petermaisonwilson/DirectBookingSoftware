@@ -107,6 +107,8 @@ class OperationalJourneyTests(unittest.TestCase):
         page = self.clients[0].get('/availability/calendar-v2?start=2038-06-01')
         self.assertEqual(page.status_code,200)
         self.assertIn('const needsRequirements=true',page.text)
+        self.assertIn('data-needs-requirements="1"',page.text)
+        self.assertIn("if(calendar.dataset.needsRequirements==='1')return;",page.text)
         self.assertIn('data-type="Camping"',page.text)
         form = self.clients[0].get('/availability/start?element_type=Camping')
         self.assertIn('value="Camping" selected',form.text)
