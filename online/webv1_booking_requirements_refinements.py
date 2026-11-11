@@ -10,7 +10,7 @@ from fastapi import HTTPException, Request
 from fastapi.responses import HTMLResponse, RedirectResponse, Response
 
 from .app import COOKIE_NAME, form_data
-from .setup015_calculator import _addon_rule
+from .setup015_calculator import _addon_rule, _resolved_addon_rule
 from .setup015_core import one, rows
 from .webv1_addon_popup import popup_addons_for_element
 from .webv1_booking_requirements import _element_reasons, _requirements_page, _saved_requirements
@@ -39,7 +39,25 @@ def _addon_max_anywhere(database, cid: int, addon_id: int) -> int:
 
 
 def _addon_caps(database, cid: int) -> dict[int, int]:
-    return {int(a['id']): _addon_max_anywhere(database, cid, int(a['id'])) for a in rows(database, 'SELECT id FROM setup_addons WHERE company_id=:q513_0 AND active=1 AND ask_before_availability=1', (cid,))}
+    # Request-local bulk reads preserve Element overrides and annual defaults.
+    addons = rows(database, 'SELECT id FROM setup_addons WHERE company_id=:tenant AND active=1 AND ask_before_availability=1', (cid,))
+    if not addons: return {}
+    elements = rows(database, 'SELECT id,element_type FROM setup_elements WHERE company_id=:tenant AND active=1', (cid,))
+    years = [int(r['year']) for r in rows(database, 'SELECT year FROM setup_years WHERE company_id=:tenant', (cid,))] or [date.today().year]
+    overrides = {(int(r['year']),int(r['element_id']),int(r['addon_id'])):r for r in rows(database,
+        'SELECT * FROM setup_element_addons WHERE company_id=:tenant', (cid,))}
+    defaults = {(int(r['year']),str(r['element_type']),int(r['addon_id'])):r for r in rows(database,
+        'SELECT * FROM setup_type_addons WHERE company_id=:tenant', (cid,))}
+    caps = {}
+    for addon in addons:
+        aid = int(addon['id']); highest = 0
+        for year in years:
+            for element in elements:
+                rule = _resolved_addon_rule(overrides.get((year,int(element['id']),aid)), defaults.get((year,str(element['element_type']),aid)))
+                if rule['allowed']:
+                    highest = max(highest,99 if rule['max'] is None else int(rule['max']))
+        caps[aid] = highest
+    return caps
 
 
 def _person_features(database, cid: int, year: int, element_id: int) -> list[dict[str, object]]:

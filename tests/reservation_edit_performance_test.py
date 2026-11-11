@@ -24,7 +24,7 @@ def main():
         with fixture.db.connect() as c:
             execute_sql(c,'INSERT INTO setup_years(company_id,year) VALUES (:tenant,2039)',(fixture.cid,))
             for i in range(5):
-                addon = int(insert_sql(c,"INSERT INTO setup_addons(company_id,name,pricing_method) VALUES (:tenant,:name,'Fixed once')",(fixture.cid,f'Performance extra {i}')).lastrowid)
+                addon = int(insert_sql(c,"INSERT INTO setup_addons(company_id,name,pricing_method,ask_before_availability) VALUES (:tenant,:name,'Fixed once',1)",(fixture.cid,f'Performance extra {i}')).lastrowid)
                 execute_sql(c,"INSERT INTO setup_type_addons(company_id,year,element_type,addon_id,allowed,min_qty,max_qty,rate) VALUES (:tenant,2038,'Camping',:addon,1,0,5,2)",(fixture.cid,addon))
         queries = []
         db = fixture.db
@@ -50,6 +50,8 @@ def main():
             samples[name] = {'seconds':round(elapsed,4),'selects':count}
             print(name,json.dumps(samples[name]),flush=True)
             return response
+        measure('requirements','get','/availability/start')
+        measure('new_booking','post','/availability/new-booking',data={'csrf':fixture.csrf()})
         measure('calendar','get',f'/availability/calendar-v2?edit_reservation={rid}')
         measure('calendar_edit_60_days','get',f'/availability/calendar-v2?edit_reservation={rid}&edit_allocation={aid}&date_from=2038-06-01&date_to=2038-07-30')
         form = measure('review','get',f'/operations/reservations/{rid}/edit?details=1&allocation_id={aid}')
@@ -62,6 +64,8 @@ def main():
         assert 'Performance pitch' not in summary.text
         print(json.dumps({'backend':db.dialect_name,'elements':30,'days':60,'stages':samples}),flush=True)
         if '--baseline' not in sys.argv:
+            assert samples['requirements']['selects'] < 80, samples
+            assert samples['new_booking']['selects'] < 100, samples
             assert samples['calendar_edit_60_days']['selects'] < 2500, samples
             assert samples['review']['selects'] < 200, samples
             assert samples['preview']['selects'] < 400, samples

@@ -81,6 +81,50 @@ class OperationalJourneyTests(unittest.TestCase):
         with self.db.connect() as c:
             return execute_sql(c, sql, params).fetchone()[0]
 
+    def test_bulk_requirements_preserve_overrides_and_years(self):
+        from online.webv1_booking_requirements_refinements import _addon_caps, _addon_max_anywhere
+        from online.webv1_booking_requirements import _relevant_addon_ids_for_type
+        from online.setup015_calculator import _addon_rule
+        second = self.new_element('Override pitch')
+        with self.db.connect() as c:
+            addon = int(insert_sql(c,"INSERT INTO setup_addons(company_id,name,pricing_method,ask_before_availability) VALUES (:tenant,'Must have','Fixed once',1)",(self.cid,)).lastrowid)
+            execute_sql(c,"INSERT INTO setup_type_addons(company_id,year,element_type,addon_id,allowed,min_qty,max_qty,rate) VALUES (:tenant,2038,'Camping',:addon,1,0,5,0)",(self.cid,addon))
+            execute_sql(c,"INSERT INTO setup_element_addons(company_id,year,element_id,addon_id,state,min_qty,max_qty,rate) VALUES (:tenant,2038,:element,:addon,'N',0,0,0)",(self.cid,self.element,addon))
+        for year in (2038,2039):
+            live = set()
+            with self.db.connect() as c:
+                elements = execute_sql(c,'SELECT * FROM setup_elements WHERE company_id=:tenant AND active=1',(self.cid,)).fetchall()
+            for element in elements:
+                if _addon_rule(self.db,self.cid,year,element,addon)['allowed']: live.add(addon)
+            self.assertEqual(_relevant_addon_ids_for_type(self.db,self.cid,'Camping',year),live)
+        self.assertEqual(_addon_caps(self.db,self.cid)[addon],_addon_max_anywhere(self.db,self.cid,addon))
+        with self.db.connect() as c:
+            execute_sql(c,"INSERT INTO setup_element_addons(company_id,year,element_id,addon_id,state,min_qty,max_qty,rate) VALUES (:tenant,2038,:element,:addon,'Y',0,7,0)",(self.cid,second,addon))
+        self.assertEqual(_addon_caps(self.db,self.cid)[addon],7)
+        self.assertEqual(_addon_caps(self.db,self.cid)[addon],_addon_max_anywhere(self.db,self.cid,addon))
+
+    def test_empty_master_calendar_requires_party_before_selection(self):
+        page = self.clients[0].get('/availability/calendar-v2?start=2038-06-01')
+        self.assertEqual(page.status_code,200)
+        self.assertIn('const needsRequirements=true',page.text)
+        self.assertIn('data-type="Camping"',page.text)
+        form = self.clients[0].get('/availability/start?element_type=Camping')
+        self.assertIn('value="Camping" selected',form.text)
+        invalid = self.clients[0].post('/availability/requirements',data={
+            'csrf':self.csrf(),'lead_name':'','element_type':'Camping',
+            'arrival':'2038-06-01','departure':'2038-06-03',f'person_{self.person}':'1'})
+        self.assertEqual(invalid.status_code,400)
+        self.assertEqual(self.scalar('SELECT COUNT(*) FROM element_holds'),0)
+        self.prepare(lead='Calendar Guest')
+        ready = self.clients[0].get('/availability/calendar-v2?element_type=Camping&arrival=2038-06-01&departure=2038-06-03')
+        self.assertIn('const needsRequirements=false',ready.text)
+        self.assertEqual(self.hold().status_code,200)
+        add = self.clients[0].get('/availability/start')
+        self.assertIn('value="Calendar Guest"',add.text)
+        self.assertEqual(self.scalar('SELECT COUNT(*) FROM element_holds'),1)
+        other = self.clients[1].get('/availability/calendar-v2?start=2038-06-01')
+        self.assertIn('const needsRequirements=true',other.text)
+
     def prepare(self, index=0, lead='Customer'):
         response = self.clients[index].post('/availability/requirements', data={
             'csrf': self.csrf(index), 'lead_name': lead, 'element_type': 'Camping',

@@ -352,11 +352,11 @@ jobs:
         run: python -m unittest discover -s tests -p reservation_integration_test.py -v
 
       - name: Complete operational acceptance on SQLite
-        run: python tests/run_operational_acceptance.py
+        run: python tests/site_timing_audit.py
       - name: Complete operational acceptance on genuine PostgreSQL
         env:
           DBS_TEST_POSTGRES_URL: postgresql+psycopg://postgres:postgres@127.0.0.1:5432/reservations_test
-        run: python tests/run_operational_acceptance.py
+        run: python tests/site_timing_audit.py
 
       - name: Fresh SQLite, native backup restoration and packaged startup
         run: python tests/database_recovery_test.py

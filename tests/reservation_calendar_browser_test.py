@@ -22,6 +22,10 @@ def main():
         aid = fixture.scalar('SELECT id FROM reservation_elements WHERE reservation_id=:id',(rid,))
         second = fixture.new_element('Browser additional pitch')
         third = fixture.new_element('Browser blocked pitch')
+        unsuitable = fixture.new_element('Browser unsuitable pitch')
+        from online.sql import execute_sql
+        with fixture.db.connect() as c:
+            execute_sql(c,'UPDATE setup_occupancy SET max_total=0 WHERE company_id=:tenant AND element_id=:id',(fixture.cid,unsuitable))
         closure = fixture.clients[0].post('/setup/elements/availability/save',data={
             'csrf':fixture.csrf(),'element_id':third,'start_date':'2038-06-02',
             'end_date':'2038-06-03','reason':'Browser test closure'},follow_redirects=False)
@@ -44,6 +48,31 @@ def main():
             page = context.new_page()
             errors = []
             page.on('pageerror',lambda error: errors.append(str(error)))
+            # Empty Master Calendar selection must collect a name and party first.
+            fixture.clients[0].post('/availability/new-booking',data={'csrf':fixture.csrf()},follow_redirects=False)
+            page.goto(base+'/availability/calendar-v2?start=2038-06-14')
+            page.locator(f'.element-row[data-element="{second}"] .date-pick[data-date="2038-06-14"]').click()
+            page.wait_for_url(re.compile('/availability/start'))
+            assert fixture.scalar('SELECT COUNT(*) FROM element_holds WHERE company_id=:tenant',(fixture.cid,)) == 0
+            assert page.locator('[name="lead_name"]').input_value() == ''
+            assert page.locator('[name="lead_name"]').get_attribute('required') is not None
+            assert page.locator('[name="element_type"]').input_value() == 'Camping'
+            page.locator('[name="lead_name"]').fill('Calendar Guest')
+            page.locator('[name="arrival"]').fill('2038-06-14')
+            page.locator('[name="departure"]').fill('2038-06-16')
+            page.locator(f'[name="person_{fixture.person}"]').fill('1')
+            page.get_by_role('button',name='SEARCH AVAILABILITY',exact=True).click()
+            page.wait_for_url(re.compile('/availability/calendar-v2'))
+            assert 'party-unsuitable' in page.locator(f'.element-row[data-element="{unsuitable}"]').get_attribute('class')
+            row = page.locator(f'.element-row[data-element="{second}"]')
+            row.locator('.date-pick[data-date="2038-06-14"]').click()
+            row.locator('.date-pick[data-date="2038-06-15"]').click()
+            row.locator('.selection-action').click()
+            page.wait_for_load_state('networkidle')
+            assert fixture.scalar('SELECT lead_name FROM element_holds WHERE company_id=:tenant',(fixture.cid,)) == 'Calendar Guest'
+            page.get_by_role('link',name='Add New Element',exact=True).first.click()
+            assert page.locator('[name="lead_name"]').input_value() == 'Calendar Guest'
+            fixture.clients[0].post('/availability/new-booking',data={'csrf':fixture.csrf()},follow_redirects=False)
             page.goto(base+f'/operations/reservations/{rid}/edit')
             assert f'edit_reservation={rid}' in page.url
             assert page.get_by_role('heading',name='Master Calendar',exact=True).count() == 1

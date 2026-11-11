@@ -37,11 +37,12 @@ def install_feature_booking_ui(app) -> None:
             caps = _addon_caps(database,cid)
             years = [int(r['year']) for r in rows(database,'SELECT year FROM setup_years WHERE company_id=:q170_0 ORDER BY year',(cid,))]
             types = [str(r['name']) for r in rows(database,'SELECT name FROM setup_element_types WHERE company_id=:q171_0 AND active=1 ORDER BY name',(cid,))]
+            relevant = {(year,typ): _relevant_addon_ids_for_type(database,cid,typ,year) for year in years for typ in types}
             definitions = []
             for item in rows(database, 'SELECT id,name,item_kind,feature_group FROM setup_addons\n                                          WHERE company_id=:q168_0 AND active=1 AND ask_before_availability=1\n                                          ORDER BY item_kind,feature_group,lower(name)',(cid,)):
                 aid = int(item['id']); availability = {}
                 for year in years:
-                    allowed = [typ for typ in types if aid in _relevant_addon_ids_for_type(database,cid,typ,year)]
+                    allowed = [typ for typ in types if aid in relevant[(year,typ)]]
                     availability[str(year)] = allowed
                 definitions.append({'id':aid,'name':str(item['name']),'kind':str(item['item_kind'] or 'Extra'),'group':str(item['feature_group'] or ''),'cap':int(caps.get(aid,0)),'availability':availability})
             token = request.cookies.get(COOKIE_NAME, '')

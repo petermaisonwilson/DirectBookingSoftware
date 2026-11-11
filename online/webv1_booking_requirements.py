@@ -121,37 +121,37 @@ def _relevant_person_ids_for_type(database, cid: int, element_type: str, year: i
 def _relevant_addon_ids_for_type(database, cid: int, element_type: str, year: int) -> set[int]:
     if not element_type:
         return {int(r['id']) for r in rows(database, 'SELECT id FROM setup_addons WHERE company_id=:q342_0 AND active=1 AND ask_before_availability=1', (cid,))}
-    result: set[int] = set()
-    elements = rows(database, 'SELECT * FROM setup_elements WHERE company_id=:q311_0 AND active=1 AND element_type=:q311_1', (cid, element_type))
-    addons = rows(database, 'SELECT id FROM setup_addons WHERE company_id=:q312_0 AND active=1 AND ask_before_availability=1', (cid,))
-    for addon in addons:
-        aid = int(addon['id'])
-        if any(_addon_rule(database, cid, year, element, aid).get('allowed') for element in elements):
-            result.add(aid)
-    return result
+    return {int(r['id']) for r in rows(database,
+        'SELECT DISTINCT a.id FROM setup_addons a '
+        'JOIN setup_elements e ON e.company_id=a.company_id AND e.active=1 AND e.element_type=:type '
+        'LEFT JOIN setup_element_addons ea ON ea.company_id=e.company_id AND ea.element_id=e.id AND ea.addon_id=a.id AND ea.year=:year '
+        'LEFT JOIN setup_type_addons ta ON ta.company_id=e.company_id AND ta.element_type=e.element_type AND ta.addon_id=a.id AND ta.year=:year '
+        "WHERE a.company_id=:tenant AND a.active=1 AND a.ask_before_availability=1 AND "
+        "CASE WHEN ea.element_id IS NOT NULL THEN ea.state<>'N' ELSE COALESCE(ta.allowed,0)=1 END",
+        {'tenant':cid,'type':element_type,'year':year})}
 
 
 def _person_cap_map(database, cid: int) -> dict[str, dict[str, dict[str, int]]]:
     result: dict[str, dict[str, dict[str, int]]] = {}
-    for yr in rows(database, 'SELECT year FROM setup_years WHERE company_id=:q313_0 ORDER BY year', (cid,)):
-        year = int(yr['year'])
-        for element in rows(database, 'SELECT id,element_type FROM setup_elements WHERE company_id=:q324_0 AND active=1', (cid,)):
-            bucket = result.setdefault(str(element['element_type']), {}).setdefault(str(year), {})
-            for limit in rows(database, 'SELECT person_type_id,max_count FROM setup_person_limits WHERE company_id=:q334_0 AND year=:q334_1 AND element_id=:q334_2', (cid, year, int(element['id']))):
-                key = str(int(limit['person_type_id']))
-                bucket[key] = max(int(bucket.get(key, 0)), int(limit['max_count'] or 0))
+    for r in rows(database, 'SELECT e.element_type,l.year,l.person_type_id,MAX(l.max_count) AS max_count '
+            'FROM setup_person_limits l JOIN setup_elements e ON e.company_id=l.company_id AND e.id=l.element_id '
+            'JOIN setup_years y ON y.company_id=l.company_id AND y.year=l.year '
+            'WHERE l.company_id=:tenant AND e.active=1 GROUP BY e.element_type,l.year,l.person_type_id', (cid,)):
+        result.setdefault(str(r['element_type']), {}).setdefault(str(r['year']), {})[str(r['person_type_id'])] = int(r['max_count'] or 0)
     return result
 
 
 def _person_type_map(database, cid: int) -> dict[str, list[int]]:
-    mapping: dict[str, list[int]] = {}
-    years = [int(r['year']) for r in rows(database, 'SELECT year FROM setup_years WHERE company_id=:q335_0', (cid,))]
-    types = [str(r['name']) for r in rows(database, 'SELECT name FROM setup_element_types WHERE company_id=:q336_0 AND active=1', (cid,))]
-    for typ in types:
-        ids: set[int] = set()
-        for year in years:
-            ids |= _relevant_person_ids_for_type(database, cid, typ, year)
-        mapping[typ] = sorted(ids)
+    mapping = {str(r['name']): [] for r in rows(database,
+        'SELECT name FROM setup_element_types WHERE company_id=:tenant AND active=1', (cid,))}
+    for r in rows(database, 'SELECT DISTINCT e.element_type,l.person_type_id FROM setup_person_limits l '
+            'JOIN setup_elements e ON e.company_id=l.company_id AND e.id=l.element_id '
+            'JOIN setup_person_types p ON p.company_id=l.company_id AND p.id=l.person_type_id '
+            'JOIN setup_years y ON y.company_id=l.company_id AND y.year=l.year '
+            'WHERE l.company_id=:tenant AND e.active=1 AND p.active=1 AND (l.max_count>0 OR l.min_count>0) '
+            'ORDER BY l.person_type_id', (cid,)):
+        if str(r['element_type']) in mapping:
+            mapping[str(r['element_type'])].append(int(r['person_type_id']))
     return mapping
 
 

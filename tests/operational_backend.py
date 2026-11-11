@@ -20,10 +20,43 @@ _schemas = {}
 _apps = []
 
 
+class _TimingAudit:
+    """Opt-in test-only full response timing; never records data or query values."""
+    def __init__(self, app, owner):
+        self.app, self.owner = app, owner
+
+    async def __call__(self, scope, receive, send):
+        if scope['type'] != 'http':
+            return await self.app(scope, receive, send)
+        from time import perf_counter
+        import json
+        started = perf_counter(); status = 500
+        async def measured_send(message):
+            nonlocal status
+            if message['type'] == 'http.response.start': status = message['status']
+            await send(message)
+        try:
+            await self.app(scope, receive, measured_send)
+        finally:
+            route = scope.get('route')
+            # Template paths avoid storing customer identifiers or submitted data.
+            record = {'method':scope['method'], 'route':getattr(route,'path','<unmatched>'),
+                'status':status, 'seconds':perf_counter()-started, 'scenario':Path(sys.argv[0]).name,
+                'routes':sorted({m+' '+r.path for r in self.owner.routes for m in getattr(r,'methods',set()) if m not in {'HEAD','OPTIONS'}})}
+            with open(os.environ['DBS_TIMING_LOG'],'a',encoding='utf-8') as output:
+                output.write(json.dumps(record)+'\n')
+
+
+def _timed(app):
+    if os.environ.get('DBS_TIMING_LOG'):
+        app.add_middleware(_TimingAudit,owner=app)
+    return app
+
+
 def create_app(db_path=None, *, seed_demo=None):
     url = os.environ.get('DBS_TEST_POSTGRES_URL')
     if not url:
-        return application_factory(db_path, seed_demo=seed_demo)
+        return _timed(application_factory(db_path, seed_demo=seed_demo))
     parsed = make_url(url)
     if parsed.get_backend_name() != 'postgresql' or not (parsed.database or '').endswith('_test'):
         raise RuntimeError('Operational tests require a dedicated PostgreSQL database ending in _test')
@@ -45,7 +78,7 @@ def create_app(db_path=None, *, seed_demo=None):
     assert app.state.database.dialect_name == 'postgresql'
     _apps.append(app)
     print('Operational application backend: PostgreSQL; isolated schema:', _schemas[key][1])
-    return app
+    return _timed(app)
 
 
 @atexit.register
